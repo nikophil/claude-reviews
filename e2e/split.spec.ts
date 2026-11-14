@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { removeRepos, repo, write } from '../server/fixture.ts';
+import { git, removeRepos, repo, write } from '../server/fixture.ts';
 
 test.afterAll(removeRepos);
 
@@ -197,4 +197,72 @@ test('the settings menu closes on Escape, and once a view is chosen', async ({ p
     await split.check();
     await expect(split).toBeHidden();
     await expect(row(page, 'two').locator('.diff-code')).toHaveText(['two', '2']);
+});
+
+/** Whether a row holds a single number and a single code cell, the code reaching the right edge of the table, over most of its width. */
+async function fullWidth(page: Page, text: string) {
+    const line = row(page, text);
+    if (await line.locator('.diff-num').count() !== 1 || await line.locator('.diff-code').count() !== 1) return false;
+    const code = (await line.locator('.diff-code').boundingBox())!;
+    const table = (await line.locator('xpath=ancestor::table[1]').boundingBox())!;
+    return Math.abs(code.x + code.width - (table.x + table.width)) <= 1 && code.width > table.width * 0.8;
+}
+
+test('in Split, a new file takes the whole width on a single column, a modified file two columns', async ({ page }) => {
+    const dir = changed();
+    write(dir, { 'b.txt': 'b1\nb2' });
+    await open(page, dir);
+    await expect(row(page, 'b1')).toHaveCount(1);
+
+    await choose(page, 'Split');
+
+    await expect(row(page, 'two').locator('.diff-code')).toHaveText(['two', '2']);
+    await expect(row(page, 'b1').locator('.diff-num')).toHaveText(['1']);
+    await expect.poll(() => fullWidth(page, 'b1')).toBe(true);
+    await expect.poll(() => fullWidth(page, 'b2')).toBe(true);
+    await expect(page.getByText('No newline at end of file')).toBeVisible();
+});
+
+test('in Split, a modified file that only adds lines keeps two columns', async ({ page }) => {
+    const dir = repo({ 'a.txt': '' });
+    write(dir, { 'a.txt': 'added1\nadded2\n' });
+    await open(page, dir);
+    await expect(row(page, 'added1')).toHaveCount(1);
+
+    await choose(page, 'Split');
+
+    await expect(row(page, 'added1').locator('.diff-empty')).toHaveCount(1);
+    expect(await fullWidth(page, 'added1')).toBe(false);
+});
+
+test('in Split, a deleted file takes the whole width on a single column, where a line selected opens a thread on the old side', async ({ page }) => {
+    const dir = repo({ 'a.txt': 'gone1\ngone2\n' });
+    git(dir, 'rm', '-q', 'a.txt');
+    await open(page, dir);
+    await expect(row(page, 'gone1')).toHaveCount(1);
+
+    await choose(page, 'Split');
+
+    await expect(row(page, 'gone2').locator('.diff-num')).toHaveText(['2']);
+    await expect.poll(() => fullWidth(page, 'gone1')).toBe(true);
+
+    await row(page, 'gone2').locator('.diff-num').click();
+    await page.getByRole('textbox').fill('Why gone?');
+    await page.getByRole('button', { name: 'Add message' }).click();
+
+    await expect(under(page, 'gone2').locator('.thread')).toContainText('Line -2');
+});
+
+test('in Split, a range selected in a new file opens a thread on the new side', async ({ page }) => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    write(dir, { 'b.txt': 'b1\nb2\nb3\n' });
+    await open(page, dir);
+    await choose(page, 'Split');
+
+    await row(page, 'b2').locator('.diff-num').click();
+    await row(page, 'b3').locator('.diff-num').click({ modifiers: ['Shift'] });
+    await page.getByRole('textbox').fill('Why?');
+    await page.getByRole('button', { name: 'Add message' }).click();
+
+    await expect(under(page, 'b3').locator('.thread')).toContainText('Lines +2 to +3');
 });

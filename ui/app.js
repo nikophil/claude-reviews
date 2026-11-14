@@ -386,6 +386,9 @@ function FileDiff({ id, file, viewed, threads, review }) {
     useEffect(() => { if (viewed !== checked) mark(viewed); }, [viewed]);
     const hunks = withContext(file.hunks, threads);
     const { readOnly, busy, act, diff } = review;
+    // The sides whose numbers show on a single column of code: both in Unified, none in the two halves of Split.
+    // As on GitHub, an added or deleted file would leave a half empty in Split: it takes the whole width, with the numbers of its only side.
+    const sides = !review.split ? ['old', 'new'] : { added: ['new'], deleted: ['old'] }[file.status] ?? null;
     return html`
         <section id=${id} data-path=${file.path} class="Box mb-3">
             <div class=${`Box-header file-header py-2 pl-2 d-flex flex-items-center${folded ? ' border-bottom-0 rounded-2' : ''}`}>
@@ -414,9 +417,9 @@ function FileDiff({ id, file, viewed, threads, review }) {
                     : hunks.length === 0 ? file.status !== 'unchanged' && html`<div class="Box-body color-fg-muted">${file.status === 'modified' ? 'File mode changed' : 'Empty file'}</div>`
                     : !open ? html`<div class="Box-body text-center"><button class="btn-link" onClick=${() => setOpen(true)}>Load diff</button></div>`
                     : html`
-                        <table class=${`diff-table${review.split ? ' diff-split' : ''}`}>
-                            ${review.split && html`<colgroup><col style=${numbers(hunks)} /><col /><col style=${numbers(hunks)} /><col /></colgroup>`}
-                            <tbody>${rows({ ...file, hunks }, threads, review)}</tbody>
+                        <table class=${`diff-table${sides ? '' : ' diff-split'}`}>
+                            ${!sides && html`<colgroup><col style=${numbers(hunks)} /><col /><col style=${numbers(hunks)} /><col /></colgroup>`}
+                            <tbody>${rows({ ...file, hunks }, threads, { ...review, sides })}</tbody>
                         </table>`}
             </div>
         </section>`;
@@ -485,7 +488,8 @@ function pairs(lines) {
 
 // Rows carry keys, so a thread arriving above a message being typed moves its row instead of rebuilding the textarea.
 function rows(file, threads, review) {
-    const { readOnly, busy, selection, setSelection, draft, act, diff, now, split } = review;
+    const { readOnly, busy, selection, setSelection, draft, act, diff, now, sides } = review;
+    const split = !sides;
     const lang = language(file.path);
     const selected = (side, no) => selection?.path === file.path && selection.side === side && no >= selection.start && no <= selection.end;
     // A click selects a line, a Shift+click extends the selection from the line clicked first, on the same side of the same file.
@@ -529,7 +533,7 @@ function rows(file, threads, review) {
             <td class=${`diff-code ${cls}`} dangerouslySetInnerHTML=${code(line)}></td>`;
     };
     return file.hunks.flatMap((hunk, h) => [
-        html`<tr key=${`h${h}`} class="diff-hunk"><td colspan=${split ? 1 : 2}></td><td colspan=${split ? 3 : 1}>${hunk.header}</td></tr>`,
+        html`<tr key=${`h${h}`} class="diff-hunk"><td colspan=${split ? 1 : sides.length}></td><td colspan=${split ? 3 : 1}>${hunk.header}</td></tr>`,
         ...split ? pairs(hunk.lines).flatMap(([left, right], r) => {
             const [old, added] = [under(left, 'old'), under(right, 'new')];
             return [
@@ -541,11 +545,13 @@ function rows(file, threads, review) {
             return [
                 html`
                     <tr key=${`${h}-${l}`} class=${`diff-line-${line.type}${selected('old', line.oldNo) || selected('new', line.newNo) ? ' selected' : ''}`}>
-                        <td class="diff-num" onClick=${select('old', line.oldNo)}>${line.oldNo}</td>
-                        <td class="diff-num" onClick=${select('new', line.newNo)}>${line.newNo}</td>
+                        ${sides.map(side => {
+                            const no = side === 'old' ? line.oldNo : line.newNo;
+                            return html`<td class="diff-num" onClick=${select(side, no)}>${no}</td>`;
+                        })}
                         <td class="diff-code" dangerouslySetInnerHTML=${code(line)}></td>
                     </tr>`,
-                items.length > 0 && html`<tr key=${`u${h}-${l}`}><td colspan="3">${items}</td></tr>`,
+                items.length > 0 && html`<tr key=${`u${h}-${l}`}><td colspan=${sides.length + 1}>${items}</td></tr>`,
             ];
         }),
     // Preact matches keyed rows only among real children: a false left here rebuilds the rows after it, and their drafts.
