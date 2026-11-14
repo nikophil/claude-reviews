@@ -26,9 +26,10 @@ Décisions structurantes : [docs/adr/](docs/adr/).
 - **UI web locale**, pas de TUI.
 - **Look GitHub** avec **Primer CSS** (design system open source de GitHub, MIT), pas un CSS recopié ;
   thème sombre automatique (`data-color-mode="auto"`).
-- **Une session par worktree** : la relecture d'un worktree (repo et branche) comparé à une base, de son ouverture à son Approve.
-  Un worktree a au plus une session ouverte.
+- **Une session par worktree** : la relecture d'un worktree comparé à une base, de son ouverture à son Approve ou à la disparition du worktree.
+  Un worktree a au plus une session ouverte, et un checkout ou un rebase ne la clôt pas.
 - **Une review est un envoi** : Send livre mes messages Pending à Claude et le réveille, Approve clôt la session.
+  Un Send sans message reste possible : il prend un Snapshot, et ne réveille Claude que si des threads l'attendent encore.
   Pas de verdict Comment ou Request changes : Claude répond aux questions, et modifie le code quand un thread le demande.
 - **Seul l'utilisateur résout un thread.**
   Claude répond dans chaque thread qui l'attend, et n'ouvre un thread que quand on le lui demande (« relis ton diff et ouvre des threads »).
@@ -41,22 +42,27 @@ Décisions structurantes : [docs/adr/](docs/adr/).
 
 1. **Un serveur local unique** sur `:7778`, pour tous les worktrees : il sert l'UI et une API JSON.
    Le mod le démarre à la demande quand le port ne répond pas, sans service systemd.
-2. **Stockage** : un fichier JSON par session sous `~/.local/share/claude-reviews/sessions/`, avec le chemin du worktree comme clé ;
-   seul le serveur l'écrit, par remplacement atomique ([ADR 0003](docs/adr/0003-stockage-hors-du-depot.md)).
+2. **Stockage** : un fichier JSON par session ouverte sous `~/.local/share/claude-reviews/sessions/`, avec le chemin du worktree comme clé ;
+   une session close part sous `~/.local/share/claude-reviews/archive/`, rangée sous son id ;
+   seul le serveur écrit ces fichiers, par remplacement atomique ([ADR 0003](docs/adr/0003-stockage-hors-du-depot.md)).
 3. **Snapshots** : à chaque calcul du diff, le serveur écrit un tree du working tree (suivis et non suivis, hors ignorés) avec un index temporaire ;
    à chaque Send, il commite le tree que l'UI affichait sous `refs/claude-reviews/<session>/<n>` ;
-   l'Approve supprime ces refs ([ADR 0002](docs/adr/0002-snapshots-dans-des-refs-cachees.md)).
+   l'Approve, ou la disparition du worktree, supprime ces refs ([ADR 0002](docs/adr/0002-snapshots-dans-des-refs-cachees.md)).
 4. **Le mod Claude Code**, livré en plugin (`hooks/hooks.json` → `"modules"`) :
    - il enregistre les outils `list_open_threads()`, qui renvoie en entier les threads Waiting for Claude,
      `reply_to_thread(id, body)` et `open_thread(file, side, lines, body)`, ainsi que la commande `/review-local`,
      qui ouvre la session du worktree dans le navigateur ;
    - il relie la Claude session à sa session de relecture par le chemin du worktree (`git rev-parse --show-toplevel` sur le `cwd`) ;
+   - sans session ouverte, `open_thread` en ouvre une ; une session close refuse les messages de Claude, et le mod cesse alors de le relancer ;
    - il interroge le serveur, et sur un Send injecte « N threads t'attendent » avec `$.prompt.submit` ;
    - il n'attend jamais `$.prompt.submit` dans un hook, car l'appel ne se résout qu'une fois la session inactive, et un hook n'a que 10 s ;
      un `{ drop }` (après un Esc, tant que personne n'a tapé) laisse les threads en attente, et le mod retente au prochain prompt ou début de tour ;
-   - si Claude finit son tour alors que des threads l'attendent encore, il le relance une seule fois par review ;
+   - si Claude finit son tour alors que des threads l'attendent encore, il le relance une seule fois par Send :
+     la relance compte quand son prompt ouvre un tour, un `{ drop }` ne compte pas, et un nouveau Send en permet une autre ;
    - au démarrage d'une Claude session dans un worktree où des threads attendent, il ajoute « N threads t'attendent » au premier message.
-5. **Notification** : quand plus aucun thread d'une review n'attend Claude, le serveur appelle `notify-send` (« Claude replied in N threads »).
+5. **Notification** : à la fin du tour de Claude qui suit un Send, ou sa relance s'il y en a une, `notify-send` annonce « Claude replied in N threads »,
+   suivi de « M still waiting » s'il en reste ; Claude a pu modifier du code après sa dernière réponse, d'où la fin du tour plutôt que la dernière réponse.
+   Qui l'envoie, du mod qui voit la fin du tour ou du serveur, se tranche avec la livraison des threads au mod.
 6. **Stack** : Node 25, TypeScript exécuté sans build (type stripping), `node:http`, aucune dépendance npm.
    Front en Preact + htm, avec Primer CSS et marked, chacun vendorisé en un fichier ;
    il interroge le serveur toutes les 2 s, sans perdre un message en cours de frappe ;
@@ -76,10 +82,13 @@ Décisions structurantes : [docs/adr/](docs/adr/).
 - **Anchor** : fichier, côté (ancien ou nouveau), plage de lignes, contenu de ces lignes et de leurs voisines,
   et l'extrait de diff d'origine (comme le `diff_hunk` de GitHub), sans SHA.
   Elle se capture sur le code que voit son auteur : la base et le code affiché pour moi, la base de la session et le working tree pour Claude.
-- **Messages** : auteur (`me` | `claude`), corps en markdown, date, et la review qui l'a envoyé ; sans review, le message est Pending.
+- **Messages** : auteur (`me` | `claude`), corps en markdown, date, et pour les miens la review qui l'a publié ; sans review, mon message est Pending.
+  Un message de Claude est publié dès qu'il l'écrit, hors de toute review : un thread que Claude ouvre est Awaiting you sur-le-champ.
+  Un message prend sa date et sa place dans le thread à sa publication, donc mon message Pending passe après une réponse de Claude arrivée entre-temps.
 - Trois faits indépendants, qui se combinent :
   - **à qui le tour**, déduit du dernier message envoyé : **Waiting for Claude** si c'est le mien, **Awaiting you** si c'est celui de Claude ;
-  - **Resolved**, que moi seul change, sur-le-champ, sans review ; un nouveau message rouvre le thread ;
+  - **Resolved**, que moi seul change, sur-le-champ, sans review ; un thread Resolved n'attend plus Claude, même si mon message est le dernier,
+    et seul un message que j'y écris le rouvre, pas une réponse de Claude ;
   - **Outdated**, calculé quand l'ancre ne se retrouve plus dans le code qu'on regarde.
 - **Ré-ancrage, dès le MVP** : chercher les lignes par leur contenu exact, au plus près de leur position d'origine, et départager par les voisines ;
   sinon le thread est Outdated et s'affiche avec son extrait d'origine.
@@ -88,8 +97,11 @@ Décisions structurantes : [docs/adr/](docs/adr/).
   comme un hunk de plus.
 - **Approve** reste grisé tant qu'il reste des messages Pending.
   Il passe la session en lecture seule, n'envoie rien à Claude, et laisse commit, push et PR à la conversation.
+  La session approuvée reste consultable à son URL, mais quitte l'écran Reviews.
   On peut approuver avec des threads ouverts : la boîte de dialogue les compte.
   Un `/review-local` après un Approve ouvre une nouvelle session.
+- **Worktree disparu** (`git worktree remove`, ou Orca qui le nettoie) : dès qu'il le constate, le serveur clôt sa session comme un Approve,
+  pour qu'un nouveau worktree au même chemin n'en hérite pas.
 
 ## Écrans (maquette)
 

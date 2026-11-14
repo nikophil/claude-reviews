@@ -8,7 +8,9 @@ avec des fils de discussion sous les lignes du diff où Claude répond.
 ### Sessions et reviews
 
 **Session**:
-La relecture d'un worktree (repo et branche) comparé à sa base, de son ouverture à son approbation.
+La relecture d'un worktree comparé à sa base, de son ouverture à son approbation, ou à la disparition du worktree.
+Elle suit le worktree, pas la branche : un checkout ou un rebase ne la clôt pas.
+Une session close reste consultable, en lecture seule.
 _Avoid_: review (dans ce sens), PR
 
 **Review**:
@@ -17,6 +19,7 @@ _Avoid_: round, tour, submission
 
 **Send**:
 La review qui livre à Claude les messages Pending et réveille sa Claude session.
+Elle peut n'en porter aucun : elle prend alors un Snapshot, et ne réveille Claude que si des threads l'attendent encore.
 _Avoid_: Comment, Request changes
 
 **Approve**:
@@ -47,6 +50,7 @@ L'endroit d'un thread : un fichier, un côté du diff (ancien ou nouveau), une p
 
 **Message**:
 Une prise de parole dans un thread, de moi ou de Claude.
+Un message de Claude est publié dès qu'il l'écrit, hors de toute review ; seuls les miens passent par une review.
 _Avoid_: comment, reply
 
 **Pending**:
@@ -54,14 +58,15 @@ Se dit d'un message que j'ai écrit mais pas encore envoyé ; la prochaine revie
 _Avoid_: draft, brouillon
 
 **Waiting for Claude**:
-Un thread dont le dernier message envoyé est le mien.
+Un thread non Resolved dont le dernier message envoyé est le mien.
 _Avoid_: unread, watermark
 
 **Awaiting you**:
 Un thread dont le dernier message est de Claude.
 
 **Resolved**:
-Un thread que j'ai clos ; seul moi le résous, et un nouveau message le rouvre.
+Un thread que j'ai clos ; seul moi le résous, et seul un message que j'y écris le rouvre.
+Il n'attend plus Claude, même si mon message est le dernier, et une réponse de Claude ne le rouvre pas.
 
 **Outdated**:
 Un thread dont la ligne d'ancrage ne se retrouve plus dans le code qu'on regarde : le code affiché pour moi, le working tree pour Claude.
