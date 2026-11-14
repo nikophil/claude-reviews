@@ -26,17 +26,12 @@ test('/ serves the HTML page', async () => {
     assert.match(await res.text(), /<html data-color-mode="auto" data-light-theme="light" data-dark-theme="dark">/);
 });
 
-test('the diff API serves the worktree diff as JSON', async () => {
-    const dir = repo({ 'a.txt': 'a\n' });
-    write(dir, { 'a.txt': 'b\n' });
-
-    const res = await fetch(`http://127.0.0.1:${port}/api/diff?worktree=${encodeURIComponent(dir)}`);
+test('/s/<id> serves the HTML page of a session', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/s/0123456789abcdef`);
 
     assert.equal(res.status, 200);
-    assert.match(res.headers.get('content-type')!, /^application\/json/);
-    const body = await res.json();
-    assert.match(body.tree, /^[0-9a-f]{40}$/);
-    assert.deepEqual(body.files.map((f: { path: string }) => f.path), ['a.txt']);
+    assert.match(res.headers.get('content-type')!, /^text\/html/);
+    assert.match(await res.text(), /<script type="module" src="\/app.js">/);
 });
 
 test('static files cannot escape the UI directory', async () => {
@@ -90,7 +85,7 @@ test('a request whose Host is not the local server is refused, against DNS rebin
     assert.match(JSON.parse(refused.body).error, /Host/);
     assert.equal((await request('/', { host: `evil.example:${port}` })).status, 403);
     assert.equal((await request('/', { host: `127.0.0.1:${port + 1}` })).status, 403);
-    assert.equal((await request('/api/diff?worktree=/tmp', { host: `evil.example:${port}` })).status, 403);
+    assert.equal((await request('/api/sessions/0123456789abcdef', { host: `evil.example:${port}` })).status, 403);
     assert.equal((await request('/', { host: `localhost:${port}` })).status, 200);
     assert.equal((await request('/', { host: `127.0.0.1:${port}` })).status, 200);
 });
@@ -98,7 +93,8 @@ test('a request whose Host is not the local server is refused, against DNS rebin
 test('a request sent by another site is refused before git runs', async () => {
     const dir = repo({ 'a.txt': 'a\n' });
     write(dir, { 'a.txt': 'b\n' });
-    const path = `/api/diff?worktree=${encodeURIComponent(dir)}`;
+    const { id } = await (await fetch(`http://127.0.0.1:${port}/api/sessions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ worktree: dir }) })).json();
+    const path = `/api/sessions/${id}/diff`;
     const host = `127.0.0.1:${port}`;
     const objectsBefore = git(dir, 'count-objects');
 
@@ -116,11 +112,11 @@ test('a link from another site opens the page, but cannot call the API', async (
     const headers = { host: `127.0.0.1:${port}`, 'sec-fetch-site': 'cross-site' };
 
     assert.equal((await request('/', headers)).status, 200);
-    assert.equal((await request('/api/diff?worktree=/tmp', headers)).status, 403);
+    assert.equal((await request('/api/sessions/0123456789abcdef', headers)).status, 403);
 });
 
 test('a worktree that does not exist gets a 400 naming its path', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/api/diff?worktree=${encodeURIComponent('/no/such/worktree')}`);
+    const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ worktree: '/no/such/worktree' }) });
 
     assert.equal(res.status, 400);
     assert.match((await res.json()).error, /\/no\/such\/worktree/);

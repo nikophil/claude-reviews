@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
@@ -102,6 +102,17 @@ test('a thread of mine anchors on the displayed base, even after HEAD moved', as
     const { anchor } = opened.body.threads[0];
     assert.deepEqual(anchor.lines, ['two']);
     assert.deepEqual(anchor.hunk.lines.map((line: any) => line.text), ['one', 'two']);
+});
+
+test('the diff of a session whose worktree is gone is a 400 naming its path', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    renameSync(dir, `${dir}-gone`);
+
+    const res = await api('GET', `/api/sessions/${id}/diff`).finally(() => renameSync(`${dir}-gone`, dir));
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, `No worktree at ${dir}`);
 });
 
 test('a thread path must be canonical, relative to the top of the worktree', async () => {

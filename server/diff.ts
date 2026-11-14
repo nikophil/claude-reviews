@@ -25,7 +25,11 @@ export async function git(worktree: string, args: string[], env?: NodeJS.Process
     const pending = run('git', args, { cwd: worktree, env: { ...inherited, ...env }, maxBuffer: Infinity });
     // Without a listener, an EPIPE on stdin would crash the process; killing git turns it into a rejection.
     pending.child.stdin!.on('error', () => pending.child.kill()).end(input);
-    return (await pending).stdout;
+    return (await pending.catch(error => {
+        // A missing cwd fails the spawn itself, as "spawn git ENOENT".
+        if (error.code === 'ENOENT' && !existsSync(worktree)) throw Object.assign(new Error(`No worktree at ${worktree}`), { status: 400 });
+        throw error;
+    })).stdout;
 }
 
 /** Writes the working tree (tracked and untracked files, minus ignored ones) as a git tree, without touching the worktree's index. */

@@ -5,10 +5,10 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 ## Commandes
 
 - `npm ci` : installe `@playwright/test`, la seule dépendance, de développement.
-- `npm start` (`node server/main.ts`) : lance le serveur sur `127.0.0.1:7778`, puis ouvrir `http://127.0.0.1:7778/?worktree=<chemin absolu>`.
+- `npm start` (`node server/main.ts`) : lance le serveur sur `127.0.0.1:7778`, puis ouvrir `http://127.0.0.1:7778/?worktree=<chemin absolu>`, qui ouvre la session du worktree et redirige vers `/s/<id>`.
 - `CLAUDE_REVIEWS_PORT=<port>` change le port.
 - `node --test` : tests du serveur et des fonctions pures.
-- `npx playwright install chromium` une fois, puis `npx playwright test` : tests de l'UI, sur un serveur lancé sur le port 7779.
+- `npx playwright install chromium` une fois, puis `npx playwright test` : tests de l'UI, sur un serveur lancé sur le port 7779, avec un `XDG_DATA_HOME` temporaire.
 
 ## Structure
 
@@ -24,6 +24,10 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 
 Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 
+- `GET /s/<id>` sert la page de la session `<id>`, ouverte ou approuvée.
+- `GET /?worktree=<chemin>` sert la même page, qui ouvre la session du worktree par `POST /api/sessions`, puis remplace son URL par `/s/<id>`.
+- La page lit la session toutes les 2 s, et ne recharge le diff qu'à son ouverture.
+
 - Toute requête dont le `Host` n'est ni `127.0.0.1:<port>` ni `localhost:<port>` reçoit 403.
 - Une requête `/api/` dont le `Sec-Fetch-Site` n'est ni `same-origin` ni `none` reçoit 403.
 - Une écriture (toute méthode sauf `GET` et `HEAD`) exige `Content-Type: application/json` (sinon 415) et un `Origin` absent ou égal à `http://<Host>` (sinon 403) : l'UI envoie le sien, le mod aucun.
@@ -32,10 +36,9 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 
 | Route | Rôle |
 | --- | --- |
-| `GET /api/diff?worktree=<chemin>` | Le diff du working tree contre HEAD : `{ base, tree, files }`, où `base` et `tree` sont les ids de la base et du tree affichés. |
 | `POST /api/sessions` `{ worktree }` | Renvoie la session ouverte du worktree, ou en crée une. |
 | `GET /api/sessions/<id>` | La session, ouverte ou approuvée. |
-| `GET /api/sessions/<id>/diff` | Le diff du worktree de la session, comme `/api/diff`. |
+| `GET /api/sessions/<id>/diff` | Le diff du working tree de la session contre HEAD : `{ base, tree, files }`, où `base` et `tree` sont les ids de la base et du tree affichés. |
 | `POST /api/sessions/<id>/threads` `{ author, path, side, start, end, body, base?, tree? }` | Ouvre un thread avec son premier message (`open_thread` pour Claude). |
 | `POST /api/sessions/<id>/threads/<n>/messages` `{ author, body }` | Ajoute un message (`reply_to_thread` pour Claude). |
 | `POST /api/sessions/<id>/threads/<n>/resolve` `{}` | Résout le thread. |
@@ -100,8 +103,10 @@ Le dossier de données est `$XDG_DATA_HOME/claude-reviews`, sinon `~/.local/shar
 | `ui/vendor/primer.css`     | `@primer/css@21.5.1/dist/primer.css`                      |
 | `ui/vendor/preact-htm.js`  | `htm@3.1.1/preact/standalone.module.js` (Preact 10 inclus) |
 | `ui/vendor/highlight.js`   | `@highlightjs/cdn-assets@11.12.0/es/highlight.min.js`     |
+| `ui/vendor/marked.js`      | `marked@18.1.2/lib/marked.esm.js`                         |
 
 Primer 21.5.1 nomme ses variables de diff `--diffBlob-addition-bgColor-line` et non `--diffBlob-additionLine-bgColor` comme en 22.
+Le markdown des messages passe par marked, avec le HTML brut échappé, les images remplacées par leur texte, et seuls les liens `http`, `https` et `mailto` cliquables (`ui/app.js`).
 La coloration syntaxique passe par les variables `--color-prettylights-syntax-*` de Primer (`ui/app.css`), pas par un thème highlight.js.
 
 ## Langues

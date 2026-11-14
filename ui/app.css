@@ -15,6 +15,9 @@
 .diff-line-del .diff-num { background-color: var(--diffBlob-deletion-bgColor-num); }
 .diff-line-del .diff-code::before { content: '-'; }
 .diff-line-note .diff-code { color: var(--fgColor-muted); }
+.diff-num:not(:empty) { cursor: pointer; }
+.diff-table tr.selected td { background-color: var(--bgColor-attention-muted); }
+.diff-table .Box { font-family: var(--fontStack-system); font-size: 14px; line-height: 1.5; white-space: normal; }
 .diff-hunk td { padding: 4px 10px; background-color: var(--diffBlob-hunk-bgColor-num); color: var(--fgColor-muted); }
 
 /* highlight.js classes on GitHub's syntax colors, grouped as in its github.css theme. */

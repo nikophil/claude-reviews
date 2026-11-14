@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -50,12 +49,6 @@ export function start(port: number): Promise<Server> {
             if (origin !== undefined && origin !== `http://${req.headers.host}`) return json(res, 403, { error: `Origin ${origin} is refused` });
         }
         try {
-            if (url.pathname === '/api/diff') {
-                // ponytail: the worktree comes from the URL until the UI moves to /api/sessions/<id>/diff.
-                const worktree = url.searchParams.get('worktree');
-                if (!worktree || !existsSync(worktree)) return json(res, 400, { error: `No worktree at ${worktree}` });
-                return json(res, 200, await diff(worktree));
-            }
             if (url.pathname.startsWith('/api/sessions')) {
                 const chunks: Buffer[] = [];
                 let size = 0;
@@ -69,7 +62,8 @@ export function start(port: number): Promise<Server> {
                 return json(res, 200, await route(req.method!, url.pathname, body));
             }
             // The URL parser already resolves "..", so the joined path stays inside UI.
-            const path = join(UI, url.pathname === '/' ? 'index.html' : url.pathname);
+            // The page of a session, /s/<id>, is the same page as /, which reads the id from its URL.
+            const path = join(UI, url.pathname === '/' || /^\/s\/[0-9a-f]{16}$/.test(url.pathname) ? 'index.html' : url.pathname);
             const type = TYPES[extname(path)];
             if (!type) throw Object.assign(new Error('Not found'), { code: 'ENOENT' });
             const content = await readFile(path);
