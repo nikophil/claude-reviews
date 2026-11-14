@@ -13,5 +13,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node --test
+      - run: npm install -g @anthropic-ai/claude-code@2.1.325
+      - run: npm run test:mod
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test

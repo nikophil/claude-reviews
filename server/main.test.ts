@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { connect, type AddressInfo } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { after, before, test } from 'node:test';
@@ -133,4 +135,36 @@ test('the server listens on 127.0.0.1 only', async () => {
             socket.on('error', reject);
         }), `${host} should refuse the connection`);
     }
+});
+
+test('GET /api/health names the app and the version of the plugin', async () => {
+    const { version } = JSON.parse(readFileSync(new URL('../.claude-plugin/plugin.json', import.meta.url), 'utf8'));
+
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { app: 'claude-reviews', version });
+});
+
+test('POST /api/shutdown is guarded like any write, then stops the server', async () => {
+    const other = await start(0);
+    const url = `http://127.0.0.1:${(other.address() as AddressInfo).port}`;
+    const closed = new Promise(resolve => other.once('close', resolve));
+
+    assert.equal((await fetch(`${url}/api/shutdown`, { method: 'POST' })).status, 415);
+    const res = await fetch(`${url}/api/shutdown`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    assert.equal(res.status, 200);
+
+    await closed;
+    await assert.rejects(fetch(`${url}/api/health`));
+});
+
+test('a second server on the same port exits on EADDRINUSE, and the first keeps answering', async () => {
+    const second = spawnSync(process.execPath, [new URL('main.ts', import.meta.url).pathname], {
+        env: { ...process.env, CLAUDE_REVIEWS_PORT: String(port) }, encoding: 'utf8', timeout: 10_000,
+    });
+
+    assert.notEqual(second.status, 0);
+    assert.match(second.stderr, /EADDRINUSE/);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/health`)).status, 200);
 });

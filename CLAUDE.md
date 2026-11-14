@@ -7,7 +7,10 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 - `npm ci` : installe `@playwright/test`, la seule dépendance, de développement.
 - `npm start` (`node server/main.ts`) : lance le serveur sur `127.0.0.1:7778`, puis ouvrir `http://127.0.0.1:7778/?worktree=<chemin absolu>`, qui ouvre la session du worktree et redirige vers `/s/<id>`.
 - `CLAUDE_REVIEWS_PORT=<port>` change le port.
-- `node --test` : tests du serveur et des fonctions pures.
+- `node --test` : tests du serveur, des fonctions pures et du mod, ce dernier sous un `$` factice.
+- `npm run test:mod` : `claude plugin test` sur une copie du mod dans `var/mod/`, car il lancerait aussi les `*.test.ts` de `node --test` ; ses tests sont des `*.test.tsx`, que `node --test` ignore.
+- `claude --plugin-dir .` : une Claude session avec le mod de ce dossier.
+- `/plugin install local-reviews --marketplace nikophil/claude-reviews` : installe le mod ; il lance le serveur avec le `node` du `PATH`, en version 25 au moins.
 - `npx playwright install chromium` une fois, puis `npx playwright test` : tests de l'UI, sur un serveur lancé sur le port 7779, avec un `XDG_DATA_HOME` temporaire.
 
 ## Structure
@@ -18,6 +21,9 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 - `ui/` : page servie telle quelle, en Preact + htm sans build ni JSX.
 - `ui/vendor/` : bibliothèques front copiées telles quelles, à ne pas modifier ni relire.
 - `e2e/` : tests Playwright.
+- `.claude-plugin/` : le plugin `local-reviews` (le préfixe `claude-` est réservé à Anthropic) et la marketplace de ce dépôt ; la version du plugin est celle du serveur.
+- `hooks/register.ts` : le mod, qui enregistre les outils et `/review-local`, démarre le serveur, sonde la session toutes les 2 s et réveille Claude ; `$` n'y passe qu'à des fonctions déclarées en tête de fichier.
+- `hooks/watch.ts` : les décisions du mod (réveiller, relancer, se taire, reprendre après un `{ drop }`), en fonctions pures.
 - Aucune dépendance npm au runtime : ce qui manque s'écrit, ou se vendorise en un fichier dans `ui/vendor/`.
 
 ## Contrat HTTP
@@ -36,6 +42,9 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 
 | Route | Rôle |
 | --- | --- |
+| `GET /api/health` | `{ app: "claude-reviews", version }`, la version de `.claude-plugin/plugin.json`. |
+| `POST /api/shutdown` `{}` | Arrête le serveur : il cesse d'écouter avant de répondre. |
+| `GET /api/sessions?worktree=<chemin>` | La session ouverte du worktree, sans en créer : 404 sans session ouverte. |
 | `POST /api/sessions` `{ worktree }` | Renvoie la session ouverte du worktree, ou en crée une. |
 | `GET /api/sessions/<id>` | La session, ouverte ou approuvée. |
 | `GET /api/sessions/<id>/diff` | Le diff du working tree de la session contre HEAD : `{ base, tree, files }`, où `base` et `tree` sont les ids de la base et du tree affichés. |
@@ -54,8 +63,24 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - `base` et `tree` sont des ids de 40 ou 64 caractères hexadécimaux, d'un commit ou d'un tree pour `base`, d'un tree pour `tree`.
 - Une session approuvée refuse toute écriture avec 409 et `{ "error": "session approuvée" }`.
 - L'Approve refuse avec 409 tant qu'il reste un message Pending.
+- Un message de `claude` dans un thread sans message publié reçoit 409 : publié sur-le-champ, il passerait avant mon message Pending au Send.
 - Le mod ouvre un thread sans session connue par `POST /api/sessions`, puis `POST /api/sessions/<id>/threads` ; s'il garde l'id d'une session approuvée, il reçoit « session approuvée ».
 - Après un Approve, `POST /api/sessions` sur le même worktree ouvre une nouvelle session : seul un appel qui porte l'ancien id reçoit « session approuvée ».
+
+## Mod
+
+- Au `session.start`, le mod relie la Claude session au worktree par `git rev-parse --show-toplevel` sur le `cwd`, enregistre ses outils, puis démarre le serveur.
+- Sans réponse sur le port, il lance `node <racine du plugin>/server/main.ts` détaché par `nohup`, depuis la racine du plugin, ses sorties dans `<données>/server.log`.
+- Une version plus ancienne de claude-reviews, il l'arrête par `POST /api/shutdown` puis la relance ; une version plus récente, il l'utilise telle quelle, pour que deux Claude sessions de versions différentes n'arrêtent pas le serveur l'une de l'autre.
+- Un port qui répond autre chose que claude-reviews, ou qui ne répond pas en 2 s, ne lance rien : le mod le signale par `$.ui.log`, une ligne du transcript que le modèle ne lit pas, et sonde quand même.
+- Le mod lit `CLAUDE_REVIEWS_PORT` comme le serveur.
+- `list_open_threads()` rend, hors Resolved et hors threads sans message publié, l'id, le statut, le fichier, le côté, la plage, les lignes de l'Anchor et les messages publiés.
+- Il sonde `GET /api/sessions?worktree=` toutes les 2 s ; un Send qui laisse des threads Waiting for Claude le fait réveiller Claude par `$.prompt.submit`, jamais attendu dans un hook.
+- Seul un 404 vaut « aucune session ouverte » ; un sondage en échec laisse l'état tel quel, et le mod garde par session le dernier Send vu et la relance faite.
+- Il relance Claude une fois par Send, à la fin d'un tour fini sur une réponse, ni interrompu ni en erreur, qui laisse des threads en attente ; un `{ drop }` attend le prochain prompt ou début de tour, et ne compte pas.
+- Le premier prompt d'une Claude session porte, dans le `context` de `prompt.submit`, le nombre de threads qui l'attendent : `prompt.context` atteindrait aussi les subagents, et `cc-plugin-sec-default` le court-circuite sur les comptes Team ou Enterprise.
+- Après un Approve, `open_thread` refait `POST /api/sessions` et ouvre une nouvelle session ; `reply_to_thread` répond « session approuvée ».
+- Tout appel au serveur abandonne au bout de 2 s : sans réponse, les outils répondent `{ deny }`, `/review-local` le dit, et un sondage laisse l'état tel quel.
 
 ## Données
 

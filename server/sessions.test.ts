@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, watch } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
@@ -314,4 +314,50 @@ test('on a worktree without open session, the open_thread of Claude opens one, w
     assert.equal(opened.body.threads[0].status, 'awaiting-you');
     assert.deepEqual(opened.body.threads[0].anchor.lines, ['not displayed anywhere yet']);
     assert.ok(existsSync(join(data, 'sessions', `${id}.json`)));
+});
+
+test('a reply of Claude in a thread whose only message is a Pending one of mine is refused, so it cannot pass before mine at the Send', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    write(dir, { 'a.txt': 'b\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const shown = (await api('GET', `/api/sessions/${id}/diff`)).body;
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'me', base: shown.base, tree: shown.tree, path: 'a.txt', side: 'new', start: 1, end: 1, body: 'Why?' });
+
+    const refused = await api('POST', `/api/sessions/${id}/threads/1/messages`, { author: 'claude', body: 'Too early' });
+
+    assert.equal(refused.status, 409);
+    assert.deepEqual((await api('GET', `/api/sessions/${id}`)).body.threads[0].messages.map((m: any) => m.body), ['Why?']);
+});
+
+test('GET /api/sessions?worktree= finds the open session of a worktree without creating one', async () => {
+    const dir = repo({ 'a.txt': 'a\n', 'sub/b.txt': 'b\n' });
+    const files = () => readdirSync(join(data, 'sessions')).length;
+    const before = files();
+
+    assert.equal((await api('GET', `/api/sessions?worktree=${encodeURIComponent(dir)}`)).status, 404);
+    assert.equal(files(), before);
+
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const found = await api('GET', `/api/sessions?worktree=${encodeURIComponent(join(dir, 'sub'))}`);
+    assert.equal(found.status, 200);
+    assert.equal(found.body.id, id);
+
+    await api('POST', `/api/sessions/${id}/approve`, {});
+    assert.equal((await api('GET', `/api/sessions?worktree=${encodeURIComponent(dir)}`)).status, 404);
+});
+
+test('a session file gone between the listing and its reading, approved meanwhile, does not hide the session of another worktree', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    // A link to nothing is listed, then cannot be read: what an Approve does between the two.
+    const gone = join(data, 'sessions', '0000000000000000.json');
+    symlinkSync(join(data, 'nowhere.json'), gone);
+    try {
+        const found = await api('GET', `/api/sessions?worktree=${encodeURIComponent(dir)}`);
+
+        assert.equal(found.status, 200);
+        assert.equal(found.body.id, id);
+    } finally {
+        unlinkSync(gone);
+    }
 });

@@ -3,7 +3,7 @@ import { createServer, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { extname, join } from 'node:path';
 import { diff } from './diff.ts';
-import { addMessage, approve, getSession, httpError, openSession, openThread, resolve, send } from './sessions.ts';
+import { addMessage, approve, findSession, getSession, httpError, openSession, openThread, resolve, send } from './sessions.ts';
 
 const UI = join(import.meta.dirname, '..', 'ui');
 const TYPES: Record<string, string> = {
@@ -13,6 +13,9 @@ const TYPES: Record<string, string> = {
 };
 
 const MAX_BODY = 1024 * 1024;
+
+// The mod compares it with its own, and replaces a server of another version.
+const { version } = JSON.parse(await readFile(join(import.meta.dirname, '..', '.claude-plugin', 'plugin.json'), 'utf8'));
 
 function json(res: ServerResponse, status: number, body: unknown): void {
     res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
@@ -49,6 +52,13 @@ export function start(port: number): Promise<Server> {
             if (origin !== undefined && origin !== `http://${req.headers.host}`) return json(res, 403, { error: `Origin ${origin} is refused` });
         }
         try {
+            if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { app: 'claude-reviews', version });
+            if (url.pathname === '/api/shutdown' && req.method === 'POST') {
+                // Stops listening first, so a server started right after the answer gets the port.
+                server.close();
+                res.setHeader('connection', 'close');
+                return json(res, 200, {});
+            }
             if (url.pathname.startsWith('/api/sessions')) {
                 const chunks: Buffer[] = [];
                 let size = 0;
@@ -59,7 +69,7 @@ export function start(port: number): Promise<Server> {
                     body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
                 } catch {}
                 if (typeof body !== 'object' || body === null) return json(res, 400, { error: 'The body must be a JSON object' });
-                return json(res, 200, await route(req.method!, url.pathname, body));
+                return json(res, 200, await route(req.method!, url, body));
             }
             // The URL parser already resolves "..", so the joined path stays inside UI.
             // The page of a session, /s/<id>, is the same page as /, which reads the id from its URL.
@@ -80,7 +90,8 @@ export function start(port: number): Promise<Server> {
 }
 
 /** The session API; its contract is written in CLAUDE.md. */
-async function route(method: string, path: string, body: Record<string, unknown>): Promise<unknown> {
+async function route(method: string, { pathname: path, searchParams }: URL, body: Record<string, unknown>): Promise<unknown> {
+    if (path === '/api/sessions' && method === 'GET') return findSession(searchParams.get('worktree'));
     if (path === '/api/sessions' && method === 'POST') return exclusive(() => openSession(body.worktree));
     const [, id, action = '', thread, threadAction = ''] = path.match(/^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|threads|send|approve))?(?:\/(\d+)\/(messages|resolve))?$/) ?? [];
     switch (id && `${method} ${action}/${threadAction}`) {

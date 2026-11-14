@@ -62,8 +62,8 @@ export async function getSession(id: string) {
     return view(await load(id));
 }
 
-/** The open session of the worktree, created on first call. */
-export async function openSession(path: unknown) {
+/** The top of the worktree at `path`, and its open session if it has one. */
+async function lookup(path: unknown): Promise<{ worktree: string; session?: Session }> {
     if (typeof path !== 'string' || !isAbsolute(path)) throw httpError(400, 'worktree must be an absolute path');
     const worktree = (await git(path, ['rev-parse', '--show-toplevel']).catch(() => {
         throw httpError(400, `No git worktree at ${path}`);
@@ -71,9 +71,25 @@ export async function openSession(path: unknown) {
     const dir = join(dataDir(), 'sessions');
     const names = (await readdir(dir).catch(() => [])).filter(name => name.endsWith('.json'));
     for (const name of names) {
-        const session: Session = JSON.parse(await readFile(join(dir, name), 'utf8'));
-        if (session.worktree === worktree && !session.approvedAt) return view(session);
+        // An Approve may move a file away between the listing and its reading.
+        const content = await readFile(join(dir, name), 'utf8').catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+        const session: Session | null = content && JSON.parse(content);
+        if (session?.worktree === worktree && !session.approvedAt) return { worktree, session };
     }
+    return { worktree };
+}
+
+/** The open session of the worktree, never created: the mod looks for it without filling Reviews with empty sessions. */
+export async function findSession(path: unknown) {
+    const { worktree, session } = await lookup(path);
+    if (!session) throw httpError(404, `No open session for ${worktree}`);
+    return view(session);
+}
+
+/** The open session of the worktree, created on first call. */
+export async function openSession(path: unknown) {
+    const { worktree, session: open } = await lookup(path);
+    if (open) return view(open);
     const session = { id: randomBytes(8).toString('hex'), worktree, createdAt: new Date().toISOString(), approvedAt: null, sends: 0, threads: [] };
     await save(session);
     return view(session);
@@ -156,7 +172,12 @@ function findThread(session: Session, threadId: number): Thread {
 export async function addMessage(id: string, threadId: number, input: Record<string, unknown>) {
     const session = await writable(id);
     const thread = findThread(session, threadId);
-    thread.messages.push(message(input.author, input.body));
+    const added = message(input.author, input.body);
+    // Published at once, Claude's reply would pass before my Pending message at the Send.
+    if (added.author === 'claude' && !thread.messages.some(message => message.date)) {
+        throw httpError(409, `Thread ${threadId} has no published message to reply to`);
+    }
+    thread.messages.push(added);
     await save(session);
     return view(session);
 }

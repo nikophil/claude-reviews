@@ -1,0 +1,5 @@
+{
+  "name": "claude-reviews",
+  "owner": { "name": "nikophil" },
+  "plugins": [{ "name": "local-reviews", "source": "./" }]
+}
