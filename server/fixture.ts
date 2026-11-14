@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -29,6 +29,12 @@ export function repo(files: Record<string, string | Buffer>): string {
     git(dir, 'add', '-A');
     git(dir, 'commit', '-q', '-m', 'initial');
     return dir;
+}
+
+/** Makes the worktree at `dir` disappear, as `git worktree remove` would, by moving it next to itself, removed with the repositories. */
+export function vanish(dir: string): void {
+    renameSync(dir, `${dir}-gone`);
+    repos.push(`${dir}-gone`);
 }
 
 /** Points XDG_DATA_HOME at a temporary directory, removed with the repositories, so tests never touch the real sessions. */

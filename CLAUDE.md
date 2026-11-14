@@ -36,7 +36,8 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 
 Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 
-- `GET /s/<id>` sert la page de la session `<id>`, ouverte ou approuvée.
+- `GET /` sert l'écran Reviews : les sessions ouvertes de `GET /api/sessions`, chacune un lien vers `/s/<id>`.
+- `GET /s/<id>` sert la page de la session `<id>`, ouverte ou approuvée ; celle d'une session approuvée dont le worktree a disparu montre ses threads sur leur Anchor, sans diff, et « Closed » et son bandeau seulement si `closedBecause` le dit.
 - `GET /?worktree=<chemin>` sert la même page, qui ouvre la session du worktree par `POST /api/sessions`, puis remplace son URL par `/s/<id>`.
 - La page lit la session et `/tree` toutes les 2 s, et ne recharge le diff qu'à son ouverture, au Refresh et au changement de base.
 - Le bandeau « The code changed since it was loaded » paraît quand `/tree` diffère du diff affiché : par son `tree`, ou par sa `base` hors Since my last review, qu'un Send déplace sans changer le code.
@@ -51,6 +52,7 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 | --- | --- |
 | `GET /api/health` | `{ app: "claude-reviews", version }`, la version de `.claude-plugin/plugin.json`. |
 | `POST /api/shutdown` `{}` | Arrête le serveur : il cesse d'écouter avant de répondre. |
+| `GET /api/sessions` | Les sessions ouvertes, pour Reviews : `[{ id, worktree, repo, branch, awaitingYou, waitingForClaude, updatedAt }]`, Awaiting you d'abord, puis Waiting for Claude, puis le reste, la plus récemment active d'abord à égalité. |
 | `GET /api/sessions?worktree=<chemin>` | La session ouverte du worktree, sans en créer : 404 sans session ouverte. |
 | `POST /api/sessions` `{ worktree }` | Renvoie la session ouverte du worktree, ou en crée une. |
 | `GET /api/sessions/<id>` | La session, ouverte ou approuvée. |
@@ -63,8 +65,14 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 | `POST /api/sessions/<id>/threads/<n>/resolve` `{}` | Résout le thread. |
 | `POST /api/sessions/<id>/send` `{ tree }` | Send : Snapshot du tree affiché, puis publication des messages Pending. |
 | `POST /api/sessions/<id>/approve` `{}` | Approve : archive la session, puis supprime ses refs. |
+| `POST /api/sessions/<id>/turn-complete` `{}` | Notifie « Claude replied in N threads », suivi de « , M still waiting » s'il en reste, par `notify-send` (Linux) ou `osascript` (macOS). |
 
-- Hors `/diff`, `/tree` et `/bases`, chaque route d'une session renvoie la session entière, au format du fichier, et chaque thread y porte en plus son `status` : `resolved`, `waiting-for-claude`, `awaiting-you`, ou `null` tant qu'aucun message n'est publié.
+- Lire les sessions (`GET /api/sessions`, avec ou sans `worktree`) clôt d'abord comme un Approve chaque session ouverte dont le worktree n'existe plus, même avec des messages Pending.
+- Un worktree n'existe plus quand son `stat` répond ENOENT, que son dossier parent existe encore, et que son `commonDir`, s'il est hors du worktree, existe encore ; toute autre erreur, ou un parent ou un `commonDir` disparu lui aussi (disque démonté), laisse la session ouverte.
+- Lire ou ouvrir la session d'un worktree clôt aussi la session à son chemin qui porte un autre `commonDir` : un autre dépôt ne reprend pas la session.
+- Une lecture n'attend la file des écritures que pour clore une session ; un fichier de session illisible est ignoré, avec une ligne dans le log du serveur, sans être supprimé ni réécrit.
+- La notification compte les threads où Claude a écrit depuis le dernier Send, et les threads Waiting for Claude ; `start(port, notify)` reçoit la commande à lancer, que les tests enregistrent sans la lancer.
+- Hors `/diff`, `/tree`, `/bases` et la liste des sessions, chaque route d'une session renvoie la session entière, au format du fichier, et chaque thread y porte en plus son `status` : `resolved`, `waiting-for-claude`, `awaiting-you`, ou `null` tant qu'aucun message n'est publié.
 - Une route qui renvoie la session et reçoit `?base=<id>&tree=<id>` (le code affiché par l'UI), ou `?reanchor` (HEAD et le working tree, pour le mod), ré-ancre chaque thread sur ce code : il y porte aussi `at`, `null` s'il est Outdated, sinon `{ start, end, context }`.
 - Avec `?reanchor`, `at` vaut `{ start, end }`, sans `context` ni calcul du diff, et un thread Resolved n'a pas d'`at`.
 - Une `base` ou un `tree` mal formés dans la query reçoivent 400 avant toute écriture ; une écriture enregistrée répond 200, avec ses threads sans `at` si leur ré-ancrage échoue.
@@ -96,6 +104,7 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - Il sonde `GET /api/sessions?worktree=` toutes les 2 s ; un Send qui laisse des threads Waiting for Claude le fait réveiller Claude par `$.prompt.submit`, jamais attendu dans un hook.
 - Seul un 404 vaut « aucune session ouverte » ; un sondage en échec laisse l'état tel quel, et le mod garde par session le dernier Send vu et la relance faite.
 - Il relance Claude une fois par Send, à la fin d'un tour fini sur une réponse, ni interrompu ni en erreur, qui laisse des threads en attente ; un `{ drop }` attend le prochain prompt ou début de tour, et ne compte pas.
+- À la fin du tour ouvert par un réveil ou une relance, s'il ne doit pas relancer, il appelle une fois `POST /api/sessions/<id>/turn-complete`, sans l'attendre.
 - Le premier prompt d'une Claude session porte, dans le `context` de `prompt.submit`, le nombre de threads qui l'attendent : `prompt.context` atteindrait aussi les subagents, et `cc-plugin-sec-default` le court-circuite sur les comptes Team ou Enterprise.
 - Après un Approve, `open_thread` refait `POST /api/sessions` et ouvre une nouvelle session ; `reply_to_thread` répond « session approuvée ».
 - Tout appel au serveur abandonne au bout de 2 s : sans réponse, les outils répondent `{ deny }`, `/review-local` le dit, et un sondage laisse l'état tel quel.
@@ -107,16 +116,19 @@ Le dossier de données est `$XDG_DATA_HOME/claude-reviews`, sinon `~/.local/shar
 - Une session ouverte vit dans `sessions/<id>.json`, une session approuvée dans `archive/<id>.json`.
 - Le serveur seul écrit ces fichiers, en écrivant `<id>.json.tmp` dans le même dossier, puis en le renommant.
 - Un Send commite le tree affiché sous `refs/claude-reviews/<id>/<n>`, où `n` est le numéro du Send.
-- L'Approve écrit la session approuvée, la déplace sous `archive/`, puis supprime ses refs ; une suppression ratée laisse les refs, pas la session ouverte.
+- L'Approve écrit la session approuvée, la déplace sous `archive/`, puis supprime ses refs dans `commonDir` ; une suppression ratée laisse les refs, pas la session ouverte.
+- Un worktree disparu clôt sa session de la même façon : `approvedAt` daté, `closedBecause` à `worktree-gone`, archive, refs supprimées dans `commonDir`.
 
 ```json
 {
   "id": "9f2c4e1a7b3d5e60",
   "worktree": "/home/me/src/app",
+  "commonDir": "/home/me/src/app/.git",
   "createdAt": "2026-11-14T10:00:00.000Z",
   "approvedAt": null,
   "base": "HEAD",
   "sends": 1,
+  "sentAt": "2026-11-14T10:05:00.000Z",
   "threads": [{
     "id": 1,
     "anchor": {
@@ -136,8 +148,11 @@ Le dossier de données est `$XDG_DATA_HOME/claude-reviews`, sinon `~/.local/shar
 
 - `id` : 16 caractères hexadécimaux, distinct du chemin du worktree ; un thread a pour id son rang dans la session, à partir de 1.
 - `worktree` : la racine du worktree (`git rev-parse --show-toplevel`).
+- `commonDir` : le dépôt commun aux worktrees (`git rev-parse --git-common-dir`), où restent les refs quand le worktree disparaît ; absent des sessions plus anciennes.
 - `base` : la dernière base choisie, une `ref` de `/bases`, `HEAD` à la création.
 - `sends` : le nombre de Send, donc le numéro de la dernière ref.
+- `sentAt` : la date du dernier Send, absente avant le premier.
+- `closedBecause` : `worktree-gone` pour une session close parce que son worktree a disparu, absent sinon, même après un Approve.
 - `anchor` : jusqu'à 3 voisines dans `before` et `after`, et `hunk`, l'extrait du diff jusqu'à la fin de la plage, `null` hors du diff ; aucun SHA.
 - Un message sans `date` est Pending ; un Send le date, lui donne son numéro dans `review`, et le place après les messages déjà publiés.
 

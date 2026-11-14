@@ -12,12 +12,14 @@ export type Watch = {
     submitting: { owed: 'wake' | 'relaunch'; session: string; sends: number } | null;
     /** The last prompt was dropped: it is retried at the next prompt or turn start, not at every poll. */
     dropped: boolean;
+    /** The session whose wake or relaunch opened a turn: the end of the last turn it owes notifies it. */
+    notify: string | null;
 };
 
 /** The open session of the worktree as the mod sees it, or null without one. */
 export type Seen = { id: string; sends: number; waiting: number } | null;
 
-export const start: Watch = { sessions: {}, waiting: 0, owed: null, submitting: null, dropped: false };
+export const start: Watch = { sessions: {}, waiting: 0, owed: null, submitting: null, dropped: false, notify: null };
 
 /** The text of a wake, a relaunch and the first message alike. */
 export function prompt(waiting: number): string {
@@ -61,7 +63,15 @@ export function submitted(watch: Watch, dropped: boolean): Watch {
     if (dropped) return { ...watch, submitting: null, dropped: true };
     const known = watch.sessions[sent.session];
     const sessions = sent.owed === 'relaunch' ? { ...watch.sessions, [sent.session]: { ...known, relaunched: sent.sends } } : watch.sessions;
-    return { ...watch, submitting: null, owed: null, sessions };
+    return { ...watch, submitting: null, owed: null, sessions, notify: sent.session };
+}
+
+/**
+ * The end of a turn: the session to notify, if a wake or relaunch opened the turn and no prompt is owed after it.
+ * Each end spends it: the owed prompt notifies again once it opens its turn, and a prompt no longer owed, never.
+ */
+export function notified(watch: Watch): { watch: Watch; session: string | null } {
+    return { watch: { ...watch, notify: null }, session: watch.owed ? null : watch.notify };
 }
 
 /** A prompt or a turn starts: a dropped prompt may be submitted again. */

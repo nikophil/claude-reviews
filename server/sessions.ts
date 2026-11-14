@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, posix } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix } from 'node:path';
 import { diff, git, head, writeTree, type Hunk, type Line } from './diff.ts';
 import { reanchor } from './reanchor.ts';
 
@@ -19,8 +19,24 @@ type Anchor = {
     hunk: Hunk | null;
 };
 type Thread = { id: number; anchor: Anchor; resolved: boolean; messages: Message[] };
-/** `base` is the last base chosen: HEAD, last-review, origin/HEAD or refs/heads/<branch>. */
-export type Session = { id: string; worktree: string; createdAt: string; approvedAt: string | null; base: string; sends: number; threads: Thread[] };
+/**
+ * `base` is the last base chosen: HEAD, last-review, origin/HEAD or refs/heads/<branch>.
+ * `commonDir` is the repository shared by the worktrees, where the refs stay once the worktree is gone; absent from sessions opened before it was kept.
+ * `sentAt` is the date of the last Send.
+ * `closedBecause` tells a session closed because its worktree is gone from an approved one.
+ */
+export type Session = {
+    id: string; worktree: string; commonDir?: string; createdAt: string; approvedAt: string | null; closedBecause?: 'worktree-gone';
+    base: string; sends: number; sentAt?: string; threads: Thread[];
+};
+
+// ponytail: one queue for every session write keeps read-modify-write safe; per-session queues if writes ever wait on each other.
+let queue: Promise<unknown> = Promise.resolve();
+export function exclusive<T>(task: () => Promise<T>): Promise<T> {
+    const result = queue.then(task);
+    queue = result.catch(() => {});
+    return result;
+}
 
 export function httpError(status: number, message: string): Error {
     return Object.assign(new Error(message), { status });
@@ -64,21 +80,88 @@ export async function getSession(id: string) {
     return view(await load(id));
 }
 
-/** The top of the worktree at `path`, and its open session if it has one. */
-async function lookup(path: unknown): Promise<{ worktree: string; session?: Session }> {
-    if (typeof path !== 'string' || !isAbsolute(path)) throw httpError(400, 'worktree must be an absolute path');
-    const worktree = (await git(path, ['rev-parse', '--show-toplevel']).catch(() => {
-        throw httpError(400, `No git worktree at ${path}`);
-    })).trim();
+/** Whether `path` surely does not exist: any failure but ENOENT, a permission or an unmounted disk, may hide it. */
+function missing(path: string): Promise<boolean> {
+    return stat(path).then(() => false, error => error.code === 'ENOENT');
+}
+
+/**
+ * Whether the worktree of the session is surely gone: its path missing while its parent directory, and its common repository out of it, stay
+ * (an unmounted disk takes them, or leaves an empty mount point), or `here`, the worktree now at its path, of another repository.
+ */
+async function gone(session: Session, here?: { worktree: string; commonDir: string }): Promise<boolean> {
+    // ponytail: a main worktree created again at its path, or a linked worktree added again at its path in the same repository, keeps the same commonDir,
+    // so it takes the session over unless a read saw it gone in between.
+    if (here?.worktree === session.worktree) return !!session.commonDir && session.commonDir !== here.commonDir;
+    const exists = (path: string) => stat(path).then(() => true, () => false);
+    if (!await missing(session.worktree) || !await exists(dirname(session.worktree))) return false;
+    const { commonDir } = session;
+    return !commonDir || commonDir.startsWith(`${session.worktree}/`) || await exists(commonDir);
+}
+
+/**
+ * The open sessions; one whose worktree is gone is first closed as an Approve, so that a new worktree at its path does not inherit it.
+ * Only that closing waits for the writes, through `lock`: `exclusive`, or a no-op for a caller already inside it.
+ */
+async function openSessions(lock: typeof exclusive = exclusive, here?: { worktree: string; commonDir: string }): Promise<Session[]> {
     const dir = join(dataDir(), 'sessions');
     const names = (await readdir(dir).catch(() => [])).filter(name => name.endsWith('.json'));
+    const open = [];
+    const closing = [];
     for (const name of names) {
+        const file = join(dir, name);
         // An Approve may move a file away between the listing and its reading.
-        const content = await readFile(join(dir, name), 'utf8').catch(error => { if (error.code === 'ENOENT') return null; throw error; });
-        const session: Session | null = content && JSON.parse(content);
-        if (session?.worktree === worktree && !session.approvedAt) return { worktree, session };
+        const content = await readFile(file, 'utf8').catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+        let session: Session | null = null;
+        try {
+            session = content && JSON.parse(content);
+        } catch (error) {
+            // A power cut may leave a file truncated (see save()): it must not take every other session down with it.
+            console.error(`claude-reviews: ${file} is left out, unreadable: ${(error as Error).message}`);
+        }
+        if (!session || session.approvedAt) continue;
+        if (await gone(session, here)) closing.push(session.id);
+        else open.push(session);
     }
-    return { worktree };
+    if (closing.length) {
+        await lock(async () => {
+            // Read again under the lock: a write queued since must not be lost.
+            for (const id of closing) {
+                const session = await load(id).catch(() => null);
+                if (session && !session.approvedAt && await gone(session, here)) await close(session, 'worktree-gone');
+            }
+        });
+    }
+    return open;
+}
+
+/** The top of the worktree at `path`, its common repository, and its open session if it has one. */
+async function lookup(path: unknown, lock: typeof exclusive = exclusive): Promise<{ worktree: string; commonDir: string; session?: Session }> {
+    if (typeof path !== 'string' || !isAbsolute(path)) throw httpError(400, 'worktree must be an absolute path');
+    const [worktree, commonDir] = (await git(path, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir']).catch(() => {
+        throw httpError(400, `No git worktree at ${path}`);
+    })).trim().split('\n');
+    return { worktree, commonDir, session: (await openSessions(lock, { worktree, commonDir })).find(session => session.worktree === worktree) };
+}
+
+/** The open sessions of all worktrees, for Reviews: Awaiting you first, then Waiting for Claude, then the rest, the latest active first at a tie. */
+export async function listSessions() {
+    const list = await Promise.all((await openSessions()).map(async session => {
+        const statuses = session.threads.map(status);
+        const count = (wanted: string) => statuses.filter(status => status === wanted).length;
+        return {
+            id: session.id,
+            worktree: session.worktree,
+            repo: basename(dirname(session.commonDir ?? join(session.worktree, '.git'))),
+            // Empty on a detached HEAD.
+            branch: (await git(session.worktree, ['symbolic-ref', '--short', '-q', 'HEAD']).catch(() => '')).trim(),
+            awaitingYou: count('awaiting-you'),
+            waitingForClaude: count('waiting-for-claude'),
+            updatedAt: [session.createdAt, ...session.threads.flatMap(thread => thread.messages.map(message => message.date ?? ''))].sort().at(-1)!,
+        };
+    }));
+    const rank = (entry: typeof list[number]) => entry.awaitingYou ? 0 : entry.waitingForClaude ? 1 : 2;
+    return list.sort((a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt));
 }
 
 /** The open session of the worktree, never created: the mod looks for it without filling Reviews with empty sessions. */
@@ -88,13 +171,15 @@ export async function findSession(path: unknown) {
     return view(session);
 }
 
-/** The open session of the worktree, created on first call. */
-export async function openSession(path: unknown) {
-    const { worktree, session: open } = await lookup(path);
-    if (open) return view(open);
-    const session = { id: randomBytes(8).toString('hex'), worktree, createdAt: new Date().toISOString(), approvedAt: null, base: 'HEAD', sends: 0, threads: [] };
-    await save(session);
-    return view(session);
+/** The open session of the worktree, created on first call: a write, so that two calls never create two sessions. */
+export function openSession(path: unknown) {
+    return exclusive(async () => {
+        const { worktree, commonDir, session: open } = await lookup(path, task => task());
+        if (open) return view(open);
+        const session = { id: randomBytes(8).toString('hex'), worktree, commonDir, createdAt: new Date().toISOString(), approvedAt: null, base: 'HEAD', sends: 0, threads: [] };
+        await save(session);
+        return view(session);
+    });
 }
 
 /** The bases of the selector, in its order. */
@@ -335,24 +420,40 @@ export async function send(id: string, tree: unknown) {
         thread.messages = [...thread.messages.filter(message => message.date), ...pending.map(message => ({ ...message, date, review }))];
     }
     session.sends = review;
+    session.sentAt = date;
     await save(session);
     return view(session);
 }
 
-/** Closes the session: its file moves to archive/, where it stays readable, then its refs go. */
+/** The notification of the end of Claude's turn after a Send: the threads he replied in since, and those still waiting for him. */
+export function replies(session: Session): string {
+    const replied = session.threads.filter(thread => thread.messages.some(message => message.author === 'claude' && message.date! >= (session.sentAt ?? ''))).length;
+    const waiting = session.threads.filter(thread => status(thread) === 'waiting-for-claude').length;
+    return `Claude replied in ${replied} thread${replied === 1 ? '' : 's'}${waiting ? `, ${waiting} still waiting` : ''}`;
+}
+
 export async function approve(id: string) {
     const session = await writable(id);
     if (session.threads.some(thread => thread.messages.some(message => !message.date))) {
         throw httpError(409, 'Pending messages must be sent before an Approve');
     }
+    await close(session);
+    return view(session);
+}
+
+/** Closes the session, by an Approve or because its worktree is gone: its file moves to archive/, where it stays readable, then its refs go. */
+async function close(session: Session, because?: 'worktree-gone'): Promise<void> {
+    const { id } = session;
     // Each step leaves a closed session behind: an approved file is never reopened, wherever a crash leaves it.
     session.approvedAt = new Date().toISOString();
+    if (because) session.closedBecause = because;
     await save(session);
     await mkdir(join(dataDir(), 'archive'), { recursive: true });
     await rename(join(dataDir(), 'sessions', `${id}.json`), join(dataDir(), 'archive', `${id}.json`));
-    // ponytail: refs git cannot delete (worktree gone) stay behind, hidden; sweep refs of archived sessions if they pile up.
-    await git(session.worktree, ['for-each-ref', '--format=delete %(refname)', `refs/claude-reviews/${id}/`])
-        .then(refs => git(session.worktree, ['update-ref', '--stdin'], undefined, refs))
+    // git runs in the common repository, which outlives a linked worktree.
+    // ponytail: refs git cannot delete (whole repository gone, or session from before commonDir) stay behind, hidden; sweep refs of archived sessions if they pile up.
+    const repository = session.commonDir ?? session.worktree;
+    await git(repository, ['for-each-ref', '--format=delete %(refname)', `refs/claude-reviews/${id}/`])
+        .then(refs => git(repository, ['update-ref', '--stdin'], undefined, refs))
         .catch(() => {});
-    return view(session);
 }

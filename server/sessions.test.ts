@@ -1,18 +1,20 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, watch } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import type { Server } from 'node:http';
-import { dataHome, git, removeRepos, repo, write } from './fixture.ts';
-import { start } from './main.ts';
+import { dataHome, git, removeRepos, repo, vanish, write } from './fixture.ts';
+import { notification, start } from './main.ts';
 
 const data = join(dataHome(), 'claude-reviews');
 let server: Server;
 let base: string;
+/** The notification commands the server ran, instead of showing them. */
+const notified: string[][] = [];
 before(async () => {
-    server = await start(0);
+    server = await start(0, argv => notified.push(argv));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
 after(() => {
@@ -257,6 +259,7 @@ test('an Approve archives the session under archive/<id>, deletes its refs, keep
 
     assert.equal(approved.status, 200);
     assert.ok(approved.body.approvedAt);
+    assert.equal(approved.body.closedBecause, undefined);
     assert.equal(existsSync(join(data, 'sessions', `${id}.json`)), false);
     assert.ok(JSON.parse(readFileSync(join(data, 'archive', `${id}.json`), 'utf8')).approvedAt);
     assert.equal(git(dir, 'for-each-ref', `refs/claude-reviews/${id}/`), '');
@@ -559,4 +562,187 @@ test('a write refuses a malformed base or tree to place threads on before it is 
     const sent = await api('POST', `/api/sessions/${id}/send?base=${'0'.repeat(40)}&tree=${tree}`, { tree });
     assert.equal(sent.status, 200);
     assert.equal(sent.body.sends, 1);
+});
+
+test('the list of sessions gives the open ones, Awaiting you first, then Waiting for Claude, then the rest, without the approved', async () => {
+    const rest = (await api('POST', '/api/sessions', { worktree: repo({ 'a.txt': 'a\n' }) })).body.id;
+    const waiting = await sessionWithThread();
+    await api('POST', `${waiting.path}/messages`, { author: 'me', body: 'Why?' });
+    await api('POST', `/api/sessions/${waiting.id}/send`, { tree: await displayedTree(waiting.id) });
+    const awaiting = (await sessionWithThread()).id;
+    const approved = (await sessionWithThread()).id;
+    await api('POST', `/api/sessions/${approved}/approve`, {});
+
+    const list = await api('GET', '/api/sessions');
+
+    assert.equal(list.status, 200);
+    const ours = list.body.filter((session: any) => [rest, waiting.id, awaiting, approved].includes(session.id));
+    assert.deepEqual(ours.map((session: any) => [session.id, session.awaitingYou, session.waitingForClaude]), [[awaiting, 1, 0], [waiting.id, 0, 1], [rest, 0, 0]]);
+});
+
+test('a session whose worktree is gone, with Snapshots, is closed once the sessions are read: archived, its refs deleted from the common repository, out of the list', async () => {
+    const main = repo({ 'a.txt': 'a\n' });
+    const dir = join(main, 'linked');
+    git(main, 'worktree', 'add', '-q', dir);
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id) });
+    await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id) });
+    assert.equal(git(main, 'for-each-ref', '--format=%(refname)', `refs/claude-reviews/${id}/`).split('\n').filter(Boolean).length, 2);
+    vanish(dir);
+
+    const list = await api('GET', '/api/sessions');
+
+    assert.equal(list.body.some((session: any) => session.id === id), false);
+    assert.equal(existsSync(join(data, 'sessions', `${id}.json`)), false);
+    const archived = JSON.parse(readFileSync(join(data, 'archive', `${id}.json`), 'utf8'));
+    assert.ok(archived.approvedAt);
+    assert.equal(archived.closedBecause, 'worktree-gone');
+    assert.equal(git(main, 'for-each-ref', `refs/claude-reviews/${id}/`), '');
+});
+
+test('a new worktree at the path of a session closed because its worktree was gone opens a new session, without the threads of the old one', async () => {
+    const { dir, id } = await sessionWithThread();
+    vanish(dir);
+    await api('GET', '/api/sessions');
+    mkdirSync(dir);
+    git(dir, 'init', '-q');
+
+    const opened = await api('POST', '/api/sessions', { worktree: dir });
+
+    assert.notEqual(opened.body.id, id);
+    assert.deepEqual(opened.body.threads, []);
+});
+
+test('at turn-complete after a Send where Claude replied in 3 threads and left 1, the server notifies "Claude replied in 3 threads, 1 still waiting"', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const shown = (await api('GET', `/api/sessions/${id}/diff`)).body;
+    for (const body of ['One', 'Two', 'Three', 'Four']) {
+        await api('POST', `/api/sessions/${id}/threads`, { author: 'me', path: 'a.txt', side: 'new', start: 1, end: 1, body, base: shown.base, tree: shown.tree });
+    }
+    // Claude's message before the Send is no reply to it.
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path: 'a.txt', side: 'new', start: 1, end: 1, body: 'Before the Send' });
+    await api('POST', `/api/sessions/${id}/send`, { tree: shown.tree });
+    for (const thread of [1, 2, 3]) await api('POST', `/api/sessions/${id}/threads/${thread}/messages`, { author: 'claude', body: 'Done' });
+    notified.length = 0;
+
+    const res = await api('POST', `/api/sessions/${id}/turn-complete`, {});
+
+    assert.equal(res.status, 200);
+    const text = 'Claude replied in 3 threads, 1 still waiting';
+    assert.deepEqual(notified, [process.platform === 'darwin' ? notification(text, 'darwin') : ['notify-send', 'claude-reviews', text]]);
+    assert.deepEqual(notification(text, 'linux'), ['notify-send', 'claude-reviews', text]);
+    assert.deepEqual(notification(text, 'darwin'), ['osascript', '-e', `display notification "${text}" with title "claude-reviews"`]);
+});
+
+/** A session opened on the worktree `dir`, with a thread of Claude and my Pending reply. */
+async function sessionWithPending(dir: string): Promise<string> {
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path: 'a.txt', side: 'new', start: 1, end: 1, body: 'Look here' });
+    await api('POST', `/api/sessions/${id}/threads/1/messages`, { author: 'me', body: 'Not sent yet' });
+    return id;
+}
+
+test('a session whose worktree the server may not reach (EACCES) stays open, with its Pending message', { skip: process.getuid?.() === 0 && 'root reaches every path' }, async () => {
+    const locked = join(repo({}), 'locked');
+    const dir = join(locked, 'worktree');
+    mkdirSync(dir, { recursive: true });
+    git(dir, 'init', '-q');
+    write(dir, { 'a.txt': 'a\n' });
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'initial');
+    const id = await sessionWithPending(dir);
+    chmodSync(locked, 0);
+    try {
+        assert.equal((await api('GET', '/api/sessions')).status, 200);
+    } finally {
+        chmodSync(locked, 0o755);
+    }
+
+    assert.equal(existsSync(join(data, 'archive', `${id}.json`)), false);
+    const found = await api('GET', `/api/sessions?worktree=${encodeURIComponent(dir)}`);
+    assert.equal(found.body.id, id);
+    assert.equal(found.body.threads[0].messages.at(-1).date, null);
+});
+
+test('a linked worktree gone with its common repository, as on an unmounted disk, keeps its session open', async () => {
+    const main = repo({ 'a.txt': 'a\n' });
+    const dir = join(main, 'linked');
+    git(main, 'worktree', 'add', '-q', dir);
+    const id = await sessionWithPending(dir);
+    vanish(main);
+
+    const list = await api('GET', '/api/sessions');
+
+    assert.ok(list.body.some((session: any) => session.id === id));
+    assert.equal(existsSync(join(data, 'archive', `${id}.json`)), false);
+});
+
+test('a simple clone gone with its parent directory, as on an unmounted disk, keeps its session open, Pending included', async () => {
+    const mount = join(repo({}), 'mnt');
+    const dir = join(mount, 'app');
+    mkdirSync(dir, { recursive: true });
+    git(dir, 'init', '-q');
+    write(dir, { 'a.txt': 'a\n' });
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'initial');
+    const id = await sessionWithPending(dir);
+    renameSync(mount, `${mount}-unmounted`);
+
+    const list = await api('GET', '/api/sessions');
+
+    assert.ok(list.body.some((session: any) => session.id === id));
+    assert.equal(existsSync(join(data, 'archive', `${id}.json`)), false);
+    assert.equal(JSON.parse(readFileSync(join(data, 'sessions', `${id}.json`), 'utf8')).threads[0].messages.at(-1).date, null);
+});
+
+test('a worktree of another repository at the path of a session, with no read of the list in between, opens a new session and closes the old one', async () => {
+    const first = repo({ 'a.txt': 'a\n' });
+    const dir = join(first, 'linked');
+    git(first, 'worktree', 'add', '-q', dir);
+    const id = await sessionWithPending(dir);
+    vanish(dir);
+    git(repo({ 'b.txt': 'b\n' }), 'worktree', 'add', '-q', dir);
+
+    const opened = await api('POST', '/api/sessions', { worktree: dir });
+
+    assert.notEqual(opened.body.id, id);
+    assert.deepEqual(opened.body.threads, []);
+    assert.equal(JSON.parse(readFileSync(join(data, 'archive', `${id}.json`), 'utf8')).closedBecause, 'worktree-gone');
+});
+
+test('reading the sessions does not wait for a slow Send', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const tree = await displayedTree(id);
+    const { log, restore } = shim(dir, 'case "$1" in commit-tree) sleep 1;; esac');
+    try {
+        let sent = false;
+        const sending = api('POST', `/api/sessions/${id}/send`, { tree }).then(() => { sent = true; });
+        while (!existsSync(log) || !readFileSync(log, 'utf8').includes('commit-tree')) await new Promise(resolve => setTimeout(resolve, 10));
+
+        assert.equal((await api('GET', `/api/sessions?worktree=${encodeURIComponent(dir)}`)).status, 200);
+        assert.equal((await api('GET', '/api/sessions')).status, 200);
+
+        assert.equal(sent, false);
+        await sending;
+    } finally {
+        restore();
+    }
+});
+
+test('an unreadable session file is left out of the list and the lookups, logged, and left as it is', async t => {
+    const logged = t.mock.method(console, 'error', () => {});
+    const file = join(data, 'sessions', '0123456789abcdef.json');
+    writeFileSync(file, '{"id": "0123');
+    const dir = repo({ 'a.txt': 'a\n' });
+
+    assert.equal((await api('GET', '/api/sessions')).status, 200);
+    assert.equal((await api('POST', '/api/sessions', { worktree: dir })).status, 200);
+    assert.equal((await api('GET', `/api/sessions?worktree=${encodeURIComponent(dir)}`)).status, 200);
+
+    assert.ok(logged.mock.calls.some(call => String(call.arguments.join(' ')).includes(file)));
+    assert.equal(readFileSync(file, 'utf8'), '{"id": "0123');
+    // The tests that follow need not see it.
+    renameSync(file, `${file}.broken`);
 });

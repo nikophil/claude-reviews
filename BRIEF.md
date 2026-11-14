@@ -62,7 +62,7 @@ Décisions structurantes : [docs/adr/](docs/adr/).
    - au démarrage d'une Claude session dans un worktree où des threads attendent, il ajoute « N threads t'attendent » au premier message.
 5. **Notification** : à la fin du tour de Claude qui suit un Send, ou sa relance s'il y en a une, `notify-send` annonce « Claude replied in N threads »,
    suivi de « M still waiting » s'il en reste ; Claude a pu modifier du code après sa dernière réponse, d'où la fin du tour plutôt que la dernière réponse.
-   Qui l'envoie, du mod qui voit la fin du tour ou du serveur, se tranche avec la livraison des threads au mod.
+   Le mod voit la fin du tour et appelle le serveur, qui envoie la notification (`notify-send` ou `osascript`).
 6. **Stack** : Node 25, TypeScript exécuté sans build (type stripping), `node:http`, aucune dépendance npm.
    Front en Preact + htm, avec Primer CSS et marked, chacun vendorisé en un fichier ;
    il interroge le serveur toutes les 2 s, sans perdre un message en cours de frappe ;

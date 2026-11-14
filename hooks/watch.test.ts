@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { due, look, resumed, sending, start, submitted, turnEnded, type Watch } from './watch.ts';
+import { due, look, notified, resumed, sending, start, submitted, turnEnded, type Watch } from './watch.ts';
 
 /** What the glue does once the decision says a prompt is due: submit it, then learn whether it entered. */
 function submit(watch: Watch, dropped = false): Watch {
@@ -86,4 +86,19 @@ test('a late look that read an older Send makes nothing due again', () => {
 
     assert.equal(due(look(watch, { id: 's', sends: 2, waiting: 1 })), false, 'no second wake for Send 2');
     assert.equal(due(turnEnded(watch, { id: 's', sends: 2, waiting: 1 })), false, 'no second relaunch for Send 2');
+});
+
+test('a relaunch dropped, then made needless by threads resolved in the UI, leaves no notification for an unrelated turn', () => {
+    let watch = look(start, { id: 's', sends: 0, waiting: 0 });
+    watch = look(watch, { id: 's', sends: 1, waiting: 2 });
+    watch = submit(watch);
+    watch = turnEnded(watch, { id: 's', sends: 1, waiting: 1 });
+    assert.equal(notified(watch).session, null, 'the relaunch is owed');
+    watch = notified(watch).watch;
+    watch = submit(watch, true);
+
+    watch = look(watch, { id: 's', sends: 1, waiting: 0 });
+    watch = turnEnded(watch, { id: 's', sends: 1, waiting: 0 });
+
+    assert.equal(notified(watch).session, null);
 });

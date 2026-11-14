@@ -68,9 +68,10 @@ function App() {
         (async () => {
             const opened = worktree ? await api('/api/sessions', { worktree }) : await api(`/api/sessions/${sessionId}`);
             if (worktree) history.replaceState(null, '', `/s/${opened.id}`);
-            const loaded = await api(`/api/sessions/${opened.id}/diff`);
-            setSession(await api(`/api/sessions/${opened.id}${placedOn(loaded)}`));
-            setDiff(loaded);
+            // A closed session may outlive its worktree: without code to show, its threads show the code they were opened on.
+            const loaded = await api(`/api/sessions/${opened.id}/diff`).catch(error => { if (!opened.approvedAt) throw error; });
+            setSession(loaded ? await api(`/api/sessions/${opened.id}${placedOn(loaded)}`) : opened);
+            setDiff(loaded ?? { ref: 'HEAD', files: [] });
         })().catch(error => setError(error.message));
     }, []);
     useEffect(() => {
@@ -154,6 +155,7 @@ function App() {
             </nav>
             <main class="flex-1 min-width-0 p-3">
                 <div class="d-flex flex-items-center mb-3">
+                    <a class="mr-3" href="/">Reviews</a>
                     <h1 class="h4 flex-1">${diff.files.length} files changed <span class="text-mono text-normal color-fg-muted f6">${session.worktree}</span></h1>
                     <select aria-label="Base" class=${`form-select mr-2${forward ? ' color-border-accent-emphasis color-bg-accent' : ''}`} disabled=${busy || review.readOnly}
                         value=${diff.ref} onChange=${event => choose(event.target.value)}>
@@ -161,11 +163,12 @@ function App() {
                             <option value=${base.ref} disabled=${base.disabled}
                                 class=${forward && base.ref === 'last-review' ? 'text-bold' : ''}>${base.name}${forward && base.ref === 'last-review' ? ' (new changes)' : ''}</option>`)}
                     </select>
-                    ${review.readOnly ? html`<span class="Label Label--done">Approved</span>` : html`
+                    ${review.readOnly ? html`<span class="Label Label--done">${session.closedBecause ? 'Closed' : 'Approved'}</span>` : html`
                         <button class="btn mr-2" disabled=${busy} onClick=${() => act('/send', { tree: diff.tree })}>Send</button>
                         <button class="btn btn-primary" disabled=${busy || pending} onClick=${approve}>Approve</button>`}
                 </div>
                 ${flash && html`<div class="flash flash-error mb-3">${flash}</div>`}
+                ${session.closedBecause && html`<div class="flash mb-3">The worktree is gone: the threads show the code they were opened on.</div>`}
                 ${changed && html`<div class="flash mb-3">The code changed since it was loaded · <button class="btn-link" onClick=${refresh}>Refresh</button></div>`}
                 ${files.map((file, i) => html`
                     <${FileDiff} key=${file.path} id=${`diff-${i}`} file=${file} threads=${session.threads.filter(thread => thread.anchor.path === file.path)} review=${review} />`)}
@@ -354,4 +357,28 @@ function highlight(text, language) {
     return language ? hljs.highlight(text, { language, ignoreIllegals: true }).value : escape(text);
 }
 
-render(worktree || sessionId ? html`<${App} />` : html`<p class="m-3">Pass the worktree to review: <code>?worktree=/path/to/worktree</code></p>`, document.getElementById('app'));
+/** The open sessions of all worktrees, the ones that wait for me first. */
+function Reviews() {
+    const [sessions, setSessions] = useState();
+    const [error, setError] = useState();
+    useEffect(() => { api('/api/sessions').then(setSessions, error => setError(error.message)); }, []);
+    if (error) return html`<div class="flash flash-error m-3">${error}</div>`;
+    if (!sessions) return html`<p class="m-3 color-fg-muted">Loading…</p>`;
+    return html`
+        <main class="p-3">
+            <h1 class="h4 mb-3">Reviews</h1>
+            ${sessions.length === 0 ? html`<p class="color-fg-muted">No open session. Open one with <code>/review-local</code>, or <code>?worktree=/path/to/worktree</code>.</p>` : html`
+                <div class="Box">
+                    ${sessions.map(session => html`
+                        <a key=${session.id} href=${`/s/${session.id}`} class="Box-row d-flex flex-items-center Link--primary no-underline">
+                            <span class="text-bold mr-2">${session.repo}</span>
+                            <span class="text-mono mr-2">${session.branch}</span>
+                            <span class="flex-1 text-mono f6 color-fg-muted">${session.worktree}</span>
+                            <span class="Label Label--accent mr-2">${session.awaitingYou} Awaiting you</span>
+                            <span class="Label Label--attention">${session.waitingForClaude} Waiting for Claude</span>
+                        </a>`)}
+                </div>`}
+        </main>`;
+}
+
+render(worktree || sessionId ? html`<${App} />` : html`<${Reviews} />`, document.getElementById('app'));

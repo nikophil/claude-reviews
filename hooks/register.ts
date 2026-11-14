@@ -1,5 +1,5 @@
 import type { EngineInterface, Register } from 'claude-code';
-import { due, look, prompt, resumed, sending, start, submitted, turnEnded, type Seen, type Watch } from './watch.ts';
+import { due, look, notified, prompt, resumed, sending, start, submitted, turnEnded, type Seen, type Watch } from './watch.ts';
 
 type Session = { id: string; sends: number; threads: { id: number; status: string | null; anchor: any; at?: { start: number; end: number } | null; messages: { author: string; body: string; date: string | null }[] }[] };
 
@@ -183,11 +183,16 @@ export const register: Register = on => {
     });
 
     on('turn.complete', async ($, e, next) => {
+        if (!worktree || e.agentId !== undefined) return next(e);
         // A turn interrupted (Esc) or ended on an error is not relaunched.
-        if (worktree && e.agentId === undefined && e.reason === 'answer') {
+        if (e.reason === 'answer') {
             const open = await find($);
             if (open !== undefined) apply($, turnEnded(watch, seen(open)));
         }
+        const done = notified(watch);
+        watch = done.watch;
+        // Not awaited: the server notifies on its own time.
+        if (done.session) void api($, 'POST', `/api/sessions/${done.session}/turn-complete`, {});
         return next(e);
     });
 

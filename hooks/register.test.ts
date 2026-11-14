@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { dataHome, removeRepos, repo, write } from '../server/fixture.ts';
-import { start } from '../server/main.ts';
+import { notification, start } from '../server/main.ts';
 import { register } from './register.ts';
 import { prompt } from './watch.ts';
 
@@ -14,8 +14,10 @@ dataHome();
 const ROOT = join(import.meta.dirname, '..');
 let server: Server;
 let port: number;
+/** The notifications the server ran, instead of showing them. */
+const notified: string[][] = [];
 before(async () => {
-    server = await start(0);
+    server = await start(0, argv => notified.push(argv));
     port = (server.address() as AddressInfo).port;
 });
 after(() => {
@@ -41,7 +43,7 @@ async function mod(cwd: string, { serverPort = port } = {}) {
         return { catch() {} };
     };
     register(on as any, {} as any);
-    const seen = { submitted: [] as string[], appended: 0, run: [] as string[][], cwd: [] as (string | undefined)[], log: [] as string[], polls: [] as Function[] };
+    const seen = { fetched: [] as string[], submitted: [] as string[], appended: 0, run: [] as string[][], cwd: [] as (string | undefined)[], log: [] as string[], polls: [] as Function[] };
     let answer: object = {};
     let down = false;
     const $ = {
@@ -50,6 +52,7 @@ async function mod(cwd: string, { serverPort = port } = {}) {
         fs: { read: (path: string) => readFile(path, 'utf8') },
         http: {
             fetch: async (url: string, init?: any) => {
+                seen.fetched.push(`${init?.method ?? 'GET'} ${new URL(url).pathname}`);
                 if (down) return { status: 500, ok: false, headers: {}, text: '{"error":"down"}' };
                 const res = await fetch(url, init);
                 return { status: res.status, ok: res.ok, headers: {}, text: await res.text() };
@@ -389,4 +392,42 @@ test('a turn interrupted or ended on an error is not relaunched', async () => {
 
     await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't3' });
     assert.equal(claude.seen.submitted.length, 1);
+});
+
+test('the end of a turn that follows neither a Send nor its relaunch calls no turn-complete; the end of the turn that follows a Send calls it once', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir);
+    const calls = () => claude.seen.fetched.filter(call => call === `POST /api/sessions/${id}/turn-complete`).length;
+    await claude.poll();
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
+    await claude.settle();
+    assert.equal(calls(), 0);
+
+    await send(id, 'And this?');
+    await claude.poll();
+    await claude.tool('reply_to_thread', { id: 1, body: 'Because' });
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't2' });
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't3' });
+    await claude.settle();
+
+    assert.equal(calls(), 1);
+    assert.deepEqual(notified.at(-1), notification('Claude replied in 1 thread'));
+});
+
+test('when a Send is relaunched, turn-complete is called at the end of the relaunch, not before', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir);
+    const calls = () => claude.seen.fetched.filter(call => call === `POST /api/sessions/${id}/turn-complete`).length;
+    await claude.poll();
+    await send(id, 'And this?');
+    await claude.poll();
+
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
+    await claude.settle();
+    assert.equal(claude.seen.submitted.length, 2, 'the Send was relaunched');
+    assert.equal(calls(), 0);
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't2' });
+    await claude.settle();
+
+    assert.equal(calls(), 1);
 });

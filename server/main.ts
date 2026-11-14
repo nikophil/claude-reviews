@@ -1,8 +1,9 @@
+import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { extname, join } from 'node:path';
-import { addMessage, approve, bases, checkPlacement, chooseBase, currentTree, findSession, getSession, httpError, openSession, openThread, placed, resolve, send, sessionDiff } from './sessions.ts';
+import { addMessage, approve, bases, checkPlacement, chooseBase, currentTree, exclusive, findSession, getSession, httpError, listSessions, openSession, openThread, placed, replies, resolve, send, sessionDiff } from './sessions.ts';
 
 const UI = join(import.meta.dirname, '..', 'ui');
 const TYPES: Record<string, string> = {
@@ -20,15 +21,15 @@ function json(res: ServerResponse, status: number, body: unknown): void {
     res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 }
 
-// ponytail: one queue for every session write keeps read-modify-write safe; per-session queues if writes ever wait on each other.
-let queue: Promise<unknown> = Promise.resolve();
-function exclusive<T>(task: () => Promise<T>): Promise<T> {
-    const result = queue.then(task);
-    queue = result.catch(() => {});
-    return result;
+/** The command that shows a desktop notification: the only code proper to a platform. */
+export function notification(text: string, platform = process.platform): string[] {
+    return platform === 'darwin'
+        ? ['osascript', '-e', `display notification ${JSON.stringify(text)} with title "claude-reviews"`]
+        : ['notify-send', 'claude-reviews', text];
 }
 
-export function start(port: number): Promise<Server> {
+/** `notify` runs a notification command; the tests record it instead. */
+export function start(port: number, notify = (argv: string[]) => { execFile(argv[0], argv.slice(1), () => {}); }): Promise<Server> {
     const server = createServer(async (req, res) => {
         const { port } = server.address() as AddressInfo;
         // Against DNS rebinding: a page on another name resolving to 127.0.0.1 must not read the diffs.
@@ -69,7 +70,7 @@ export function start(port: number): Promise<Server> {
                 } catch {}
                 if (typeof body !== 'object' || body === null) return json(res, 400, { error: 'The body must be a JSON object' });
                 checkPlacement(url.searchParams);
-                const answer = await route(req.method!, url, body);
+                const answer = await route(req.method!, url, body, notify);
                 // A write recorded answers its success, even unplaced: a retry would record it twice, and the next poll places the threads.
                 return json(res, 200, await placed(answer, url.searchParams).catch(error => { if (req.method === 'GET') throw error; return answer; }));
             }
@@ -92,10 +93,11 @@ export function start(port: number): Promise<Server> {
 }
 
 /** The session API; its contract is written in CLAUDE.md. */
-async function route(method: string, { pathname: path, searchParams }: URL, body: Record<string, unknown>): Promise<unknown> {
-    if (path === '/api/sessions' && method === 'GET') return findSession(searchParams.get('worktree'));
-    if (path === '/api/sessions' && method === 'POST') return exclusive(() => openSession(body.worktree));
-    const [, id, action = '', thread, threadAction = ''] = path.match(/^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|tree|bases|base|threads|send|approve))?(?:\/(\d+)\/(messages|resolve))?$/) ?? [];
+async function route(method: string, { pathname: path, searchParams }: URL, body: Record<string, unknown>, notify: (argv: string[]) => void): Promise<unknown> {
+    // Each takes the queue of the writes itself, only when it writes: the mod's 2 s poll must not wait for a long Send.
+    if (path === '/api/sessions' && method === 'GET') return searchParams.has('worktree') ? findSession(searchParams.get('worktree')) : listSessions();
+    if (path === '/api/sessions' && method === 'POST') return openSession(body.worktree);
+    const [, id, action = '', thread, threadAction = ''] = path.match(/^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|tree|bases|base|threads|send|approve|turn-complete))?(?:\/(\d+)\/(messages|resolve))?$/) ?? [];
     switch (id && `${method} ${action}/${threadAction}`) {
         case 'GET /': return getSession(id);
         case 'GET diff/': return sessionDiff(id);
@@ -107,6 +109,11 @@ async function route(method: string, { pathname: path, searchParams }: URL, body
         case 'POST threads/resolve': return exclusive(() => resolve(id, Number(thread)));
         case 'POST send/': return exclusive(() => send(id, body.tree));
         case 'POST approve/': return exclusive(() => approve(id));
+        case 'POST turn-complete/': {
+            const session = await getSession(id);
+            notify(notification(replies(session)));
+            return session;
+        }
     }
     throw httpError(404, `No route for ${method} ${path}`);
 }
