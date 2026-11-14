@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, watch } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, watch } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
@@ -360,4 +361,124 @@ test('a session file gone between the listing and its reading, approved meanwhil
     } finally {
         unlinkSync(gone);
     }
+});
+
+function commit(dir: string, files: Record<string, string>): void {
+    write(dir, files);
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-qm', Object.keys(files).join(' '));
+}
+
+/** A worktree on branch mine, started from origin/HEAD (branch upstream), which then got a commit of its own; without any remote. */
+function forkedFromOrigin(): string {
+    const dir = repo({ 'a.txt': 'a\n' });
+    git(dir, 'checkout', '-qb', 'upstream');
+    git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    git(dir, 'checkout', '-qb', 'mine');
+    commit(dir, { 'mine.txt': 'mine\n' });
+    git(dir, 'checkout', '-q', 'upstream');
+    commit(dir, { 'theirs.txt': 'theirs\n' });
+    git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    git(dir, 'checkout', '-q', 'mine');
+    return dir;
+}
+
+test('the diff against origin/HEAD starts from the merge-base: a commit added on origin/HEAD since does not show', async () => {
+    const dir = forkedFromOrigin();
+    write(dir, { 'uncommitted.txt': 'u\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+
+    const chosen = await api('POST', `/api/sessions/${id}/base`, { base: 'origin/HEAD' });
+    const shown = await api('GET', `/api/sessions/${id}/diff`);
+
+    assert.equal(chosen.status, 200);
+    assert.equal(chosen.body.base, 'origin/HEAD');
+    assert.equal(shown.body.ref, 'origin/HEAD');
+    assert.deepEqual(shown.body.files.map((file: any) => file.path), ['mine.txt', 'uncommitted.txt']);
+});
+
+test('the bases are Uncommitted changes, Since my last review, origin/HEAD, then the other branches from the nearest merge-base to the farthest', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    git(dir, 'branch', '-m', 'far');
+    git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    git(dir, 'checkout', '-qb', 'mine');
+    commit(dir, { 'b.txt': 'b\n' });
+    git(dir, 'branch', 'mid');
+    commit(dir, { 'c.txt': 'c\n' });
+    git(dir, 'branch', 'near');
+    commit(dir, { 'd.txt': 'd\n' });
+    for (const branch of ['far', 'mid']) {
+        git(dir, 'checkout', '-q', branch);
+        commit(dir, { [`${branch}.txt`]: `${branch}\n` });
+    }
+    git(dir, 'checkout', '-q', 'mine');
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+
+    const listed = await api('GET', `/api/sessions/${id}/bases`);
+
+    assert.equal(listed.status, 200);
+    assert.deepEqual(listed.body, [
+        { ref: 'HEAD', name: 'Uncommitted changes' },
+        { ref: 'last-review', name: 'Since my last review', disabled: true },
+        { ref: 'origin/HEAD', name: 'origin/HEAD' },
+        { ref: 'refs/heads/near', name: 'near' },
+        { ref: 'refs/heads/mid', name: 'mid' },
+        { ref: 'refs/heads/far', name: 'far' },
+    ]);
+});
+
+test('the diff Since my last review shows only what changed after the Send', async () => {
+    const dir = repo({ 'a.txt': 'a\n', 'b.txt': 'b\n' });
+    write(dir, { 'a.txt': 'sent\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id) });
+    write(dir, { 'b.txt': 'after the Send\n' });
+
+    const chosen = await api('POST', `/api/sessions/${id}/base`, { base: 'last-review' });
+    const shown = await api('GET', `/api/sessions/${id}/diff`);
+
+    assert.equal(chosen.status, 200);
+    assert.equal(shown.body.ref, 'last-review');
+    assert.deepEqual(shown.body.files.map((file: any) => file.path), ['b.txt']);
+    assert.deepEqual(shown.body.files[0].hunks[0].lines.map((line: any) => [line.type, line.text]), [['del', 'b'], ['add', 'after the Send']]);
+});
+
+test('a diff asked again for the same base and tree does not run git diff again', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    // Content of its own: another test of the same second could have diffed the same pair already.
+    write(dir, { 'a.txt': `${dir}\n` });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    // A git on the PATH that logs its arguments, then runs the real one.
+    const shim = join(dir, '.git', 'shim');
+    const log = join(shim, 'log');
+    write(shim, { git: `#!/bin/sh\necho "$*" >> '${log}'\nexec '${execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim()}' "$@"\n` });
+    chmodSync(join(shim, 'git'), 0o755);
+    const path = process.env.PATH;
+    process.env.PATH = `${shim}:${path}`;
+    const diffs = () => readFileSync(log, 'utf8').split('\n').filter(args => / diff --no-color /.test(args)).length;
+    try {
+        const first = await api('GET', `/api/sessions/${id}/diff`);
+        const second = await api('GET', `/api/sessions/${id}/diff`);
+
+        assert.deepEqual(second.body, first.body);
+        assert.equal(diffs(), 1);
+        write(dir, { 'a.txt': `${dir} changed\n` });
+        await api('GET', `/api/sessions/${id}/diff`);
+        assert.equal(diffs(), 2);
+    } finally {
+        process.env.PATH = path;
+    }
+});
+
+test('Since my last review cannot be chosen before the first Send, nor a base the worktree does not have', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+
+    for (const base of ['last-review', 'origin/HEAD', 'refs/heads/nowhere', 'HEAD~1']) {
+        const refused = await api('POST', `/api/sessions/${id}/base`, { base });
+        assert.equal(refused.status, 400, base);
+    }
+    assert.equal((await api('GET', `/api/sessions/${id}`)).body.base, 'HEAD');
 });

@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, posix } from 'node:path';
-import { diff, git, type Hunk } from './diff.ts';
+import { diff, git, head, writeTree, type Hunk } from './diff.ts';
 
 /** A message without date is Pending; `review` is the Send that published one of mine. */
 type Message = { author: 'me' | 'claude'; body: string; date: string | null; review?: number };
@@ -18,7 +18,8 @@ type Anchor = {
     hunk: Hunk | null;
 };
 type Thread = { id: number; anchor: Anchor; resolved: boolean; messages: Message[] };
-export type Session = { id: string; worktree: string; createdAt: string; approvedAt: string | null; sends: number; threads: Thread[] };
+/** `base` is the last base chosen: HEAD, last-review, origin/HEAD or refs/heads/<branch>. */
+export type Session = { id: string; worktree: string; createdAt: string; approvedAt: string | null; base: string; sends: number; threads: Thread[] };
 
 export function httpError(status: number, message: string): Error {
     return Object.assign(new Error(message), { status });
@@ -90,9 +91,56 @@ export async function findSession(path: unknown) {
 export async function openSession(path: unknown) {
     const { worktree, session: open } = await lookup(path);
     if (open) return view(open);
-    const session = { id: randomBytes(8).toString('hex'), worktree, createdAt: new Date().toISOString(), approvedAt: null, sends: 0, threads: [] };
+    const session = { id: randomBytes(8).toString('hex'), worktree, createdAt: new Date().toISOString(), approvedAt: null, base: 'HEAD', sends: 0, threads: [] };
     await save(session);
     return view(session);
+}
+
+/** The bases of the selector, in its order. */
+export async function bases(session: Session): Promise<{ ref: string; name: string; disabled?: boolean }[]> {
+    const list = [{ ref: 'HEAD', name: 'Uncommitted changes' }, { ref: 'last-review', name: 'Since my last review', disabled: session.sends === 0 }];
+    if (await git(session.worktree, ['rev-parse', '--verify', '-q', 'origin/HEAD']).then(() => true, () => false)) list.push({ ref: 'origin/HEAD', name: 'origin/HEAD' });
+    // Each line: "*" on the checked-out branch, the ref, then its commits not in HEAD and HEAD's commits not in it, past their merge-base.
+    const lines = await git(session.worktree, ['for-each-ref', '--format=%(HEAD) %(refname) %(ahead-behind:HEAD)', 'refs/heads/']).catch(() => '');
+    const branches = lines.split('\n').filter(line => line.startsWith('  ')).map(line => line.slice(2).split(' '))
+        .map(([ref, ahead, behind]) => ({ ref, ahead: Number(ahead), behind: Number(behind) }));
+    // The nearest merge-base is the one fewest commits of HEAD lie after: the parent of a stacked branch comes first.
+    branches.sort((a, b) => a.behind - b.behind || a.ahead - b.ahead);
+    return [...list, ...branches.map(({ ref }) => ({ ref, name: ref.slice('refs/heads/'.length) }))];
+}
+
+export async function chooseBase(id: string, base: unknown) {
+    const session = await writable(id);
+    if (!(await bases(session)).some(choice => choice.ref === base && !choice.disabled)) throw httpError(400, `${base} is not a base of session ${id}`);
+    session.base = base as string;
+    await save(session);
+    return view(session);
+}
+
+/**
+ * The ids the UI would display now: the commit the session's base names, and a tree of the working tree.
+ * A branch or origin/HEAD names its merge-base with HEAD; a base that names nothing anymore (no Snapshot, branch gone) falls back to HEAD.
+ */
+async function current(session: Session): Promise<{ ref: string; base: string; tree: string }> {
+    const ref = session.base ?? 'HEAD';
+    // ponytail: the 2 s poll writes no object when nothing changed (0 new loose objects over 10 polls), but rehashes every
+    // modified and untracked file (7 ms on this repository); skip writeTree while no file stat moved if big untracked files slow it.
+    const tree = await writeTree(session.worktree);
+    const base = ref === 'HEAD' ? '' : (await git(session.worktree, ref === 'last-review'
+        ? ['rev-parse', '--verify', '-q', `refs/claude-reviews/${session.id}/${session.sends}^{commit}`]
+        : ['merge-base', 'HEAD', ref]).catch(() => '')).trim();
+    return base ? { ref, base, tree } : { ref: 'HEAD', base: await head(session.worktree), tree };
+}
+
+/** What the poll compares with the displayed diff, without computing a diff. */
+export async function currentTree(id: string) {
+    return current(await load(id));
+}
+
+export async function sessionDiff(id: string) {
+    const session = await load(id);
+    const shown = await current(session);
+    return { ...shown, ...await diff(session.worktree, shown) };
 }
 
 function message(author: unknown, body: unknown): Message {

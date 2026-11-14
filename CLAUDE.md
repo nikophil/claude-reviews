@@ -2,6 +2,11 @@
 
 Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nommer les choses avec les mots du glossaire.
 
+## Prérequis
+
+- Node 25 au moins.
+- git 2.41 au moins : la liste des bases trie les branches par `%(ahead-behind:HEAD)` de `git for-each-ref`.
+
 ## Commandes
 
 - `npm ci` : installe `@playwright/test`, la seule dépendance, de développement.
@@ -16,7 +21,7 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 ## Structure
 
 - `server/` : serveur `node:http` en TypeScript, exécuté par Node 25 sans build (type stripping) ; les imports portent l'extension `.ts`.
-- `server/diff.ts` : écrit le tree du working tree avec un index temporaire, puis calcule et parse `git diff HEAD <tree>`.
+- `server/diff.ts` : écrit le tree du working tree avec un index temporaire, puis calcule et parse `git diff <base> <tree>`.
 - `server/sessions.ts` : sessions, threads, messages, Send et Approve, stockés en JSON sous le dossier de données.
 - `ui/` : page servie telle quelle, en Preact + htm sans build ni JSX.
 - `ui/vendor/` : bibliothèques front copiées telles quelles, à ne pas modifier ni relire.
@@ -32,7 +37,8 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 
 - `GET /s/<id>` sert la page de la session `<id>`, ouverte ou approuvée.
 - `GET /?worktree=<chemin>` sert la même page, qui ouvre la session du worktree par `POST /api/sessions`, puis remplace son URL par `/s/<id>`.
-- La page lit la session toutes les 2 s, et ne recharge le diff qu'à son ouverture.
+- La page lit la session et `/tree` toutes les 2 s, et ne recharge le diff qu'à son ouverture, au Refresh et au changement de base.
+- Le bandeau « The code changed since it was loaded » paraît quand `/tree` diffère du diff affiché : par son `tree`, ou par sa `base` hors Since my last review, qu'un Send déplace sans changer le code.
 
 - Toute requête dont le `Host` n'est ni `127.0.0.1:<port>` ni `localhost:<port>` reçoit 403.
 - Une requête `/api/` dont le `Sec-Fetch-Site` n'est ni `same-origin` ni `none` reçoit 403.
@@ -47,16 +53,22 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 | `GET /api/sessions?worktree=<chemin>` | La session ouverte du worktree, sans en créer : 404 sans session ouverte. |
 | `POST /api/sessions` `{ worktree }` | Renvoie la session ouverte du worktree, ou en crée une. |
 | `GET /api/sessions/<id>` | La session, ouverte ou approuvée. |
-| `GET /api/sessions/<id>/diff` | Le diff du working tree de la session contre HEAD : `{ base, tree, files }`, où `base` et `tree` sont les ids de la base et du tree affichés. |
+| `GET /api/sessions/<id>/diff` | Le diff du working tree de la session contre sa base : `{ ref, base, tree, files }`, où `ref` est la base choisie, ou `HEAD` quand elle ne désigne plus rien, et `base` et `tree` les ids de la base et du tree affichés. |
+| `GET /api/sessions/<id>/tree` | `{ ref, base, tree }` comme `/diff`, sans calculer le diff : le poll de l'UI le compare au diff affiché. |
+| `GET /api/sessions/<id>/bases` | Les bases du sélecteur, dans son ordre : `[{ ref, name, disabled? }]`. |
+| `POST /api/sessions/<id>/base` `{ base }` | Choisit la base de la session parmi les `ref` non grisées de `/bases`. |
 | `POST /api/sessions/<id>/threads` `{ author, path, side, start, end, body, base?, tree? }` | Ouvre un thread avec son premier message (`open_thread` pour Claude). |
 | `POST /api/sessions/<id>/threads/<n>/messages` `{ author, body }` | Ajoute un message (`reply_to_thread` pour Claude). |
 | `POST /api/sessions/<id>/threads/<n>/resolve` `{}` | Résout le thread. |
 | `POST /api/sessions/<id>/send` `{ tree }` | Send : Snapshot du tree affiché, puis publication des messages Pending. |
 | `POST /api/sessions/<id>/approve` `{}` | Approve : archive la session, puis supprime ses refs. |
 
-- Chaque route d'une session renvoie la session entière, au format du fichier, et chaque thread y porte en plus son `status` : `resolved`, `waiting-for-claude`, `awaiting-you`, ou `null` tant qu'aucun message n'est publié.
+- Hors `/diff`, `/tree` et `/bases`, chaque route d'une session renvoie la session entière, au format du fichier, et chaque thread y porte en plus son `status` : `resolved`, `waiting-for-claude`, `awaiting-you`, ou `null` tant qu'aucun message n'est publié.
 - `author` vaut `me` ou `claude` : un message de `me` naît Pending, un message de `claude` est publié sur-le-champ.
 - Un message de `me` rouvre un thread Resolved au Send qui le publie, pas un message de `claude`.
+- Les bases sont `HEAD` (Uncommitted changes), `last-review` (Since my last review, le Snapshot du dernier Send, grisé avant le premier), `origin/HEAD`, puis les branches locales `refs/heads/<nom>` hors celle du worktree, de la plus proche du merge-base à la plus lointaine.
+- Une branche et `origin/HEAD` comparent depuis leur merge-base avec HEAD.
+- Le diff se garde en mémoire par paire (`base`, `tree`) : le redemander sans changement ne relance pas `git diff`.
 - `side` vaut `old` ou `new`, et `start` et `end` sont les numéros de la première et de la dernière ligne de la plage, de ce côté.
 - L'Anchor se capture sur le code que voit l'auteur : pour `me`, la `base` et le `tree` affichés, obligatoires ; pour `claude`, HEAD et le working tree au moment de l'appel.
 - `path` est le chemin du fichier depuis la racine du worktree, sous sa forme canonique : ni `./`, ni `/` en tête, ni segment vide ou `.`.
@@ -97,6 +109,7 @@ Le dossier de données est `$XDG_DATA_HOME/claude-reviews`, sinon `~/.local/shar
   "worktree": "/home/me/src/app",
   "createdAt": "2026-11-14T10:00:00.000Z",
   "approvedAt": null,
+  "base": "HEAD",
   "sends": 1,
   "threads": [{
     "id": 1,
@@ -117,6 +130,7 @@ Le dossier de données est `$XDG_DATA_HOME/claude-reviews`, sinon `~/.local/shar
 
 - `id` : 16 caractères hexadécimaux, distinct du chemin du worktree ; un thread a pour id son rang dans la session, à partir de 1.
 - `worktree` : la racine du worktree (`git rev-parse --show-toplevel`).
+- `base` : la dernière base choisie, une `ref` de `/bases`, `HEAD` à la création.
 - `sends` : le nombre de Send, donc le numéro de la dernière ref.
 - `anchor` : jusqu'à 3 voisines dans `before` et `after`, et `hunk`, l'extrait du diff jusqu'à la fin de la plage, `null` hors du diff ; aucun SHA.
 - Un message sans `date` est Pending ; un Send le date, lui donne son numéro dans `review`, et le place après les messages déjà publiés.

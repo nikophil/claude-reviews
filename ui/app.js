@@ -47,12 +47,20 @@ function App() {
     const [selection, setSelection] = useState(null);
     // The first message of a new thread lives here, so it follows the selection from line to line and file to file.
     const draft = useState('');
+    // Messages being written, by thread: a thread out of the displayed diff keeps its own.
+    const [messages, setMessages] = useState({});
+    const [bases, setBases] = useState([]);
+    const [changed, setChanged] = useState(false);
+    // Since my last review, put forward after a Refresh that a Snapshot came before.
+    const [forward, setForward] = useState(false);
     const [busy, setBusy] = useState(false);
     // Odd while a write is on its way: one write at a time, and a poll that crossed a write is stale.
     const writes = useRef(0);
     // What the author sees now, for a write that answers after they typed or selected on.
     const now = useRef();
     now.current = { selection, text: draft[0] };
+    const shown = useRef();
+    shown.current = diff;
     useEffect(() => {
         (async () => {
             const opened = worktree ? await api('/api/sessions', { worktree }) : await api(`/api/sessions/${sessionId}`);
@@ -62,15 +70,27 @@ function App() {
         })().catch(error => setError(error.message));
     }, []);
     useEffect(() => {
+        if (session) api(`/api/sessions/${session.id}/bases`).then(setBases, () => {});
+    }, [session?.id, session?.sends]);
+    useEffect(() => {
         if (!session || session.approvedAt) return;
         // The next poll leaves 2 s after the answer to the last one, so a slow server never has two polls on its way.
         let stopped = false;
         let timer;
         const poll = () => {
             const at = writes.current;
-            api(`/api/sessions/${session.id}`).then(fresh => {
-                if (writes.current === at) setSession(current => JSON.stringify(current) === JSON.stringify(fresh) ? current : fresh);
-            }, () => {}).finally(() => { if (!stopped) timer = setTimeout(poll, 2000); });
+            const loaded = shown.current;
+            Promise.allSettled([
+                api(`/api/sessions/${session.id}`).then(fresh => {
+                    if (writes.current === at) setSession(current => JSON.stringify(current) === JSON.stringify(fresh) ? current : fresh);
+                }),
+                // Both ids name content: a mismatch is a change, whenever the displayed diff was loaded.
+                // Since my last review, only a Send moves the base, and a Send changes no code.
+                // An answer to a poll that left before a new diff was loaded (base chosen, Refresh) is stale.
+                api(`/api/sessions/${session.id}/tree`).then(now => {
+                    if (loaded && loaded === shown.current) setChanged(now.tree !== loaded.tree || (now.base !== loaded.base && loaded.ref !== 'last-review'));
+                }),
+            ]).finally(() => { if (!stopped) timer = setTimeout(poll, 2000); });
         };
         timer = setTimeout(poll, 2000);
         return () => {
@@ -81,13 +101,14 @@ function App() {
 
     if (error) return html`<div class="flash flash-error m-3">${error}</div>`;
     if (!diff) return html`<p class="m-3 color-fg-muted">Loading…</p>`;
-    /** Posts to the session, and tells whether it took. */
-    const act = async (path, body) => {
+    /** Posts to the session, then runs `then` before the next write, and tells whether it took. */
+    const act = async (path, body, then) => {
         if (writes.current % 2) return false;
         writes.current++;
         setBusy(true);
         try {
             setSession(await api(`/api/sessions/${session.id}${path}`, body));
+            await then?.();
             setFlash(null);
             return true;
         } catch (error) {
@@ -98,7 +119,19 @@ function App() {
             setBusy(false);
         }
     };
-    const review = { readOnly: !!session.approvedAt, busy, selection, setSelection, draft, act, diff, now };
+    const load = async () => {
+        const fresh = await api(`/api/sessions/${session.id}/diff`);
+        setDiff(fresh);
+        setChanged(false);
+        return fresh;
+    };
+    const refresh = () => load().then(fresh => setForward(session.sends > 0 && fresh.ref !== 'last-review'), error => setFlash(error.message));
+    const choose = ref => {
+        setForward(false);
+        act('/base', { base: ref }, load);
+    };
+    const message = id => [messages[id] ?? '', text => setMessages(all => ({ ...all, [id]: typeof text === 'function' ? text(all[id] ?? '') : text }))];
+    const review = { readOnly: !!session.approvedAt, busy, selection, setSelection, draft, message, act, diff, now };
     const pending = session.threads.some(thread => thread.messages.some(message => !message.date));
     const approve = () => {
         const open = session.threads.filter(thread => !thread.resolved).length;
@@ -112,13 +145,20 @@ function App() {
             <main class="flex-1 min-width-0 p-3">
                 <div class="d-flex flex-items-center mb-3">
                     <h1 class="h4 flex-1">${diff.files.length} files changed <span class="text-mono text-normal color-fg-muted f6">${session.worktree}</span></h1>
+                    <select aria-label="Base" class=${`form-select mr-2${forward ? ' color-border-accent-emphasis color-bg-accent' : ''}`} disabled=${busy || review.readOnly}
+                        value=${diff.ref} onChange=${event => choose(event.target.value)}>
+                        ${bases.map(base => html`
+                            <option value=${base.ref} disabled=${base.disabled}
+                                class=${forward && base.ref === 'last-review' ? 'text-bold' : ''}>${base.name}${forward && base.ref === 'last-review' ? ' (new changes)' : ''}</option>`)}
+                    </select>
                     ${review.readOnly ? html`<span class="Label Label--done">Approved</span>` : html`
                         <button class="btn mr-2" disabled=${busy} onClick=${() => act('/send', { tree: diff.tree })}>Send</button>
                         <button class="btn btn-primary" disabled=${busy || pending} onClick=${approve}>Approve</button>`}
                 </div>
                 ${flash && html`<div class="flash flash-error mb-3">${flash}</div>`}
+                ${changed && html`<div class="flash mb-3">The code changed since it was loaded · <button class="btn-link" onClick=${refresh}>Refresh</button></div>`}
                 ${diff.files.map((file, i) => html`
-                    <${FileDiff} key=${i} id=${`diff-${i}`} file=${file} threads=${session.threads.filter(thread => thread.anchor.path === file.path)} review=${review} />`)}
+                    <${FileDiff} key=${file.path} id=${`diff-${i}`} file=${file} threads=${session.threads.filter(thread => thread.anchor.path === file.path)} review=${review} />`)}
             </main>
         </div>`;
 }
@@ -169,8 +209,8 @@ function endsAt(range, file, line) {
     return range?.path === file.path && (range.side === 'new' ? line.newNo : line.oldNo) === range.end;
 }
 
-// Rows carry keys, so a thread arriving above a reply being typed moves its row instead of rebuilding the textarea.
-function rows(file, threads, { readOnly, busy, selection, setSelection, draft, act, diff, now }) {
+// Rows carry keys, so a thread arriving above a message being typed moves its row instead of rebuilding the textarea.
+function rows(file, threads, { readOnly, busy, selection, setSelection, draft, message, act, diff, now }) {
     const lang = language(file.path);
     const selected = (side, no) => selection?.path === file.path && selection.side === side && no >= selection.start && no <= selection.end;
     // A click selects a line, a Shift+click extends the selection from the line clicked first, on the same side of the same file.
@@ -203,7 +243,7 @@ function rows(file, threads, { readOnly, busy, selection, setSelection, draft, a
                 </tr>`,
             // ponytail: a thread whose last line is not in the displayed diff is not shown; slice 5 shows it with its excerpt.
             ...threads.filter(thread => endsAt(thread.anchor, file, line)).map(thread => html`
-                <tr key=${`t${thread.id}`}><td colspan="3"><${Thread} thread=${thread} readOnly=${readOnly} busy=${busy} act=${act} /></td></tr>`),
+                <tr key=${`t${thread.id}`}><td colspan="3"><${Thread} thread=${thread} draft=${message(thread.id)} readOnly=${readOnly} busy=${busy} act=${act} /></td></tr>`),
             !readOnly && endsAt(selection, file, line) && html`
                 <tr key="selection"><td colspan="3"><div class="Box m-2 p-2">
                     <${Composer} draft=${draft} busy=${busy} onSubmit=${openThread} onCancel=${cancel} />
@@ -213,7 +253,7 @@ function rows(file, threads, { readOnly, busy, selection, setSelection, draft, a
     ]);
 }
 
-function Thread({ thread, readOnly, busy, act }) {
+function Thread({ thread, draft, readOnly, busy, act }) {
     const [label, color] = STATUS[thread.status] ?? [];
     const { side, start, end } = thread.anchor;
     const sign = side === 'new' ? '+' : '-';
@@ -235,7 +275,7 @@ function Thread({ thread, readOnly, busy, act }) {
                 </div>`)}
             ${!readOnly && html`
                 <div class="Box-footer">
-                    <${Composer} busy=${busy} onSubmit=${body => act(`/threads/${thread.id}/messages`, { author: 'me', body })} />
+                    <${Composer} draft=${draft} busy=${busy} onSubmit=${body => act(`/threads/${thread.id}/messages`, { author: 'me', body })} />
                     ${!thread.resolved && html`<button class="btn btn-sm mt-2" disabled=${busy} onClick=${() => act(`/threads/${thread.id}/resolve`, {})}>Resolve</button>`}
                 </div>`}
         </details>`;
@@ -243,8 +283,7 @@ function Thread({ thread, readOnly, busy, act }) {
 
 /** A message being written, kept across polls, and cleared once the server took it, unless typed on meanwhile. */
 function Composer({ draft, busy, onSubmit, onCancel }) {
-    const own = useState('');
-    const [text, setText] = draft ?? own;
+    const [text, setText] = draft;
     const submit = async event => {
         event.preventDefault();
         const sent = text;
