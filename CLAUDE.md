@@ -58,6 +58,7 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 | `GET /api/sessions/<id>` | La session, ouverte ou approuvée. |
 | `GET /api/sessions/<id>/diff[?base=&tree=][&w=1]` | Le diff du working tree de la session contre sa base : `{ ref, base, tree, files }`, où `ref` est la base choisie, ou `HEAD` quand elle ne désigne plus rien, et `base` et `tree` les ids de la base et du tree affichés ; avec `?base=&tree=`, `{ base, tree, files }`, le diff de ces ids ; avec `w=1` (Hide whitespace), `git diff -w`. |
 | `GET /api/sessions/<id>/tree` | `{ ref, base, tree }` comme `/diff`, sans calculer le diff : le poll de l'UI le compare au diff affiché. |
+| `GET /api/sessions/<id>/lines?path=<chemin>&tree=<id>&from=<n>&to=<m>` | `{ lines }`, les lignes `from` à `to` du fichier dans le tree affiché, que le diff cache et qu'« Expand » montre. |
 | `GET /api/sessions/<id>/bases` | Les bases du sélecteur, dans son ordre : `[{ ref, name, disabled? }]`. |
 | `POST /api/sessions/<id>/base` `{ base }` | Choisit la base de la session parmi les `ref` non grisées de `/bases`. |
 | `POST /api/sessions/<id>/threads` `{ author, path, side, start, end, body, base?, tree? }` | Ouvre un thread avec son premier message (`open_thread` pour Claude). |
@@ -73,7 +74,7 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - Lire ou ouvrir la session d'un worktree clôt aussi la session à son chemin qui porte un autre `commonDir` : un autre dépôt ne reprend pas la session.
 - Une lecture n'attend la file des écritures que pour clore une session ; un fichier de session illisible est ignoré, avec une ligne dans le log du serveur, sans être supprimé ni réécrit.
 - La notification compte les threads où Claude a écrit depuis le dernier Send, et les threads Waiting for Claude ; `start(port, notify)` reçoit la commande à lancer, que les tests enregistrent sans la lancer.
-- Hors `/diff`, `/tree`, `/bases` et la liste des sessions, chaque route d'une session renvoie la session entière, au format du fichier, et chaque thread y porte en plus son `status` : `resolved`, `waiting-for-claude`, `awaiting-you`, ou `null` tant qu'aucun message n'est publié.
+- Hors `/diff`, `/tree`, `/lines`, `/bases` et la liste des sessions, chaque route d'une session renvoie la session entière, au format du fichier, et chaque thread y porte en plus son `status` : `resolved`, `waiting-for-claude`, `awaiting-you`, ou `null` tant qu'aucun message n'est publié.
 - Une route qui renvoie la session et reçoit `?base=<id>&tree=<id>` (le code affiché par l'UI), ou `?reanchor` (HEAD et le working tree, pour le mod), ré-ancre chaque thread sur ce code : il y porte aussi `at`, `null` s'il est Outdated, sinon `{ start, end, context }`.
 - Avec `?reanchor`, `at` vaut `{ start, end }`, sans `context` ni calcul du diff, et un thread Resolved n'a pas d'`at`.
 - Une `base` ou un `tree` mal formés dans la query, ou un `w` autre que `1`, reçoivent 400 avant toute écriture ; une écriture enregistrée répond 200, avec ses threads sans `at` si leur ré-ancrage échoue.
@@ -89,6 +90,9 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - L'Anchor se capture sur le code que voit l'auteur : pour `me`, la `base` et le `tree` affichés, obligatoires ; pour `claude`, HEAD et le working tree au moment de l'appel.
 - `path` est le chemin du fichier depuis la racine du worktree, sous sa forme canonique : ni `./`, ni `/` en tête, ni segment vide ou `.`.
 - `base` et `tree` sont des ids de 40 ou 64 caractères hexadécimaux, d'un commit ou d'un tree pour `base`, d'un tree pour `tree`.
+- `/lines` refuse avec 400 un chemin non canonique, un `tree` qui n'est pas un tree du dépôt de la session, et une plage hors de `1 ≤ from ≤ to` ou de plus de 1000 lignes.
+- Dans `/diff`, chaque fichier modifié porte `lineCount`, son nombre de lignes dans le tree, pour savoir où s'arrêtent les lignes cachées après son dernier hunk ; 0 pour les autres fichiers, et pour tous quand `git grep` échoue, sans faire échouer le diff.
+- Le diff garde 3 lignes de contexte autour des changements, quelles que soient les configs `diff.context` et `diff.interHunkContext`.
 - Une session approuvée refuse toute écriture avec 409 et `{ "error": "session approuvée" }`.
 - L'Approve refuse avec 409 tant qu'il reste un message Pending.
 - Un message de `claude` dans un thread sans message publié reçoit 409 : publié sur-le-champ, il passerait avant mon message Pending au Send.

@@ -880,3 +880,50 @@ test('an approved session refuses to mark a file Viewed with 409, and writes not
     assert.equal(marked.body.error, 'session approuvée');
     assert.deepEqual(JSON.parse(readFileSync(join(data, 'archive', `${id}.json`), 'utf8')).viewed, {});
 });
+
+test('/lines gives lines 30 to 49 of a file of 100 lines in the displayed tree, not in the working tree', async () => {
+    const lines = Array.from({ length: 100 }, (_, i) => `line ${i + 1}`);
+    const dir = repo({ 'd/a.txt': `${lines.join('\n')}\n` });
+    write(dir, { 'd/a.txt': `${['shown', ...lines.slice(1)].join('\n')}\n` });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const { tree } = (await api('GET', `/api/sessions/${id}/diff`)).body;
+    write(dir, { 'd/a.txt': 'changed since\n' });
+
+    const res = await api('GET', `/api/sessions/${id}/lines?path=d/a.txt&tree=${tree}&from=30&to=49`);
+
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.lines, lines.slice(29, 49));
+});
+
+test('/lines refuses with 400 a path that is not canonical, a tree id that is not a tree of the repository, or a range out of order', async () => {
+    const dir = repo({ 'a.txt': 'a\n', 'd/b.txt': 'b\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const { base, tree } = (await api('GET', `/api/sessions/${id}/diff`)).body;
+    const lines = (query: string) => api('GET', `/api/sessions/${id}/lines?${query}`);
+
+    for (const path of ['../x', './a.txt', '/a.txt', 'd//b.txt', 'd/../a.txt', '']) {
+        assert.equal((await lines(`path=${encodeURIComponent(path)}&tree=${tree}&from=1&to=1`)).status, 400, path);
+    }
+    for (const id of ['abc', base, 'f'.repeat(40)]) assert.equal((await lines(`path=a.txt&tree=${id}&from=1&to=1`)).status, 400, id);
+    for (const range of ['from=0&to=1', 'from=2&to=1', 'from=1', 'from=a&to=b', 'from=1.5&to=2', 'from=1&to=1001']) {
+        assert.equal((await lines(`path=a.txt&tree=${tree}&${range}`)).status, 400, range);
+    }
+    assert.equal((await lines(`path=a.txt&tree=${tree}&from=1&to=1`)).status, 200);
+    assert.equal((await lines(`path=a.txt&tree=${tree}&from=1&to=1000`)).status, 200);
+});
+
+test('a git grep that fails leaves the diff whole, without the line counts', async () => {
+    // A content of its own, so no other test cached this pair of ids.
+    const dir = repo({ 'a.txt': 'grep\nfails\n' });
+    write(dir, { 'a.txt': 'grep\nfailed\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const { restore } = shim(dir, 'case "$1" in grep) echo "fatal: Argument list too long" >&2; exit 128;; esac');
+    try {
+        const res = await api('GET', `/api/sessions/${id}/diff`);
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.body.files.map((file: any) => [file.path, file.additions, file.lineCount]), [['a.txt', 1, 0]]);
+    } finally {
+        restore();
+    }
+});

@@ -15,6 +15,8 @@ export type FileDiff = {
     additions: number;
     deletions: number;
     hunks: Hunk[];
+    /** The lines of a modified text file in the tree, for the UI to show those after its last hunk; 0 for any other file. */
+    lineCount: number;
 };
 
 const run = promisify(execFile);
@@ -87,13 +89,34 @@ export async function diff(worktree: string, shown?: { base?: string; tree?: str
         // Pinned options, so the user's git config cannot change what gets parsed.
         files = parseDiff(await git(worktree, [
             '-c', 'diff.suppressBlankEmpty=false', '-c', 'core.quotePath=true',
-            'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--src-prefix=a/', '--dst-prefix=b/',
+            // The hunks, and the lines the UI expands between them, must not depend on diff.context or diff.interHunkContext.
+            'diff', '--no-color', '-U3', '--inter-hunk-context=0', '--no-ext-diff', '--no-textconv', '--no-renames', '--src-prefix=a/', '--dst-prefix=b/',
             ...hideWhitespace ? ['-w'] : [], base, tree,
         ]));
+        await countLines(worktree, tree, files);
         cache.set(key, files);
         if (cache.size > 20) cache.delete(cache.keys().next().value!);
     }
     return { base, tree, files };
+}
+
+async function countLines(worktree: string, tree: string, files: FileDiff[]): Promise<void> {
+    const modified = files.filter(file => file.status === 'modified' && !file.binary).map(file => file.path);
+    if (!modified.length) return;
+    // `-c ''` counts every line of a text file but leaves out an empty one; -z ends each path with a NUL, verbatim.
+    // ponytail: every path on the command line, so a diff of tens of thousands of files outgrows ARG_MAX and loses its counts; a pathspec file then.
+    // Without counts, the diff still shows: only the lines after the last hunks cannot be expanded.
+    const answer = await git(worktree, ['grep', '--no-color', '-z', '-c', '-I', '', tree, '--', ...modified], { GIT_LITERAL_PATHSPECS: '1' }).catch(() => '');
+    // Each entry is `<tree>:<path>\0<count>\n`: a path may hold a newline, a count cannot.
+    const counts = new Map<string, number>();
+    const [first, ...rest] = answer.split('\0');
+    let name = first;
+    for (const part of rest) {
+        const end = part.indexOf('\n');
+        counts.set(name.slice(tree.length + 1), Number(part.slice(0, end)));
+        name = part.slice(end + 1);
+    }
+    for (const file of files) file.lineCount = counts.get(file.path) ?? 0;
 }
 
 /** The path in a `diff --git a/<path> b/<path>` header, where --no-renames makes both sides the same. */
@@ -121,7 +144,7 @@ export function parseDiff(text: string): FileDiff[] {
         if (!chunk.startsWith('diff --git ')) continue;
         const lines = chunk.split('\n');
         const path = headerPath(lines[0]);
-        const file: FileDiff = { path, status: 'modified', binary: false, collapsed: false, additions: 0, deletions: 0, hunks: [] };
+        const file: FileDiff = { path, status: 'modified', binary: false, collapsed: false, additions: 0, deletions: 0, hunks: [], lineCount: 0 };
         let oldNo = 0;
         let newNo = 0;
         for (const line of lines.slice(1)) {

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { extname, join } from 'node:path';
-import { addMessage, approve, bases, checkPlacement, chooseBase, currentTree, exclusive, findSession, getSession, httpError, listSessions, markViewed, openSession, openThread, placed, replies, resolve, send, sessionDiff } from './sessions.ts';
+import { addMessage, approve, bases, checkPlacement, chooseBase, currentTree, exclusive, findSession, getSession, httpError, listSessions, markViewed, openSession, openThread, placed, replies, resolve, send, sessionDiff, treeLines } from './sessions.ts';
 
 const UI = join(import.meta.dirname, '..', 'ui');
 const TYPES: Record<string, string> = {
@@ -97,11 +97,12 @@ async function route(method: string, { pathname: path, searchParams }: URL, body
     // Each takes the queue of the writes itself, only when it writes: the mod's 2 s poll must not wait for a long Send.
     if (path === '/api/sessions' && method === 'GET') return searchParams.has('worktree') ? findSession(searchParams.get('worktree')) : listSessions();
     if (path === '/api/sessions' && method === 'POST') return openSession(body.worktree);
-    const [, id, action = '', thread, threadAction = ''] = path.match(/^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|tree|bases|base|threads|send|approve|viewed|turn-complete))?(?:\/(\d+)\/(messages|resolve))?$/) ?? [];
+    const [, id, action = '', thread, threadAction = ''] = path.match(/^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|tree|lines|bases|base|threads|send|approve|viewed|turn-complete))?(?:\/(\d+)\/(messages|resolve))?$/) ?? [];
     switch (id && `${method} ${action}/${threadAction}`) {
         case 'GET /': return getSession(id);
         case 'GET diff/': return sessionDiff(id, searchParams);
         case 'GET tree/': return currentTree(id);
+        case 'GET lines/': return treeLines(id, searchParams);
         case 'GET bases/': return bases(await getSession(id));
         case 'POST base/': return exclusive(() => chooseBase(id, body.base));
         case 'POST threads/': return exclusive(() => openThread(id, body));

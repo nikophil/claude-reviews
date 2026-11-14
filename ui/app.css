@@ -40,6 +40,8 @@
 /* Without its caret, which would cover the gear and catch the click that closes the menu. */
 .diff-settings::before, .diff-settings::after { display: none; }
 .diff-hunk td { padding: 4px 10px; background-color: var(--diffBlob-hunk-bgColor-num); color: var(--fgColor-muted); }
+/* The buttons that expand the lines hidden around a hunk, stacked as on GitHub. */
+.diff-expand { display: block; margin: 0 auto; padding: 2px 8px; }
 
 /* highlight.js classes on GitHub's syntax colors, grouped as in its github.css theme. */
 .hljs-doctag, .hljs-keyword, .hljs-meta .hljs-keyword, .hljs-template-tag, .hljs-template-variable, .hljs-type, .hljs-variable.language_ { color: var(--color-prettylights-syntax-keyword); }

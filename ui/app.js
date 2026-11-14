@@ -47,6 +47,9 @@ const OCTICONS = {
     // Not an octicon: the frame of diff-removed, without its sign.
     'diff-unchanged': 'M13.25 1c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 15H2.75A1.75 1.75 0 0 1 1 13.25V2.75C1 1.784 1.784 1 2.75 1ZM2.75 2.5a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25Z',
     gear: 'M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm-.571 1.525c-.036.003-.108.036-.137.146l-.289 1.105c-.147.561-.549.967-.998 1.189-.173.086-.34.183-.5.29-.417.278-.97.423-1.529.27l-1.103-.303c-.109-.03-.175.016-.195.045-.22.312-.412.644-.573.99-.014.031-.021.11.059.19l.815.806c.411.406.562.957.53 1.456a4.709 4.709 0 0 0 0 .582c.032.499-.119 1.05-.53 1.456l-.815.806c-.081.08-.073.159-.059.19.162.346.353.677.573.989.02.03.085.076.195.046l1.102-.303c.56-.153 1.113-.008 1.53.27.161.107.328.204.501.29.447.222.85.629.997 1.189l.289 1.105c.029.109.101.143.137.146a6.6 6.6 0 0 0 1.142 0c.036-.003.108-.036.137-.146l.289-1.105c.147-.561.549-.967.998-1.189.173-.086.34-.183.5-.29.417-.278.97-.423 1.529-.27l1.103.303c.109.029.175-.016.195-.045.22-.313.411-.644.573-.99.014-.031.021-.11-.059-.19l-.815-.806c-.411-.406-.562-.957-.53-1.456a4.709 4.709 0 0 0 0-.582c-.032-.499.119-1.05.53-1.456l.815-.806c.081-.08.073-.159.059-.19a6.464 6.464 0 0 0-.573-.989c-.02-.03-.085-.076-.195-.046l-1.102.303c-.56.153-1.113.008-1.53-.27a4.44 4.44 0 0 0-.501-.29c-.447-.222-.85-.629-.997-1.189l-.289-1.105c-.029-.11-.101-.143-.137-.146a6.6 6.6 0 0 0-1.142 0ZM11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z',
+    'fold-down': 'm8.177 14.323 2.896-2.896a.25.25 0 0 0-.177-.427H8.75V7.764a.75.75 0 1 0-1.5 0V11H5.104a.25.25 0 0 0-.177.427l2.896 2.896a.25.25 0 0 0 .354 0ZM2.25 5a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5ZM6 4.25a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1 0-1.5h.5a.75.75 0 0 1 .75.75ZM8.25 5a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5ZM12 4.25a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1 0-1.5h.5a.75.75 0 0 1 .75.75Zm2.25.75a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5Z',
+    'fold-up': 'M7.823 1.677 4.927 4.573A.25.25 0 0 0 5.104 5H7.25v3.236a.75.75 0 1 0 1.5 0V5h2.146a.25.25 0 0 0 .177-.427L8.177 1.677a.25.25 0 0 0-.354 0ZM13.75 11a.75.75 0 0 0 0 1.5h.5a.75.75 0 0 0 0-1.5h-.5Zm-3.75.75a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 0 1.5h-.5a.75.75 0 0 1-.75-.75ZM7.75 11a.75.75 0 0 0 0 1.5h.5a.75.75 0 0 0 0-1.5h-.5ZM4 11.75a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 0 1.5h-.5a.75.75 0 0 1-.75-.75ZM1.75 11a.75.75 0 0 0 0 1.5h.5a.75.75 0 0 0 0-1.5h-.5Z',
+    unfold: 'm8.177.677 2.896 2.896a.25.25 0 0 1-.177.427H8.75v1.25a.75.75 0 0 1-1.5 0V4H5.104a.25.25 0 0 1-.177-.427L7.823.677a.25.25 0 0 1 .354 0ZM7.25 10.75a.75.75 0 0 1 1.5 0V12h2.146a.25.25 0 0 1 .177.427l-2.896 2.896a.25.25 0 0 1-.354 0l-2.896-2.896A.25.25 0 0 1 5.104 12H7.25v-1.25Zm-5-2a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5ZM6 8a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1 0-1.5h.5A.75.75 0 0 1 6 8Zm2.25.75a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5ZM12 8a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1 0-1.5h.5A.75.75 0 0 1 12 8Zm2.25.75a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5Z',
     'diff-modified': 'M13.25 1c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 15H2.75A1.75 1.75 0 0 1 1 13.25V2.75C1 1.784 1.784 1 2.75 1ZM2.75 2.5a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25ZM8 10a2 2 0 1 1-.001-3.999A2 2 0 0 1 8 10Z',
 };
 
@@ -216,7 +219,19 @@ function App() {
         const key = `${thread.id}:${thread.resolved}`;
         return [folds[key] ?? !thread.resolved, open => setFolds(all => all[key] === open ? all : { ...all, [key]: open })];
     };
-    const review = { readOnly: !!session.approvedAt, busy, selection, setSelection, draft, message, fold, act, diff, now, split };
+    /** Lines `from` to `to` of a file in the displayed tree; null once another diff is displayed. */
+    const lines = async (path, from, to) => {
+        try {
+            const { lines } = await api(`/api/sessions/${session.id}/lines?path=${encodeURIComponent(path)}&tree=${diff.tree}&from=${from}&to=${to}`);
+            if (diff !== shown.current) return null;
+            setFlash(null);
+            return lines;
+        } catch (error) {
+            setFlash(error.message);
+            return null;
+        }
+    };
+    const review = { readOnly: !!session.approvedAt, busy, selection, setSelection, draft, message, fold, act, diff, now, split, lines };
     // As GitHub's, the menu closes once a view is chosen, and on Escape; the focus goes back to its button.
     const closeSettings = () => {
         settings.current.open = false;
@@ -404,8 +419,21 @@ function FileDiff({ id, file, viewed, threads, review }) {
     };
     // The answer to my own click changes nothing; a file that lost Viewed (its content changed) unfolds.
     useEffect(() => { if (viewed !== checked) mark(viewed); }, [viewed]);
-    const hunks = withContext(file.hunks, threads);
     const { readOnly, busy, act, diff } = review;
+    // Lines the diff hid, shown by Expand: context lines, until another diff loads.
+    const [expanded, setExpanded] = useState({ diff, lines: [] });
+    // The gaps whose lines are on their way, by their range: their buttons wait, so a double click asks once.
+    const [asking, setAsking] = useState(() => new Set());
+    const expand = async (gap, from, to) => {
+        const key = `${gap.from}-${gap.to}`;
+        setAsking(all => new Set(all).add(key));
+        const text = await review.lines(file.path, from, to);
+        setAsking(all => new Set([...all].filter(other => other !== key)));
+        if (!text) return;
+        const lines = text.map((text, i) => ({ type: 'context', oldNo: from + i + gap.offset, newNo: from + i, text }));
+        setExpanded(all => ({ diff, lines: [...all.diff === diff ? all.lines : [], ...lines] }));
+    };
+    const hunks = withContext(file.hunks, [...threads.flatMap(thread => thread.at?.context ?? []), ...expanded.diff === diff ? expanded.lines : []]);
     // The sides whose numbers show on a single column of code: both in Unified, none in the two halves of Split.
     // As on GitHub, an added or deleted file would leave a half empty in Split: it takes the whole width, with the numbers of its only side.
     const sides = !review.split ? ['old', 'new'] : { added: ['new'], deleted: ['old'] }[file.status] ?? null;
@@ -439,7 +467,7 @@ function FileDiff({ id, file, viewed, threads, review }) {
                     : html`
                         <table class=${`diff-table${sides ? '' : ' diff-split'}`}>
                             ${!sides && html`<colgroup><col style=${numbers(hunks)} /><col /><col style=${numbers(hunks)} /><col /></colgroup>`}
-                            <tbody>${rows({ ...file, hunks }, threads, { ...review, sides })}</tbody>
+                            <tbody>${rows({ ...file, hunks }, threads, { ...review, sides, expand, asking })}</tbody>
                         </table>`}
             </div>
         </section>`;
@@ -452,18 +480,37 @@ function numbers(hunks) {
     return `width: max(50px, calc(${String(largest).length}ch + 22px))`;
 }
 
-/** The file's hunks, and the lines around threads out of them as hunks of their own, in the order of the file. */
-function withContext(hunks, threads) {
-    const around = new Map();
-    for (const thread of threads) for (const line of thread.at?.context ?? []) around.set(line.newNo, line);
+/** The file's hunks, and context lines out of them (around threads, or expanded) as hunks of their own, in the order of the file. */
+function withContext(hunks, lines) {
+    const around = new Map(lines.map(line => [line.newNo, line]));
     const runs = [];
     for (const line of [...around.values()].sort((a, b) => a.newNo - b.newNo)) {
         if (runs.at(-1)?.at(-1).newNo === line.newNo - 1) runs.at(-1).push(line);
         else runs.push([line]);
     }
-    const start = hunk => Number(hunk.header.match(/\+(\d+)/)[1]);
     return [...hunks, ...runs.map(run => ({ header: `@@ -${run[0].oldNo},${run.length} +${run[0].newNo},${run.length} @@`, lines: run }))]
-        .sort((a, b) => start(a) - start(b));
+        .sort((a, b) => span(a).start - span(b).start);
+}
+
+/**
+ * Where a hunk starts on the new side, and the first line after it on each side, from its header:
+ * a count of 0 places the hunk after its start line (diff.context=0).
+ */
+function span({ header }) {
+    const [a, b, c, d] = header.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/).slice(1).map(n => Number(n ?? 1));
+    return { start: d ? c : c + 1, old: a + Math.max(b, 1), new: c + Math.max(d, 1) };
+}
+
+/**
+ * The lines hidden before each hunk, then after the last one, on the new side: from `from` to `to`, numbered `offset` further on the old side,
+ * which an unchanged line keeps between two hunks.
+ */
+function gaps(hunks, lineCount) {
+    const spans = hunks.map(span);
+    return [...spans, { start: lineCount + 1 }].map(({ start }, h) => {
+        const above = spans[h - 1];
+        return { from: above?.new ?? 1, to: start - 1, offset: above ? above.old - above.new : 0 };
+    });
 }
 
 function threadBox(thread, { message, fold, readOnly, busy, act }) {
@@ -508,7 +555,7 @@ function pairs(lines) {
 
 // Rows carry keys, so a thread arriving above a message being typed moves its row instead of rebuilding the textarea.
 function rows(file, threads, review) {
-    const { readOnly, busy, selection, setSelection, draft, act, diff, now, sides } = review;
+    const { readOnly, busy, selection, setSelection, draft, act, diff, now, sides, expand, asking } = review;
     const split = !sides;
     const lang = language(file.path);
     const selected = (side, no) => selection?.path === file.path && selection.side === side && no >= selection.start && no <= selection.end;
@@ -552,30 +599,51 @@ function rows(file, threads, review) {
             <td class=${`diff-num ${cls}`} onClick=${select(side, no)}>${no}</td>
             <td class=${`diff-code ${cls}`} dangerouslySetInnerHTML=${code(line)}></td>`;
     };
+    const hidden = gaps(file.hunks, file.lineCount ?? 0);
+    /** The row of the lines hidden above a hunk, or after the last one, as GitHub's: 20 more lines a click, or all of fewer. */
+    const expander = (gap, h, header) => {
+        const size = gap.to - gap.from + 1;
+        const button = (label, icon, from, to) => html`
+            <button class="btn-octicon diff-expand" aria-label=${label} disabled=${asking.has(`${gap.from}-${gap.to}`)} onClick=${() => expand(gap, from, to)}>${octicon(icon)}</button>`;
+        // A hunk shows its header unless it follows the lines above it; the first one always does.
+        // /lines refuses a path with a newline: such a file gets no Expand.
+        if (size < 1 && h > 0) return [];
+        return [html`
+            <tr key=${`h${header}`} class="diff-hunk">
+                <td colspan=${split ? 1 : sides.length}>
+                    ${size > 0 && !file.path.includes('\n') && (size <= 20 ? button('Expand all', 'unfold', gap.from, gap.to) : [
+                        h > 0 && button('Expand down', 'fold-down', gap.from, gap.from + 19),
+                        header !== null && button('Expand up', 'fold-up', gap.to - 19, gap.to),
+                    ])}
+                </td>
+                <td colspan=${split ? 3 : 1}>${header}</td>
+            </tr>`];
+    };
     return file.hunks.flatMap((hunk, h) => [
-        html`<tr key=${`h${h}`} class="diff-hunk"><td colspan=${split ? 1 : sides.length}></td><td colspan=${split ? 3 : 1}>${hunk.header}</td></tr>`,
+        ...expander(hidden[h], h, hunk.header),
         ...split ? pairs(hunk.lines).flatMap(([left, right], r) => {
             const [old, added] = [under(left, 'old'), under(right, 'new')];
             return [
-                html`<tr key=${`${h}-${r}`}>${half(left, 'old')}${half(right, 'new')}</tr>`,
-                (old.length > 0 || added.length > 0) && html`<tr key=${`u${h}-${r}`}><td colspan="2">${old}</td><td colspan="2">${added}</td></tr>`,
+                html`<tr key=${`${hunk.header}-${r}`}>${half(left, 'old')}${half(right, 'new')}</tr>`,
+                (old.length > 0 || added.length > 0) && html`<tr key=${`u${hunk.header}-${r}`}><td colspan="2">${old}</td><td colspan="2">${added}</td></tr>`,
             ];
         }) : hunk.lines.flatMap((line, l) => {
             const items = under(line);
             return [
                 html`
-                    <tr key=${`${h}-${l}`} class=${`diff-line-${line.type}${selected('old', line.oldNo) || selected('new', line.newNo) ? ' selected' : ''}`}>
+                    <tr key=${`${hunk.header}-${l}`} class=${`diff-line-${line.type}${selected('old', line.oldNo) || selected('new', line.newNo) ? ' selected' : ''}`}>
                         ${sides.map(side => {
                             const no = side === 'old' ? line.oldNo : line.newNo;
                             return html`<td class="diff-num" onClick=${select(side, no)}>${no}</td>`;
                         })}
                         <td class="diff-code" dangerouslySetInnerHTML=${code(line)}></td>
                     </tr>`,
-                items.length > 0 && html`<tr key=${`u${h}-${l}`}><td colspan=${sides.length + 1}>${items}</td></tr>`,
+                items.length > 0 && html`<tr key=${`u${hunk.header}-${l}`}><td colspan=${sides.length + 1}>${items}</td></tr>`,
             ];
         }),
+    ]).concat(file.hunks.length ? expander(hidden.at(-1), file.hunks.length, null) : [])
     // Preact matches keyed rows only among real children: a false left here rebuilds the rows after it, and their drafts.
-    ]).filter(Boolean);
+        .filter(Boolean);
 }
 
 function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act }) {

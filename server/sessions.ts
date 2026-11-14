@@ -235,6 +235,23 @@ export async function sessionDiff(id: string, query: URLSearchParams) {
     return { ...shown, ...await diff(session.worktree, shown, query.has('w')) };
 }
 
+const MAX_LINES = 1000;
+
+/** Lines `from` to `to` of the file at `path` in the displayed `tree`, for the UI to show the lines its diff hides. */
+export async function treeLines(id: string, query: URLSearchParams) {
+    const { worktree } = await load(id);
+    const path = query.get('path');
+    checkPath(path);
+    const tree = await checkObject(worktree, query.get('tree'), 'tree', ['tree']);
+    const [from, to] = [query.get('from'), query.get('to')].map(Number);
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from || to - from >= MAX_LINES) {
+        throw httpError(400, `from and to must be line numbers, from up to to, at most ${MAX_LINES} lines apart`);
+    }
+    const lines = await fileLines(worktree, tree, path);
+    if (!lines) throw httpError(400, `No ${path} in tree ${tree}`);
+    return { lines: lines.slice(from - 1, to) };
+}
+
 function message(author: unknown, body: unknown): Message {
     if (author !== 'me' && author !== 'claude') throw httpError(400, 'author must be "me" or "claude"');
     if (typeof body !== 'string' || !body.trim()) throw httpError(400, 'body must be a non-empty string');

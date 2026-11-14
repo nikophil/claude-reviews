@@ -270,3 +270,44 @@ test('removeRepos deletes the fixture repositories', () => {
 
     assert.equal(existsSync(dir), false);
 });
+
+test('a modified text file counts its lines in the tree, a last line without newline included, so the UI knows where it ends', async () => {
+    const dir = repo({ 'a:b.txt': 'one\n', 'c.txt': 'one\n', 'd.bin': Buffer.from([0, 1]) });
+    write(dir, { 'a:b.txt': 'one\ntwo\nthree', 'c.txt': '', 'd.bin': Buffer.from([0, 2]) });
+
+    const { files } = await diff(dir);
+
+    assert.deepEqual(files.map(file => [file.path, file.lineCount]), [['a:b.txt', 3], ['c.txt', 0], ['d.bin', 0]]);
+});
+
+test('the line counts hold with grep colors forced by the config, and for a path with a newline', async () => {
+    const dir = repo({ 'a\nb.txt': 'one\n', 'c.txt': 'one\n' });
+    git(dir, 'config', 'color.grep', 'always');
+    write(dir, { 'a\nb.txt': 'one\ntwo\n', 'c.txt': 'one\ntwo\nthree\n' });
+
+    const { files } = await diff(dir);
+
+    assert.deepEqual(files.map(file => [file.path, file.lineCount]), [['a\nb.txt', 2], ['c.txt', 3]]);
+});
+
+test('the diff keeps 3 lines of context whatever diff.context the config sets', async () => {
+    const lines = Array.from({ length: 9 }, (_, i) => `context ${i + 1}`);
+    const dir = repo({ 'a.txt': `${lines.join('\n')}\n` });
+    git(dir, 'config', 'diff.context', '0');
+    write(dir, { 'a.txt': `${lines.map(line => line === 'context 5' ? 'five' : line).join('\n')}\n` });
+
+    const { files } = await diff(dir);
+
+    assert.deepEqual(files[0].hunks.map(hunk => hunk.header.match(/^@@ [^@]* @@/)![0]), ['@@ -2,7 +2,7 @@']);
+});
+
+test('the hunks stay apart whatever diff.interHunkContext the config sets', async () => {
+    const lines = Array.from({ length: 30 }, (_, i) => `inter ${i + 1}`);
+    const dir = repo({ 'a.txt': `${lines.join('\n')}\n` });
+    git(dir, 'config', 'diff.interHunkContext', '20');
+    write(dir, { 'a.txt': `${lines.map(line => ({ 'inter 5': 'five', 'inter 25': 'twenty-five' })[line] ?? line).join('\n')}\n` });
+
+    const { files } = await diff(dir);
+
+    assert.deepEqual(files[0].hunks.map(hunk => hunk.header.match(/^@@ [^@]* @@/)![0]), ['@@ -2,7 +2,7 @@', '@@ -22,7 +22,7 @@']);
+});
