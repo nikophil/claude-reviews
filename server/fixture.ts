@@ -31,6 +31,14 @@ export function repo(files: Record<string, string | Buffer>): string {
     return dir;
 }
 
+/** Points XDG_DATA_HOME at a temporary directory, removed with the repositories, so tests never touch the real sessions. */
+export function dataHome(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-reviews-data-'));
+    repos.push(dir);
+    process.env.XDG_DATA_HOME = dir;
+    return dir;
+}
+
 export function removeRepos(): void {
     for (const dir of repos.splice(0)) rmSync(dir, { recursive: true, force: true });
 }

@@ -19,7 +19,7 @@ export type FileDiff = {
 
 const run = promisify(execFile);
 
-async function git(worktree: string, args: string[], env?: NodeJS.ProcessEnv, input?: string): Promise<string> {
+export async function git(worktree: string, args: string[], env?: NodeJS.ProcessEnv, input?: string): Promise<string> {
     // Inherited GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE… (as in a git hook) would point git at another repository.
     const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
     const pending = run('git', args, { cwd: worktree, env: { ...inherited, ...env }, maxBuffer: Infinity });
@@ -60,16 +60,22 @@ export async function writeTree(worktree: string): Promise<string> {
     }
 }
 
-export async function diff(worktree: string): Promise<{ tree: string; files: FileDiff[] }> {
-    const tree = await writeTree(worktree);
-    const base = await git(worktree, ['rev-parse', '--verify', '-q', 'HEAD'])
-        .catch(() => git(worktree, ['hash-object', '-t', 'tree', '/dev/null']));
+/** HEAD, or the empty tree in a repository without any commit. */
+async function head(worktree: string): Promise<string> {
+    return (await git(worktree, ['rev-parse', '--verify', '-q', 'HEAD'])
+        .catch(() => git(worktree, ['hash-object', '-t', 'tree', '/dev/null']))).trim();
+}
+
+/** The diff from `base` to `tree`, by default from HEAD to a tree of the working tree written now. */
+export async function diff(worktree: string, shown?: { base: string; tree: string }): Promise<{ base: string; tree: string; files: FileDiff[] }> {
+    const base = shown?.base ?? await head(worktree);
+    const tree = shown?.tree ?? await writeTree(worktree);
     // Pinned options, so the user's git config cannot change what gets parsed.
     const patch = await git(worktree, [
         '-c', 'diff.suppressBlankEmpty=false', '-c', 'core.quotePath=true',
-        'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--src-prefix=a/', '--dst-prefix=b/', base.trim(), tree,
+        'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--src-prefix=a/', '--dst-prefix=b/', base, tree,
     ]);
-    return { tree, files: parseDiff(patch) };
+    return { base, tree, files: parseDiff(patch) };
 }
 
 /** The path in a `diff --git a/<path> b/<path>` header, where --no-renames makes both sides the same. */

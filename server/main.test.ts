@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { connect, type AddressInfo } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { after, before, test } from 'node:test';
-import { get, type Server } from 'node:http';
-import { git, removeRepos, repo, write } from './fixture.ts';
+import { get, request as httpRequest, type IncomingHttpHeaders, type Server } from 'node:http';
+import { dataHome, git, removeRepos, repo, write } from './fixture.ts';
 import { start } from './main.ts';
 
+dataHome();
 let server: Server;
 let port: number;
 before(async () => {
@@ -46,12 +47,42 @@ test('static files cannot escape the UI directory', async () => {
 });
 
 /** A raw request, since fetch() would not send some of these headers as given. */
-function request(path: string, headers: Record<string, string>): Promise<{ status: number; body: string }> {
-    return new Promise(resolve => get({ host: '127.0.0.1', port, path, headers }, res => {
+function request(path: string, headers: Record<string, string>, method = 'GET', body = ''): Promise<{ status: number; body: string; headers: IncomingHttpHeaders }> {
+    return new Promise(resolve => httpRequest({ host: '127.0.0.1', port, path, headers, method }, res => {
         let body = '';
-        res.setEncoding('utf8').on('data', chunk => body += chunk).on('end', () => resolve({ status: res.statusCode!, body }));
-    }));
+        res.setEncoding('utf8').on('data', chunk => body += chunk).on('end', () => resolve({ status: res.statusCode!, body, headers: res.headers }));
+    }).end(body));
 }
+
+test('a write needs Content-Type: application/json and no Origin but the server\'s, and no answer carries CORS headers', async () => {
+    const host = `127.0.0.1:${port}`;
+    const json = 'application/json';
+    const body = JSON.stringify({ worktree: repo({ 'a.txt': 'a\n' }) });
+    const answers = [];
+
+    for (const type of ['text/plain', 'application/x-www-form-urlencoded']) {
+        const refused = await request('/api/sessions', { host, 'content-type': type }, 'POST', body);
+        assert.equal(refused.status, 415, type);
+        assert.match(JSON.parse(refused.body).error, /Content-Type/);
+        answers.push(refused);
+    }
+    answers.push(await request('/api/sessions', { host }, 'POST', body));
+    assert.equal(answers.at(-1)!.status, 415);
+    for (const origin of ['http://evil.example', `http://localhost:${port}`, 'null']) {
+        const refused = await request('/api/sessions', { host, origin, 'content-type': json }, 'POST', body);
+        assert.equal(refused.status, 403, origin);
+        assert.match(JSON.parse(refused.body).error, /Origin/);
+        answers.push(refused);
+    }
+    answers.push(await request('/api/sessions', { host, 'content-type': `${json}; charset=utf-8` }, 'POST', body));
+    assert.equal(answers.at(-1)!.status, 200, 'a write without Origin, as the mod sends it, passes');
+    answers.push(await request('/api/sessions', { host, origin: `http://${host}`, 'content-type': json }, 'POST', body));
+    assert.equal(answers.at(-1)!.status, 200, 'a write from the page itself passes');
+    answers.push(await request('/api/sessions', { host, origin: 'http://evil.example', 'access-control-request-method': 'POST' }, 'OPTIONS'));
+    answers.push(await request('/', { host, origin: 'http://evil.example' }));
+
+    for (const answer of answers) assert.equal(answer.headers['access-control-allow-origin'], undefined);
+});
 
 test('a request whose Host is not the local server is refused, against DNS rebinding', async () => {
     const refused = await request('/', { host: 'evil.example:7778' });
