@@ -1,0 +1,5 @@
+node_modules/
+var/
+.claude/worktrees/
+test-results/
+playwright-report/

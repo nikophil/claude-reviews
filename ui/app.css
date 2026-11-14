@@ -1,0 +1,33 @@
+.file-tree-pane { width: 280px; height: 100vh; flex-shrink: 0; }
+.file-tree { list-style: none; padding-left: 12px; }
+.file-tree-pane > .file-tree { padding-left: 0; }
+.file-tree a { display: block; padding: 2px 0; color: var(--fgColor-default); }
+
+.diff-table { width: 100%; border-collapse: collapse; font-family: var(--fontStack-monospace); font-size: 12px; line-height: 20px; }
+.diff-table tr { height: 20px; }
+.diff-num { width: 1%; min-width: 50px; padding: 0 10px; text-align: right; color: var(--fgColor-muted); user-select: none; vertical-align: top; }
+.diff-code { position: relative; padding: 0 10px 0 22px; white-space: pre-wrap; word-break: break-all; }
+.diff-code::before { position: absolute; top: 0; left: 8px; }
+.diff-line-add .diff-code { background-color: var(--diffBlob-addition-bgColor-line); }
+.diff-line-add .diff-num { background-color: var(--diffBlob-addition-bgColor-num); }
+.diff-line-add .diff-code::before { content: '+'; }
+.diff-line-del .diff-code { background-color: var(--diffBlob-deletion-bgColor-line); }
+.diff-line-del .diff-num { background-color: var(--diffBlob-deletion-bgColor-num); }
+.diff-line-del .diff-code::before { content: '-'; }
+.diff-line-note .diff-code { color: var(--fgColor-muted); }
+.diff-hunk td { padding: 4px 10px; background-color: var(--diffBlob-hunk-bgColor-num); color: var(--fgColor-muted); }
+
+/* highlight.js classes on GitHub's syntax colors, grouped as in its github.css theme. */
+.hljs-doctag, .hljs-keyword, .hljs-meta .hljs-keyword, .hljs-template-tag, .hljs-template-variable, .hljs-type, .hljs-variable.language_ { color: var(--color-prettylights-syntax-keyword); }
+.hljs-title, .hljs-title.class_, .hljs-title.class_.inherited__, .hljs-title.function_ { color: var(--color-prettylights-syntax-entity); }
+.hljs-attr, .hljs-attribute, .hljs-literal, .hljs-meta, .hljs-number, .hljs-operator, .hljs-variable, .hljs-selector-attr, .hljs-selector-class, .hljs-selector-id, .hljs-built_in, .hljs-symbol { color: var(--color-prettylights-syntax-constant); }
+.hljs-regexp, .hljs-string, .hljs-meta .hljs-string { color: var(--color-prettylights-syntax-string); }
+.hljs-comment, .hljs-code, .hljs-formula { color: var(--color-prettylights-syntax-comment); }
+.hljs-name, .hljs-quote, .hljs-selector-tag, .hljs-selector-pseudo { color: var(--color-prettylights-syntax-entity-tag); }
+.hljs-subst { color: var(--color-prettylights-syntax-storage-modifier-import); }
+.hljs-section { color: var(--color-prettylights-syntax-markup-heading); font-weight: bold; }
+.hljs-bullet { color: var(--color-prettylights-syntax-markup-list); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: bold; }
+.hljs-addition { color: var(--color-prettylights-syntax-markup-inserted-text); background-color: var(--color-prettylights-syntax-markup-inserted-bg); }
+.hljs-deletion { color: var(--color-prettylights-syntax-markup-deleted-text); background-color: var(--color-prettylights-syntax-markup-deleted-bg); }
