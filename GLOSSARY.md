@@ -24,9 +24,13 @@ La review qui clôt une session, alors en lecture seule ; elle n'envoie rien à 
 
 **Base**:
 Ce à quoi une session compare le working tree, choisi dans l'UI :
-les changements non commités (HEAD), l'état à ma dernière review, ou une branche.
+les changements non commités (HEAD), le Snapshot de mon dernier Send, ou une branche.
 Le diff va toujours jusqu'au working tree, changements non commités compris.
 _Avoid_: vues par tour
+
+**Snapshot**:
+Le code que j'avais sous les yeux au moment d'un Send, gardé comme base Since my last review.
+_Avoid_: photo, état de la review
 
 **Claude session**:
 Une conversation Claude Code qui tourne dans un worktree.
@@ -60,4 +64,4 @@ Un thread dont le dernier message est de Claude.
 Un thread que j'ai clos ; seul moi le résous, et un nouveau message le rouvre.
 
 **Outdated**:
-Un thread dont la ligne d'ancrage ne se retrouve plus dans le code actuel.
+Un thread dont la ligne d'ancrage ne se retrouve plus dans le code qu'on regarde : le code affiché pour moi, le working tree pour Claude.

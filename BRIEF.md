@@ -43,8 +43,8 @@ Décisions structurantes : [docs/adr/](docs/adr/).
    Le mod le démarre à la demande quand le port ne répond pas, sans service systemd.
 2. **Stockage** : un fichier JSON par session sous `~/.local/share/claude-reviews/sessions/`, avec le chemin du worktree comme clé ;
    seul le serveur l'écrit, par remplacement atomique ([ADR 0003](docs/adr/0003-stockage-hors-du-depot.md)).
-3. **Snapshots** : à chaque review, le serveur photographie le working tree (suivis et non suivis, hors ignorés) dans un commit caché
-   sous `refs/claude-reviews/<session>/<n>`, avec un index temporaire ;
+3. **Snapshots** : à chaque calcul du diff, le serveur écrit un tree du working tree (suivis et non suivis, hors ignorés) avec un index temporaire ;
+   à chaque Send, il commite le tree que l'UI affichait sous `refs/claude-reviews/<session>/<n>` ;
    l'Approve supprime ces refs ([ADR 0002](docs/adr/0002-snapshots-dans-des-refs-cachees.md)).
 4. **Le mod Claude Code**, livré en plugin (`hooks/hooks.json` → `"modules"`) :
    - il enregistre les outils `list_open_threads()`, qui renvoie en entier les threads Waiting for Claude,
@@ -59,13 +59,14 @@ Décisions structurantes : [docs/adr/](docs/adr/).
 5. **Notification** : quand plus aucun thread d'une review n'attend Claude, le serveur appelle `notify-send` (« Claude replied in N threads »).
 6. **Stack** : Node 25, TypeScript exécuté sans build (type stripping), `node:http`, aucune dépendance npm.
    Front en Preact + htm, avec Primer CSS et marked, chacun vendorisé en un fichier ;
-   il interroge le serveur toutes les 2 s, sans perdre un message en cours de frappe.
+   il interroge le serveur toutes les 2 s, sans perdre un message en cours de frappe ;
+   le diff, lui, ne se recharge qu'au Refresh, que propose un bandeau quand le working tree diffère du code affiché.
 
 ## Diff et base
 
 - La base se choisit dans l'UI, et le diff va toujours jusqu'au working tree, changements non commités et fichiers non suivis compris :
   - **Uncommitted changes** : HEAD, le choix par défaut ;
-  - **Since my last review** : le snapshot de la dernière review, ce qui remplace les « vues par tour » ;
+  - **Since my last review** : le Snapshot du dernier Send, ce qui remplace les « vues par tour » ; grisée avant le premier Send ;
   - **origin/HEAD** : depuis le merge-base ;
   - **les autres branches**, triées par distance au merge-base, la branche parente d'une pile de PR en tête.
 - Chaque session garde la dernière base choisie.
@@ -73,14 +74,16 @@ Décisions structurantes : [docs/adr/](docs/adr/).
 ## Modèle d'un thread
 
 - **Anchor** : fichier, côté (ancien ou nouveau), plage de lignes, contenu de ces lignes et de leurs voisines,
-  SHA du snapshot, et l'extrait de diff d'origine (comme le `diff_hunk` de GitHub).
+  et l'extrait de diff d'origine (comme le `diff_hunk` de GitHub), sans SHA.
+  Elle se capture sur le code que voit son auteur : la base et le code affiché pour moi, la base de la session et le working tree pour Claude.
 - **Messages** : auteur (`me` | `claude`), corps en markdown, date, et la review qui l'a envoyé ; sans review, le message est Pending.
 - Trois faits indépendants, qui se combinent :
   - **à qui le tour**, déduit du dernier message envoyé : **Waiting for Claude** si c'est le mien, **Awaiting you** si c'est celui de Claude ;
   - **Resolved**, que moi seul change, sur-le-champ, sans review ; un nouveau message rouvre le thread ;
-  - **Outdated**, calculé à l'affichage quand l'ancre ne se retrouve plus.
+  - **Outdated**, calculé quand l'ancre ne se retrouve plus dans le code qu'on regarde.
 - **Ré-ancrage, dès le MVP** : chercher les lignes par leur contenu exact, au plus près de leur position d'origine, et départager par les voisines ;
   sinon le thread est Outdated et s'affiche avec son extrait d'origine.
+  L'UI ré-ancre sur le code affiché, et `list_open_threads()` sur le working tree courant.
 - **Thread hors du diff affiché** (Claude a commité, ou la base a changé) : il s'affiche dans son fichier, à sa ligne, avec quelques lignes de contexte,
   comme un hunk de plus.
 - **Approve** reste grisé tant qu'il reste des messages Pending.
