@@ -32,6 +32,36 @@ function escape(text) {
     return div.innerHTML;
 }
 
+// Octicons 19.15.0, 16 px, inline: no dependency at runtime.
+const OCTICONS = {
+    'sidebar-collapse': 'M6.823 7.823a.25.25 0 0 1 0 .354l-2.396 2.396A.25.25 0 0 1 4 10.396V5.604a.25.25 0 0 1 .427-.177ZM1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25V1.75C0 .784.784 0 1.75 0ZM1.5 1.75v12.5c0 .138.112.25.25.25H9.5v-13H1.75a.25.25 0 0 0-.25.25ZM11 14.5h3.25a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25H11Z',
+    'sidebar-expand': 'm4.177 7.823 2.396-2.396A.25.25 0 0 1 7 5.604v4.792a.25.25 0 0 1-.427.177L4.177 8.177a.25.25 0 0 1 0-.354ZM0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25H9.5v-13Zm12.5 13a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25H11v13Z',
+    'chevron-down': 'M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z',
+    'chevron-right': 'M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z',
+    'file-directory-fill': 'M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75Z',
+    'file-directory-open-fill': 'M.513 1.513A1.75 1.75 0 0 1 1.75 1h3.5c.55 0 1.07.26 1.4.7l.9 1.2a.25.25 0 0 0 .2.1H13a1 1 0 0 1 1 1v.5H2.75a.75.75 0 0 0 0 1.5h11.978a1 1 0 0 1 .994 1.117L15 13.25A1.75 1.75 0 0 1 13.25 15H1.75A1.75 1.75 0 0 1 0 13.25V2.75c0-.464.184-.91.513-1.237Z',
+    file: 'M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z',
+    'diff-added': 'M2.75 1h10.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 15H2.75A1.75 1.75 0 0 1 1 13.25V2.75C1 1.784 1.784 1 2.75 1Zm10.5 1.5H2.75a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25ZM8 4a.75.75 0 0 1 .75.75v2.5h2.5a.75.75 0 0 1 0 1.5h-2.5v2.5a.75.75 0 0 1-1.5 0v-2.5h-2.5a.75.75 0 0 1 0-1.5h2.5v-2.5A.75.75 0 0 1 8 4Z',
+    'diff-removed': 'M13.25 1c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 15H2.75A1.75 1.75 0 0 1 1 13.25V2.75C1 1.784 1.784 1 2.75 1ZM2.75 2.5a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25Zm8.5 6.25h-6.5a.75.75 0 0 1 0-1.5h6.5a.75.75 0 0 1 0 1.5Z',
+    // Not an octicon: the frame of diff-removed, without its sign.
+    'diff-unchanged': 'M13.25 1c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 15H2.75A1.75 1.75 0 0 1 1 13.25V2.75C1 1.784 1.784 1 2.75 1ZM2.75 2.5a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25Z',
+    'diff-modified': 'M13.25 1c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 15H2.75A1.75 1.75 0 0 1 1 13.25V2.75C1 1.784 1.784 1 2.75 1ZM2.75 2.5a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25ZM8 10a2 2 0 1 1-.001-3.999A2 2 0 0 1 8 10Z',
+};
+
+/** An octicon, decorative unless it has a label. */
+function octicon(name, label, cls = '') {
+    return html`
+        <svg class=${`octicon ${cls}`} width="16" height="16" viewBox="0 0 16 16" fill="currentColor"
+            role=${label ? 'img' : null} aria-label=${label} aria-hidden=${label ? null : 'true'}><path d=${OCTICONS[name]} /></svg>`;
+}
+
+const BADGES = {
+    added: ['diff-added', 'Added', 'color-fg-success'],
+    deleted: ['diff-removed', 'Deleted', 'color-fg-danger'],
+    modified: ['diff-modified', 'Modified', 'color-fg-attention'],
+    unchanged: ['diff-unchanged', 'Unchanged', 'color-fg-muted'],
+};
+
 /** The query that has the server place the threads in the displayed code. */
 const placedOn = shown => `?base=${shown.base}&tree=${shown.tree}`;
 
@@ -57,6 +87,20 @@ function App() {
     // Since my last review, put forward after a Refresh that a Snapshot came before.
     const [forward, setForward] = useState(false);
     const [busy, setBusy] = useState(false);
+    // A preference of the browser, kept from page to page; a browser that refuses its storage opens the file tree.
+    const [fileTreeOpen, setFileTreeOpen] = useState(() => {
+        try {
+            return localStorage.getItem('claude-reviews.file-tree') !== 'collapsed';
+        } catch {
+            return true;
+        }
+    });
+    // The toggle moves between the file tree and the toolbar: the focus follows it, after a click only.
+    const toggled = useRef(false);
+    useEffect(() => {
+        if (toggled.current) document.querySelector('.file-tree-toggle').focus();
+        toggled.current = false;
+    }, [fileTreeOpen]);
     // Odd while a write is on its way: one write at a time, and a poll that crossed a write is stale.
     const writes = useRef(0);
     // What the author sees now, for a write that answers after they typed or selected on.
@@ -148,13 +192,26 @@ function App() {
     const changedPaths = new Set(diff.files.map(file => file.path));
     const files = [...diff.files, ...[...new Set(session.threads.filter(thread => !thread.resolved).map(thread => thread.anchor.path))].filter(path => !changedPaths.has(path))
         .map(path => ({ path, status: 'unchanged', binary: false, collapsed: false, additions: 0, deletions: 0, hunks: [] }))];
+    const toggleFileTree = () => {
+        try {
+            localStorage.setItem('claude-reviews.file-tree', fileTreeOpen ? 'collapsed' : 'open');
+        } catch {}
+        toggled.current = true;
+        setFileTreeOpen(!fileTreeOpen);
+    };
+    const toggle = html`
+        <button class="btn-octicon file-tree-toggle ml-0 mr-2" aria-label=${fileTreeOpen ? 'Collapse file tree' : 'Expand file tree'} onClick=${toggleFileTree}>
+            ${octicon(fileTreeOpen ? 'sidebar-collapse' : 'sidebar-expand')}
+        </button>`;
     return html`
         <div class="d-flex">
-            <nav aria-label="Changed files" class="file-tree-pane position-sticky top-0 overflow-auto p-3 border-right">
-                <${Tree} node=${buildTree(diff.files)} />
+            <nav aria-label="Changed files" hidden=${!fileTreeOpen} class="file-tree-pane position-sticky top-0 overflow-auto p-2 border-right">
+                <div class="d-flex flex-items-center p-1 mb-2">${fileTreeOpen && toggle}<span class="text-bold">Files</span></div>
+                <${FileTree} files=${files} />
             </nav>
             <main class="flex-1 min-width-0 p-3">
                 <div class="d-flex flex-items-center mb-3">
+                    ${!fileTreeOpen && toggle}
                     <a class="mr-3" href="/">Reviews</a>
                     <h1 class="h4 flex-1">${diff.files.length} files changed <span class="text-mono text-normal color-fg-muted f6">${session.worktree}</span></h1>
                     <select aria-label="Base" class=${`form-select mr-2${forward ? ' color-border-accent-emphasis color-bg-accent' : ''}`} disabled=${busy || review.readOnly}
@@ -177,30 +234,97 @@ function App() {
 }
 
 function buildTree(files) {
-    const root = { dirs: {}, files: [] };
+    // Maps: a directory may be named `constructor` or `2024`, and directories keep the order of the diff; they come before files, as on GitHub.
+    const root = { dirs: new Map(), files: [] };
     files.forEach((file, i) => {
         const parts = file.path.split('/');
         let node = root;
-        for (const dir of parts.slice(0, -1)) node = node.dirs[dir] ??= { dirs: {}, files: [] };
-        node.files.push({ name: parts.at(-1), id: `diff-${i}` });
+        for (const dir of parts.slice(0, -1)) {
+            if (!node.dirs.has(dir)) node.dirs.set(dir, { dirs: new Map(), files: [] });
+            node = node.dirs.get(dir);
+        }
+        node.files.push({ name: parts.at(-1), path: file.path, id: `diff-${i}`, status: file.status });
     });
     return root;
 }
 
-function Tree({ node }) {
-    return html`
-        <ul class="file-tree">
-            ${Object.entries(node.dirs).map(([name, child]) => html`
-                <li><span class="color-fg-muted">${name}/</span><${Tree} node=${child} /></li>`)}
-            ${node.files.map(file => html`<li><a href=${`#${file.id}`}>${file.name}</a></li>`)}
-        </ul>`;
+/** The files of the diff as GitHub shows them: folding directories, and the file at the top of the window highlighted. */
+function FileTree({ files }) {
+    // Directories by full path, so a directory stays folded when a Refresh merges it with its only child or splits it.
+    const [folded, setFolded] = useState(() => new Set());
+    const [current, setCurrent] = useState(null);
+    // A click on a file at the end of the diff cannot bring it to the top: it stays highlighted while the page cannot scroll further down.
+    const clicked = useRef(null);
+    // ponytail: measures every file on each scroll and render; an IntersectionObserver if hundreds of files make it slow.
+    const follow = () => {
+        const sections = [...document.querySelectorAll('section[data-path]')];
+        const kept = sections.find(section => section.dataset.path === clicked.current)?.getBoundingClientRect();
+        const end = innerHeight + scrollY >= document.documentElement.scrollHeight - 1;
+        if (end && kept && kept.top < innerHeight && kept.bottom > 0) return;
+        clicked.current = null;
+        const top = sections.findLast(section => section.getBoundingClientRect().top <= 1) ?? sections[0];
+        setCurrent(top?.dataset.path ?? null);
+    };
+    // After each render too: the diff loaded, reloaded or folded moves the files without a scroll.
+    useEffect(follow);
+    useEffect(() => {
+        addEventListener('scroll', follow, { passive: true });
+        return () => removeEventListener('scroll', follow);
+    }, []);
+    const choose = path => {
+        clicked.current = path;
+        setCurrent(path);
+    };
+    const items = (node, path, depth) => [
+        ...[...node.dirs].map(([name, child]) => {
+            // A directory whose only child is a directory shares its line.
+            const paths = [`${path}${name}/`];
+            while (child.files.length === 0 && child.dirs.size === 1) {
+                const [[sub, only]] = child.dirs;
+                name += `/${sub}`;
+                child = only;
+                paths.push(`${path}${name}/`);
+            }
+            const at = paths.at(-1);
+            const open = !paths.some(dir => folded.has(dir));
+            const fold = () => setFolded(all => {
+                const next = new Set(all);
+                if (open) next.add(at);
+                else for (const dir of paths) next.delete(dir);
+                return next;
+            });
+            return html`
+                <li key=${at}>
+                    <button class="file-tree-row" style=${`padding-left: ${8 + depth * 16}px`} aria-expanded=${open} onClick=${fold}
+                        aria-current=${!open && current?.startsWith(at) ? 'true' : null}>
+                        ${octicon(open ? 'chevron-down' : 'chevron-right')}
+                        ${octicon(open ? 'file-directory-open-fill' : 'file-directory-fill', null, 'file-tree-directory')}
+                        <span class="file-tree-name">${name}</span>
+                    </button>
+                    ${open && html`<ul class="list-style-none">${items(child, at, depth + 1)}</ul>`}
+                </li>`;
+        }),
+        ...node.files.map(file => {
+            const [icon, label, color] = BADGES[file.status];
+            return html`
+                <li key=${file.path}>
+                    <a class="file-tree-row" style=${`padding-left: ${30 + depth * 16}px`} href=${`#${file.id}`}
+                        aria-current=${current === file.path ? 'true' : null} onClick=${() => choose(file.path)}>
+                        ${octicon('file')}
+                        <span class="file-tree-name">${file.name}</span>
+                        ${octicon(icon, label, color)}
+                    </a>
+                </li>`;
+        }),
+    ];
+    return html`<ul class="list-style-none">${items(buildTree(files), '', 0)}</ul>`;
 }
 
 function FileDiff({ id, file, threads, review }) {
     const [open, setOpen] = useState(!file.collapsed);
     const hunks = withContext(file.hunks, threads);
     return html`
-        <section id=${id} class="Box mb-3">
+        <section id=${id} data-path=${file.path} class="Box mb-3">
             <div class="Box-header py-2 d-flex flex-items-center">
                 <span class="text-mono text-bold flex-1">${file.path}</span>
                 <span class="color-fg-success mr-1">+${file.additions}</span>

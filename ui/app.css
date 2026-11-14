@@ -1,7 +1,13 @@
 .file-tree-pane { width: 280px; height: 100vh; flex-shrink: 0; }
-.file-tree { list-style: none; padding-left: 12px; }
-.file-tree-pane > .file-tree { padding-left: 0; }
-.file-tree a { display: block; padding: 2px 0; color: var(--fgColor-default); }
+/* The octicons point at a sidebar on the right: mirrored, they point at this one, on the left. */
+.file-tree-toggle svg { transform: scaleX(-1); }
+.file-tree-row { position: relative; display: flex; align-items: center; gap: 6px; width: 100%; min-height: 32px; padding: 0 8px; border: 0; border-radius: var(--borderRadius-medium); background: none; color: var(--fgColor-default); font-size: 14px; text-align: left; cursor: pointer; }
+.file-tree-row:hover { background-color: var(--control-transparent-bgColor-hover); text-decoration: none; }
+.file-tree-row[aria-current] { background-color: var(--control-transparent-bgColor-selected); }
+.file-tree-row[aria-current]::after { content: ''; position: absolute; top: calc(50% - 12px); left: -8px; width: 4px; height: 24px; border-radius: var(--borderRadius-medium); background-color: var(--fgColor-accent); }
+.file-tree-row .octicon { flex-shrink: 0; margin: 0; color: var(--fgColor-muted); }
+.file-tree-row .file-tree-directory { color: var(--treeViewItem-leadingVisual-iconColor-rest); }
+.file-tree-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .diff-table { width: 100%; border-collapse: collapse; font-family: var(--fontStack-monospace); font-size: 12px; line-height: 20px; }
 .diff-table tr { height: 20px; }
