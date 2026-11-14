@@ -23,6 +23,7 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 - `server/` : serveur `node:http` en TypeScript, exécuté par Node 25 sans build (type stripping) ; les imports portent l'extension `.ts`.
 - `server/diff.ts` : écrit le tree du working tree avec un index temporaire, puis calcule et parse `git diff <base> <tree>`.
 - `server/sessions.ts` : sessions, threads, messages, Send et Approve, stockés en JSON sous le dossier de données.
+- `server/reanchor.ts` : `reanchor(anchor, lignes)`, la fonction pure qui retrouve la plage d'une Anchor dans un fichier, ou rend `null` quand le thread est Outdated (#8).
 - `ui/` : page servie telle quelle, en Preact + htm sans build ni JSX.
 - `ui/vendor/` : bibliothèques front copiées telles quelles, à ne pas modifier ni relire.
 - `e2e/` : tests Playwright.
@@ -64,6 +65,10 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 | `POST /api/sessions/<id>/approve` `{}` | Approve : archive la session, puis supprime ses refs. |
 
 - Hors `/diff`, `/tree` et `/bases`, chaque route d'une session renvoie la session entière, au format du fichier, et chaque thread y porte en plus son `status` : `resolved`, `waiting-for-claude`, `awaiting-you`, ou `null` tant qu'aucun message n'est publié.
+- Une route qui renvoie la session et reçoit `?base=<id>&tree=<id>` (le code affiché par l'UI), ou `?reanchor` (HEAD et le working tree, pour le mod), ré-ancre chaque thread sur ce code : il y porte aussi `at`, `null` s'il est Outdated, sinon `{ start, end, context }`.
+- Avec `?reanchor`, `at` vaut `{ start, end }`, sans `context` ni calcul du diff, et un thread Resolved n'a pas d'`at`.
+- Une `base` ou un `tree` mal formés dans la query reçoivent 400 avant toute écriture ; une écriture enregistrée répond 200, avec ses threads sans `at` si leur ré-ancrage échoue.
+- `context` liste, quand aucun hunk du diff de ce code ne montre la dernière ligne de la plage, les lignes de 3 au-dessus à 3 au-dessous de la plage, hors celles des hunks, inchangées et numérotées des deux côtés ; l'UI les affiche comme un hunk de plus.
 - `author` vaut `me` ou `claude` : un message de `me` naît Pending, un message de `claude` est publié sur-le-champ.
 - Un message de `me` rouvre un thread Resolved au Send qui le publie, pas un message de `claude`.
 - Les bases sont `HEAD` (Uncommitted changes), `last-review` (Since my last review, le Snapshot du dernier Send, grisé avant le premier), `origin/HEAD`, puis les branches locales `refs/heads/<nom>` hors celle du worktree, de la plus proche du merge-base à la plus lointaine.
@@ -86,7 +91,8 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - Une version plus ancienne de claude-reviews, il l'arrête par `POST /api/shutdown` puis la relance ; une version plus récente, il l'utilise telle quelle, pour que deux Claude sessions de versions différentes n'arrêtent pas le serveur l'une de l'autre.
 - Un port qui répond autre chose que claude-reviews, ou qui ne répond pas en 2 s, ne lance rien : le mod le signale par `$.ui.log`, une ligne du transcript que le modèle ne lit pas, et sonde quand même.
 - Le mod lit `CLAUDE_REVIEWS_PORT` comme le serveur.
-- `list_open_threads()` rend, hors Resolved et hors threads sans message publié, l'id, le statut, le fichier, le côté, la plage, les lignes de l'Anchor et les messages publiés.
+- `list_open_threads()` rend, hors Resolved et hors threads sans message publié, l'id, le statut, `outdated`, le fichier, le côté, la plage ré-ancrée sur HEAD et le working tree (celle de l'Anchor s'il est Outdated), les lignes de l'Anchor et les messages publiés.
+- Un thread Outdated y porte en plus `hunk`, l'extrait de diff d'origine en diff unifié, `null` si l'Anchor était hors du diff.
 - Il sonde `GET /api/sessions?worktree=` toutes les 2 s ; un Send qui laisse des threads Waiting for Claude le fait réveiller Claude par `$.prompt.submit`, jamais attendu dans un hook.
 - Seul un 404 vaut « aucune session ouverte » ; un sondage en échec laisse l'état tel quel, et le mod garde par session le dernier Send vu et la relance faite.
 - Il relance Claude une fois par Send, à la fin d'un tour fini sur une réponse, ni interrompu ni en erreur, qui laisse des threads en attente ; un `{ drop }` attend le prochain prompt ou début de tour, et ne compte pas.

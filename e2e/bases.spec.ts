@@ -86,7 +86,7 @@ test('a Send with the banner up snapshots the displayed code, and the change not
     await expect(banner(page)).toBeHidden();
 });
 
-test('a message being written survives a base where its thread does not show', async ({ page, request }) => {
+test('a message being written survives a base where its thread leaves the diff', async ({ page, request }) => {
     const dir = changed();
     const { id } = await (await request.post('/api/sessions', { data: { worktree: dir } })).json();
     await request.post(`/api/sessions/${id}/threads`, { data: { author: 'claude', path: 'a.txt', side: 'new', start: 2, end: 2, body: 'Why 2?' } });
@@ -95,10 +95,12 @@ test('a message being written survives a base where its thread does not show', a
     await expect(lastReview(page)).toBeEnabled();
     await page.locator('.thread').getByRole('textbox').fill('Because');
 
-    // Nothing changed since the Send: the diff is empty, and the thread out of sight.
+    // Nothing changed since the Send: the diff is empty, and the thread shows out of it, in a hunk of its own.
     await base(page).selectOption('last-review');
-    await expect(page.locator('.thread')).toHaveCount(0);
+    await expect(page.locator('.diff-line-add')).toHaveCount(0);
+    await expect(page.locator('.thread').getByRole('textbox')).toHaveValue('Because');
     await base(page).selectOption('HEAD');
+    await expect(page.locator('.diff-line-add')).toHaveCount(1);
 
     await expect(page.locator('.thread').getByRole('textbox')).toHaveValue('Because');
 });
@@ -123,7 +125,7 @@ test('a Send under Since my last review without any change of the code shows no 
     // A Snapshot commit is dated to the second: one second later, the same tree makes another commit.
     await page.waitForTimeout(1000);
 
-    const sent = page.waitForResponse(/\/send$/);
+    const sent = page.waitForResponse(/\/send\?/);
     await page.getByRole('button', { name: 'Send' }).click();
     await sent;
     // A poll leaves after the Send and sees its Snapshot; the next one leaves once its answer is applied.

@@ -145,9 +145,29 @@ test('list_open_threads gives, but for Resolved threads and threads without publ
     const { date } = result.threads[0].messages[0];
     assert.match(date, /^\d{4}-\d\d-\d\dT/);
     assert.deepEqual(result.threads[0], {
-        id: 1, status: 'waiting-for-claude', file: 'a.txt', side: 'new', start: 2, end: 2, lines: ['2'],
+        id: 1, status: 'waiting-for-claude', outdated: false, file: 'a.txt', side: 'new', start: 2, end: 2, lines: ['2'],
         messages: [{ author: 'me', body: 'Waiting', date }],
     });
+});
+
+test('list_open_threads gives a thread whose line went down 5 lines in the working tree at its new range, with the current lines', async () => {
+    const { dir } = await session();
+    write(dir, { 'a.txt': 'a\nb\nc\nd\ne\none\n2\nthree\n' });
+    const claude = await mod(dir);
+
+    const [thread] = JSON.parse((await claude.tool('list_open_threads')).result).threads;
+
+    assert.deepEqual([thread.outdated, thread.start, thread.end, thread.lines], [false, 7, 7, ['2']]);
+});
+
+test('list_open_threads gives a thread whose line changed in the working tree as Outdated, with its original diff excerpt', async () => {
+    const { dir } = await session();
+    write(dir, { 'a.txt': 'one\ndeux\nthree\n' });
+    const claude = await mod(dir);
+
+    const [thread] = JSON.parse((await claude.tool('list_open_threads')).result).threads;
+
+    assert.deepEqual([thread.outdated, thread.start, thread.end, thread.hunk], [true, 2, 2, '@@ -1,3 +1,3 @@\n one\n-two\n+2']);
 });
 
 test('on an approved session, reply_to_thread answers "session approuvée", and the mod stops relaunching for the worktree', async () => {

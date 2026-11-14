@@ -1,12 +1,14 @@
 import type { EngineInterface, Register } from 'claude-code';
 import { due, look, prompt, resumed, sending, start, submitted, turnEnded, type Seen, type Watch } from './watch.ts';
 
-type Session = { id: string; sends: number; threads: { id: number; status: string | null; anchor: any; messages: { author: string; body: string; date: string | null }[] }[] };
+type Session = { id: string; sends: number; threads: { id: number; status: string | null; anchor: any; at?: { start: number; end: number } | null; messages: { author: string; body: string; date: string | null }[] }[] };
 
 const TOOLS = [
     {
         name: 'list_open_threads',
-        description: 'Lists the claude-reviews threads of this worktree that are not resolved: those waiting for your reply and those awaiting the user, with their anchor and published messages.',
+        description: 'Lists the claude-reviews threads of this worktree that are not resolved: those waiting for your reply and those awaiting the user, with their anchor and published messages. '
+            + 'start and end are the range reanchored on HEAD and the working tree, and lines the lines the thread was opened on. '
+            + 'outdated is true when those lines are no longer found: start and end are then the original range, and hunk the original diff excerpt, as unified diff (null if the lines were out of the diff).',
         inputSchema: { type: 'object', properties: {} },
     },
     {
@@ -56,9 +58,9 @@ async function api($: EngineInterface, method: string, path: string, body?: obje
 }
 
 /** The open session of the worktree, null when the server says it has none, undefined when the server fails to say. */
-async function find($: EngineInterface): Promise<Session | null | undefined> {
+async function find($: EngineInterface, query = ''): Promise<Session | null | undefined> {
     // ponytail: each look makes the server run git rev-parse, every 2 s per Claude session; cache the top of a worktree if it shows.
-    const res = await api($, 'GET', `/api/sessions?worktree=${encodeURIComponent(worktree!)}`);
+    const res = await api($, 'GET', `/api/sessions?worktree=${encodeURIComponent(worktree!)}${query}`);
     return res.status === 200 ? res.body : res.status === 404 ? null : undefined;
 }
 
@@ -133,6 +135,11 @@ async function openThread($: EngineInterface, input: { file: string; side: strin
     return { deny: 'unreachable' };
 }
 
+/** A diff hunk as unified diff text, as the model reads diffs; null for an Anchor out of the diff. */
+function excerpt(hunk: { header: string; lines: { type: 'context' | 'add' | 'del' | 'note'; text: string }[] } | null): string | null {
+    return hunk && [hunk.header, ...hunk.lines.map(line => ({ context: ' ', add: '+', del: '-', note: '\\ ' })[line.type] + line.text)].join('\n');
+}
+
 // ponytail: the matchers spell the plugin's name, local-reviews; renaming the plugin means renaming them.
 export const register: Register = on => {
     // Each register starts afresh, as a reloaded module does: the node tests register it several times.
@@ -185,15 +192,17 @@ export const register: Register = on => {
     });
 
     on('tool.call', { tool: 'mcp__local-reviews__list_open_threads' }, async $ => {
-        const open = await find($);
+        // Placed on HEAD and the working tree: an Outdated thread comes with its original diff excerpt instead.
+        const open = await find($, '&reanchor');
         if (open === undefined) return { deny: silent() };
         session = open?.id;
         const threads = (open?.threads ?? []).filter(thread => thread.status === 'waiting-for-claude' || thread.status === 'awaiting-you');
         // A tool of a mod answers text: the model reads the threads as JSON.
         return {
             result: JSON.stringify({
-                threads: threads.map(({ id, status, anchor, messages }) => ({
-                    id, status, file: anchor.path, side: anchor.side, start: anchor.start, end: anchor.end, lines: anchor.lines,
+                threads: threads.map(({ id, status, anchor, at, messages }) => ({
+                    id, status, outdated: !at, file: anchor.path, side: anchor.side, start: (at ?? anchor).start, end: (at ?? anchor).end, lines: anchor.lines,
+                    ...(!at && { hunk: excerpt(anchor.hunk) }),
                     messages: messages.filter(message => message.date).map(({ author, body, date }) => ({ author, body, date })),
                 })),
             }, null, 2),

@@ -32,6 +32,9 @@ function escape(text) {
     return div.innerHTML;
 }
 
+/** The query that has the server place the threads in the displayed code. */
+const placedOn = shown => `?base=${shown.base}&tree=${shown.tree}`;
+
 async function api(path, body) {
     const res = await fetch(path, body && { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     const json = await res.json();
@@ -65,8 +68,9 @@ function App() {
         (async () => {
             const opened = worktree ? await api('/api/sessions', { worktree }) : await api(`/api/sessions/${sessionId}`);
             if (worktree) history.replaceState(null, '', `/s/${opened.id}`);
-            setSession(opened);
-            setDiff(await api(`/api/sessions/${opened.id}/diff`));
+            const loaded = await api(`/api/sessions/${opened.id}/diff`);
+            setSession(await api(`/api/sessions/${opened.id}${placedOn(loaded)}`));
+            setDiff(loaded);
         })().catch(error => setError(error.message));
     }, []);
     useEffect(() => {
@@ -81,8 +85,9 @@ function App() {
             const at = writes.current;
             const loaded = shown.current;
             Promise.allSettled([
-                api(`/api/sessions/${session.id}`).then(fresh => {
-                    if (writes.current === at) setSession(current => JSON.stringify(current) === JSON.stringify(fresh) ? current : fresh);
+                // Placed in the code loaded when it left: stale once another diff is loaded.
+                api(`/api/sessions/${session.id}${placedOn(loaded)}`).then(fresh => {
+                    if (writes.current === at && loaded === shown.current) setSession(current => JSON.stringify(current) === JSON.stringify(fresh) ? current : fresh);
                 }),
                 // Both ids name content: a mismatch is a change, whenever the displayed diff was loaded.
                 // Since my last review, only a Send moves the base, and a Send changes no code.
@@ -107,7 +112,7 @@ function App() {
         writes.current++;
         setBusy(true);
         try {
-            setSession(await api(`/api/sessions/${session.id}${path}`, body));
+            setSession(await api(`/api/sessions/${session.id}${path}${placedOn(diff)}`, body));
             await then?.();
             setFlash(null);
             return true;
@@ -121,6 +126,7 @@ function App() {
     };
     const load = async () => {
         const fresh = await api(`/api/sessions/${session.id}/diff`);
+        setSession(await api(`/api/sessions/${session.id}${placedOn(fresh)}`));
         setDiff(fresh);
         setChanged(false);
         return fresh;
@@ -137,6 +143,10 @@ function App() {
         const open = session.threads.filter(thread => !thread.resolved).length;
         if (confirm(`Approve this session with ${open} open thread${open === 1 ? "" : "s"}?`)) act('/approve', {});
     };
+    // A file out of the diff still shows its threads, while one is not Resolved.
+    const changedPaths = new Set(diff.files.map(file => file.path));
+    const files = [...diff.files, ...[...new Set(session.threads.filter(thread => !thread.resolved).map(thread => thread.anchor.path))].filter(path => !changedPaths.has(path))
+        .map(path => ({ path, status: 'unchanged', binary: false, collapsed: false, additions: 0, deletions: 0, hunks: [] }))];
     return html`
         <div class="d-flex">
             <nav aria-label="Changed files" class="file-tree-pane position-sticky top-0 overflow-auto p-3 border-right">
@@ -157,7 +167,7 @@ function App() {
                 </div>
                 ${flash && html`<div class="flash flash-error mb-3">${flash}</div>`}
                 ${changed && html`<div class="flash mb-3">The code changed since it was loaded · <button class="btn-link" onClick=${refresh}>Refresh</button></div>`}
-                ${diff.files.map((file, i) => html`
+                ${files.map((file, i) => html`
                     <${FileDiff} key=${file.path} id=${`diff-${i}`} file=${file} threads=${session.threads.filter(thread => thread.anchor.path === file.path)} review=${review} />`)}
             </main>
         </div>`;
@@ -185,6 +195,7 @@ function Tree({ node }) {
 
 function FileDiff({ id, file, threads, review }) {
     const [open, setOpen] = useState(!file.collapsed);
+    const hunks = withContext(file.hunks, threads);
     return html`
         <section id=${id} class="Box mb-3">
             <div class="Box-header py-2 d-flex flex-items-center">
@@ -192,11 +203,30 @@ function FileDiff({ id, file, threads, review }) {
                 <span class="color-fg-success mr-1">+${file.additions}</span>
                 <span class="color-fg-danger">−${file.deletions}</span>
             </div>
+            ${threads.filter(thread => !thread.at).map(thread => html`<div key=${thread.id}>${threadBox(thread, review)}</div>`)}
             ${file.binary ? html`<div class="Box-body color-fg-muted">Binary file not shown</div>`
-                : file.hunks.length === 0 ? html`<div class="Box-body color-fg-muted">${file.status === 'modified' ? 'File mode changed' : 'Empty file'}</div>`
+                : hunks.length === 0 ? file.status !== 'unchanged' && html`<div class="Box-body color-fg-muted">${file.status === 'modified' ? 'File mode changed' : 'Empty file'}</div>`
                 : !open ? html`<div class="Box-body text-center"><button class="btn-link" onClick=${() => setOpen(true)}>Load diff</button></div>`
-                : html`<table class="diff-table"><tbody>${rows(file, threads, review)}</tbody></table>`}
+                : html`<table class="diff-table"><tbody>${rows({ ...file, hunks }, threads, review)}</tbody></table>`}
         </section>`;
+}
+
+/** The file's hunks, and the lines around threads out of them as hunks of their own, in the order of the file. */
+function withContext(hunks, threads) {
+    const around = new Map();
+    for (const thread of threads) for (const line of thread.at?.context ?? []) around.set(line.newNo, line);
+    const runs = [];
+    for (const line of [...around.values()].sort((a, b) => a.newNo - b.newNo)) {
+        if (runs.at(-1)?.at(-1).newNo === line.newNo - 1) runs.at(-1).push(line);
+        else runs.push([line]);
+    }
+    const start = hunk => Number(hunk.header.match(/\+(\d+)/)[1]);
+    return [...hunks, ...runs.map(run => ({ header: `@@ -${run[0].oldNo},${run.length} +${run[0].newNo},${run.length} @@`, lines: run }))]
+        .sort((a, b) => start(a) - start(b));
+}
+
+function threadBox(thread, { message, readOnly, busy, act }) {
+    return html`<${Thread} thread=${thread} draft=${message(thread.id)} readOnly=${readOnly} busy=${busy} act=${act} />`;
 }
 
 function language(path) {
@@ -210,7 +240,8 @@ function endsAt(range, file, line) {
 }
 
 // Rows carry keys, so a thread arriving above a message being typed moves its row instead of rebuilding the textarea.
-function rows(file, threads, { readOnly, busy, selection, setSelection, draft, message, act, diff, now }) {
+function rows(file, threads, review) {
+    const { readOnly, busy, selection, setSelection, draft, act, diff, now } = review;
     const lang = language(file.path);
     const selected = (side, no) => selection?.path === file.path && selection.side === side && no >= selection.start && no <= selection.end;
     // A click selects a line, a Shift+click extends the selection from the line clicked first, on the same side of the same file.
@@ -241,9 +272,8 @@ function rows(file, threads, { readOnly, busy, selection, setSelection, draft, m
                     <td class="diff-num" onClick=${select('new', line.newNo)}>${line.newNo}</td>
                     <td class="diff-code" dangerouslySetInnerHTML=${{ __html: highlight(line.text, line.type === 'note' ? null : lang) }}></td>
                 </tr>`,
-            // ponytail: a thread whose last line is not in the displayed diff is not shown; slice 5 shows it with its excerpt.
-            ...threads.filter(thread => endsAt(thread.anchor, file, line)).map(thread => html`
-                <tr key=${`t${thread.id}`}><td colspan="3"><${Thread} thread=${thread} draft=${message(thread.id)} readOnly=${readOnly} busy=${busy} act=${act} /></td></tr>`),
+            ...threads.filter(thread => thread.at && endsAt({ ...thread.anchor, ...thread.at }, file, line)).map(thread => html`
+                <tr key=${`t${thread.id}`}><td colspan="3">${threadBox(thread, review)}</td></tr>`),
             !readOnly && endsAt(selection, file, line) && html`
                 <tr key="selection"><td colspan="3"><div class="Box m-2 p-2">
                     <${Composer} draft=${draft} busy=${busy} onSubmit=${openThread} onCancel=${cancel} />
@@ -255,7 +285,8 @@ function rows(file, threads, { readOnly, busy, selection, setSelection, draft, m
 
 function Thread({ thread, draft, readOnly, busy, act }) {
     const [label, color] = STATUS[thread.status] ?? [];
-    const { side, start, end } = thread.anchor;
+    const { side } = thread.anchor;
+    const { start, end } = thread.at ?? thread.anchor;
     const sign = side === 'new' ? '+' : '-';
     // A Resolved thread arrives folded; once open, a poll does not fold it again, since `open` only changes with the status.
     return html`
@@ -263,7 +294,9 @@ function Thread({ thread, draft, readOnly, busy, act }) {
             <summary class="Box-header py-2">
                 <span class="text-bold">${start === end ? `Line ${sign}${start}` : `Lines ${sign}${start} to ${sign}${end}`}</span>
                 ${label && html`<span class=${`Label ${color} ml-2`}>${label}</span>`}
+                ${!thread.at && html`<span class="Label Label--secondary ml-2">Outdated</span>`}
             </summary>
+            ${!thread.at && html`<${Excerpt} anchor=${thread.anchor} />`}
             ${thread.messages.map(message => html`
                 <div class="Box-row">
                     <div class="mb-1">
@@ -279,6 +312,25 @@ function Thread({ thread, draft, readOnly, busy, act }) {
                     ${!thread.resolved && html`<button class="btn btn-sm mt-2" disabled=${busy} onClick=${() => act(`/threads/${thread.id}/resolve`, {})}>Resolve</button>`}
                 </div>`}
         </details>`;
+}
+
+/** The original diff excerpt of an Outdated thread; an Anchor written out of the diff kept its lines alone. */
+function Excerpt({ anchor: { path, side, start, lines, hunk } }) {
+    const { header, lines: shown } = hunk ?? {
+        header: null,
+        lines: lines.map((text, i) => ({ type: 'context', oldNo: side === 'old' ? start + i : null, newNo: side === 'new' ? start + i : null, text })),
+    };
+    const lang = language(path);
+    return html`
+        <table class="diff-table"><tbody>
+            ${header && html`<tr class="diff-hunk"><td colspan="2"></td><td>${header}</td></tr>`}
+            ${shown.map(line => html`
+                <tr class=${`diff-line-${line.type}`}>
+                    <td class="diff-num">${line.oldNo}</td>
+                    <td class="diff-num">${line.newNo}</td>
+                    <td class="diff-code" dangerouslySetInnerHTML=${{ __html: highlight(line.text, line.type === 'note' ? null : lang) }}></td>
+                </tr>`)}
+        </tbody></table>`;
 }
 
 /** A message being written, kept across polls, and cleared once the server took it, unless typed on meanwhile. */

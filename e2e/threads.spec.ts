@@ -191,23 +191,24 @@ test('a double click on Add message or Send writes once', async ({ page }) => {
 test('an approved session stays read-only when a late poll answers, and stops polling', async ({ page, request }) => {
     const dir = changed();
     const { id } = await claudeThread(request, dir, 2, 'Only one');
+    const isSession = (url: string) => new URL(url).pathname === `/api/sessions/${id}`;
     // Every poll answers late, so one is still on its way when the Approve answers.
-    await page.route(`**/api/sessions/${id}`, async route => {
+    await page.route(url => isSession(url.href), async route => {
         const response = await route.fetch();
         await new Promise(resolve => setTimeout(resolve, 1500));
         await route.fulfill({ response });
     });
-    const polled = page.waitForRequest(request => request.method() === 'GET' && request.url().endsWith(`/api/sessions/${id}`));
     await open(page, dir);
-    await polled;
-    const late = page.waitForResponse(response => response.request().method() === 'GET' && response.url().endsWith(`/api/sessions/${id}`));
+    await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible();
+    await page.waitForRequest(request => request.method() === 'GET' && isSession(request.url()));
+    const late = page.waitForResponse(response => response.request().method() === 'GET' && isSession(response.url()));
     let message = '';
     page.once('dialog', dialog => { message = dialog.message(); dialog.accept(); });
 
     await page.getByRole('button', { name: 'Approve' }).click();
     await expect(page.getByText('Approved', { exact: true })).toBeVisible();
     let polls = 0;
-    page.on('request', request => { if (request.method() === 'GET' && request.url().endsWith(`/api/sessions/${id}`)) polls++; });
+    page.on('request', request => { if (request.method() === 'GET' && isSession(request.url())) polls++; });
     await late;
     await page.waitForTimeout(200);
 

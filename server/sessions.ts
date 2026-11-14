@@ -2,7 +2,8 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, posix } from 'node:path';
-import { diff, git, head, writeTree, type Hunk } from './diff.ts';
+import { diff, git, head, writeTree, type Hunk, type Line } from './diff.ts';
+import { reanchor } from './reanchor.ts';
 
 /** A message without date is Pending; `review` is the Send that published one of mine. */
 type Message = { author: 'me' | 'claude'; body: string; date: string | null; review?: number };
@@ -150,12 +151,93 @@ function message(author: unknown, body: unknown): Message {
     return { author, body, date: author === 'claude' ? new Date().toISOString() : null };
 }
 
+function checkId(id: unknown, name: string): asserts id is string {
+    if (typeof id !== 'string' || !/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(id)) throw httpError(400, `${name} must be 40 or 64 hexadecimal characters`);
+}
+
+/** Refuses a malformed `base` or `tree` to place threads on, before a write is recorded. */
+export function checkPlacement(query: URLSearchParams): void {
+    for (const name of ['base', 'tree']) if (query.has(name)) checkId(query.get(name), name);
+}
+
 /** The id, if it names an object of one of these types in the worktree's repository. */
 async function checkObject(worktree: string, id: unknown, name: string, types: string[]): Promise<string> {
-    if (typeof id !== 'string' || !/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(id)) throw httpError(400, `${name} must be 40 or 64 hexadecimal characters`);
+    checkId(id, name);
     const type = (await git(worktree, ['cat-file', '-t', id]).catch(() => 'missing')).trim();
     if (!types.includes(type)) throw httpError(400, `${name} ${id} is not a ${types.join(' or ')} of ${worktree}`);
     return id;
+}
+
+/** The lines of the file at `path` in a commit or tree, null without such a file; any other failure of git throws. */
+async function fileLines(worktree: string, object: string, path: string): Promise<string[] | null> {
+    // --batch answers "<name> missing" for a path the object lacks, in any locale, and fails only when git does.
+    const answer = await git(worktree, ['cat-file', '--batch'], undefined, `${object}:${path}\n`);
+    const header = answer.slice(0, answer.indexOf('\n'));
+    // A directory is no file either.
+    if (!/ blob \d+$/.test(header)) return null;
+    // The content follows the header, then one more newline.
+    const content = answer.slice(header.length + 1, -1);
+    const lines = content.split('\n');
+    if (content.endsWith('\n')) lines.pop();
+    return lines;
+}
+
+/**
+ * A session answered, with each thread's place `at` in the code the query names, null when Outdated:
+ * the displayed `base` and `tree` ids for the UI, with the context of a thread out of the diff,
+ * or, with `reanchor`, HEAD and the working tree for list_open_threads(), Resolved threads left as they are.
+ * Without either, the session as it is.
+ */
+export async function placed(answer: unknown, query: URLSearchParams): Promise<unknown> {
+    const session = answer as ReturnType<typeof view>;
+    if (!session?.threads || (!query.has('reanchor') && !query.has('base') && !query.has('tree'))) return answer;
+    const { worktree } = session;
+    // list_open_threads() leaves Resolved threads out, and shows no context.
+    const forClaude = query.has('reanchor');
+    const shown = forClaude ? { base: await head(worktree), tree: await writeTree(worktree) } : {
+        base: await checkObject(worktree, query.get('base'), 'base', ['commit', 'tree']),
+        tree: await checkObject(worktree, query.get('tree'), 'tree', ['tree']),
+    };
+    const files = forClaude ? [] : (await diff(worktree, shown)).files;
+    // ponytail: one git cat-file per file and side on each 2 s poll; read them all in one `git cat-file --batch` if sessions grow many files.
+    const read = new Map<string, Promise<string[] | null>>();
+    return {
+        ...session,
+        threads: await Promise.all(session.threads.map(async thread => {
+            if (forClaude && thread.resolved) return thread;
+            const { path, side } = thread.anchor;
+            if (!read.has(`${side} ${path}`)) read.set(`${side} ${path}`, fileLines(worktree, side === 'new' ? shown.tree : shown.base, path));
+            const lines = await read.get(`${side} ${path}`)!;
+            const at = reanchor(thread.anchor, lines);
+            return { ...thread, at: at && (forClaude ? at : { ...at, context: context(files.find(file => file.path === path)?.hunks ?? [], side, at, lines!) }) };
+        })),
+    };
+}
+
+/**
+ * The lines around a range whose last line no hunk shows, from 3 above to 3 below, minus those the hunks show:
+ * unchanged, so numbered on both sides, to show as a hunk of their own. None when a hunk shows the range.
+ */
+function context(hunks: Hunk[], side: 'old' | 'new', { start, end }: { start: number; end: number }, lines: string[]): Line[] {
+    const no = side === 'new' ? 'newNo' : 'oldNo';
+    const shown = new Set(hunks.flatMap(hunk => hunk.lines.map(line => line[no])));
+    if (shown.has(end)) return [];
+    // The first line after each hunk on both sides, from its header: a hunk may number lines of one side only (diff.context=0).
+    // A count of 0 places the hunk after its start line.
+    const next = hunks.map(({ header }) => {
+        const [, a, b = '1', c, d = '1'] = header.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/)!;
+        return { old: Number(a) + Math.max(Number(b), 1), new: Number(c) + Math.max(Number(d), 1) };
+    });
+    const other = side === 'new' ? 'old' : 'new';
+    const around: Line[] = [];
+    for (let k = Math.max(1, start - 3); k <= Math.min(lines.length, end + 3); k++) {
+        if (shown.has(k)) continue;
+        // An unchanged line keeps its distance to the end of the last hunk above it, on both sides.
+        const last = next.findLast(after => after[side] <= k);
+        const moved = last ? k - last[side] + last[other] : k;
+        around.push({ type: 'context', oldNo: side === 'old' ? k : moved, newNo: side === 'new' ? k : moved, text: lines[k - 1] });
+    }
+    return around;
 }
 
 /** A session that still takes messages: an approved one refuses them all. */
@@ -186,10 +268,8 @@ export async function openThread(id: string, input: Record<string, unknown>) {
         tree: await checkObject(session.worktree, input.tree, 'tree', ['tree']),
     } : undefined;
     const { base, tree, files } = await diff(session.worktree, shown);
-    const content = await git(session.worktree, ['cat-file', 'blob', `${side === 'new' ? tree : base}:${path}`])
-        .catch(() => { throw httpError(400, `No ${path} on the ${side} side`); });
-    const lines = content.split('\n');
-    if (content.endsWith('\n')) lines.pop();
+    const lines = await fileLines(session.worktree, side === 'new' ? tree : base, path);
+    if (!lines) throw httpError(400, `No ${path} on the ${side} side`);
     if (to > lines.length) throw httpError(400, `${path} has ${lines.length} lines on the ${side} side`);
     let hunk: Hunk | null = null;
     for (const file of files.filter(file => file.path === path)) {

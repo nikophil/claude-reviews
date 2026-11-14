@@ -20,6 +20,17 @@ after(() => {
     removeRepos();
 });
 
+/** A git on the PATH that logs its arguments, runs `prelude`, then runs the real one; `restore` puts the PATH back. */
+function shim(dir: string, prelude = ''): { log: string; restore: () => void } {
+    const bin = join(dir, '.git', 'shim');
+    const log = join(bin, 'log');
+    write(bin, { git: `#!/bin/sh\necho "$*" >> '${log}'\n${prelude}\nexec '${execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim()}' "$@"\n` });
+    chmodSync(join(bin, 'git'), 0o755);
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    return { log, restore: () => { process.env.PATH = path; } };
+}
+
 async function api(method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> {
     const res = await fetch(`${base}${path}`, {
         method,
@@ -450,13 +461,7 @@ test('a diff asked again for the same base and tree does not run git diff again'
     // Content of its own: another test of the same second could have diffed the same pair already.
     write(dir, { 'a.txt': `${dir}\n` });
     const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
-    // A git on the PATH that logs its arguments, then runs the real one.
-    const shim = join(dir, '.git', 'shim');
-    const log = join(shim, 'log');
-    write(shim, { git: `#!/bin/sh\necho "$*" >> '${log}'\nexec '${execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim()}' "$@"\n` });
-    chmodSync(join(shim, 'git'), 0o755);
-    const path = process.env.PATH;
-    process.env.PATH = `${shim}:${path}`;
+    const { log, restore } = shim(dir);
     const diffs = () => readFileSync(log, 'utf8').split('\n').filter(args => / diff --no-color /.test(args)).length;
     try {
         const first = await api('GET', `/api/sessions/${id}/diff`);
@@ -468,7 +473,7 @@ test('a diff asked again for the same base and tree does not run git diff again'
         await api('GET', `/api/sessions/${id}/diff`);
         assert.equal(diffs(), 2);
     } finally {
-        process.env.PATH = path;
+        restore();
     }
 });
 
@@ -481,4 +486,77 @@ test('Since my last review cannot be chosen before the first Send, nor a base th
         assert.equal(refused.status, 400, base);
     }
     assert.equal((await api('GET', `/api/sessions/${id}`)).body.base, 'HEAD');
+});
+
+test('the lines around a thread out of the diff are numbered on the other side past hunks that only delete or only add lines', async () => {
+    const lines = Array.from({ length: 30 }, (_, i) => `l${i + 1}`);
+    const dir = repo({ 'a.txt': `${lines.join('\n')}\n` });
+    // Without context lines, a hunk numbers lines of one side only.
+    git(dir, 'config', 'diff.context', '0');
+    write(dir, { 'a.txt': `${[...lines.slice(0, 4), ...lines.slice(6, 10), 'x', 'y', 'z', ...lines.slice(10)].join('\n')}\n` });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path: 'a.txt', side: 'new', start: 18, end: 18, body: 'Here' });
+    const { base, tree } = (await api('GET', `/api/sessions/${id}/diff`)).body;
+
+    const placed = await api('GET', `/api/sessions/${id}?base=${base}&tree=${tree}`);
+
+    assert.deepEqual(placed.body.threads[0].at.context.map((line: any) => [line.oldNo, line.newNo, line.text]), [
+        [14, 15, 'l14'], [15, 16, 'l15'], [16, 17, 'l16'], [17, 18, 'l17'], [18, 19, 'l18'], [19, 20, 'l19'], [20, 21, 'l20'],
+    ]);
+});
+
+test('a thread on a file gone is Outdated, but a git that fails to read a file is a server error', async () => {
+    const dir = repo({ 'a.txt': 'one\ntwo\n', 'b.txt': 'three\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path: 'a.txt', side: 'new', start: 1, end: 1, body: 'Here' });
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path: 'b.txt', side: 'new', start: 1, end: 1, body: 'There' });
+    unlinkSync(join(dir, 'b.txt'));
+    const { base, tree } = (await api('GET', `/api/sessions/${id}/diff`)).body;
+    assert.deepEqual((await api('GET', `/api/sessions/${id}?base=${base}&tree=${tree}`)).body.threads.map((thread: any) => thread.at), [
+        { start: 1, end: 1, context: [{ type: 'context', oldNo: 1, newNo: 1, text: 'one' }, { type: 'context', oldNo: 2, newNo: 2, text: 'two' }] },
+        null,
+    ]);
+    // Any read of an object's content fails, as with too many open files.
+    const { restore } = shim(dir, 'case "$1 $2" in "cat-file -t") ;; cat-file*) echo "error: too many open files" >&2; exit 128;; esac');
+    try {
+        const placed = await api('GET', `/api/sessions/${id}?base=${base}&tree=${tree}`);
+
+        assert.equal(placed.status, 500);
+    } finally {
+        restore();
+    }
+});
+
+test('?reanchor places the threads not Resolved on HEAD and the working tree, without a diff, reading each file once', async () => {
+    const dir = repo({ 'a.txt': 'one\ntwo\nthree\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    for (const line of [1, 2, 3]) await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path: 'a.txt', side: 'new', start: line, end: line, body: 'Here' });
+    await api('POST', `/api/sessions/${id}/threads/3/resolve`, {});
+    // A working tree never diffed yet, so no cached diff hides one.
+    write(dir, { 'a.txt': 'zero\none\ntwo\nthree\n' });
+    const { log, restore } = shim(dir);
+    try {
+        const listed = await api('GET', `/api/sessions?worktree=${encodeURIComponent(dir)}&reanchor`);
+
+        assert.deepEqual(listed.body.threads.map((thread: any) => thread.at), [{ start: 2, end: 2 }, { start: 3, end: 3 }, undefined]);
+        const calls = readFileSync(log, 'utf8').split('\n');
+        assert.deepEqual(calls.filter(args => / diff /.test(args)), []);
+        assert.equal(calls.filter(args => args.startsWith('cat-file') && !args.startsWith('cat-file -t')).length, 1);
+    } finally {
+        restore();
+    }
+});
+
+test('a write refuses a malformed base or tree to place threads on before it is recorded, and answers its success once recorded', async () => {
+    const { id, path } = await sessionWithThread();
+    const tree = await displayedTree(id);
+
+    const refused = await api('POST', `${path}/messages?base=HEAD&tree=${tree}`, { author: 'me', body: 'Twice?' });
+    assert.equal(refused.status, 400);
+    assert.equal((await api('GET', `/api/sessions/${id}`)).body.threads[0].messages.length, 1);
+
+    // Well formed, but no object of the worktree: the threads cannot be placed, the Send is recorded all the same.
+    const sent = await api('POST', `/api/sessions/${id}/send?base=${'0'.repeat(40)}&tree=${tree}`, { tree });
+    assert.equal(sent.status, 200);
+    assert.equal(sent.body.sends, 1);
 });

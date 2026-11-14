@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { extname, join } from 'node:path';
-import { addMessage, approve, bases, chooseBase, currentTree, findSession, getSession, httpError, openSession, openThread, resolve, send, sessionDiff } from './sessions.ts';
+import { addMessage, approve, bases, checkPlacement, chooseBase, currentTree, findSession, getSession, httpError, openSession, openThread, placed, resolve, send, sessionDiff } from './sessions.ts';
 
 const UI = join(import.meta.dirname, '..', 'ui');
 const TYPES: Record<string, string> = {
@@ -68,7 +68,10 @@ export function start(port: number): Promise<Server> {
                     body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
                 } catch {}
                 if (typeof body !== 'object' || body === null) return json(res, 400, { error: 'The body must be a JSON object' });
-                return json(res, 200, await route(req.method!, url, body));
+                checkPlacement(url.searchParams);
+                const answer = await route(req.method!, url, body);
+                // A write recorded answers its success, even unplaced: a retry would record it twice, and the next poll places the threads.
+                return json(res, 200, await placed(answer, url.searchParams).catch(error => { if (req.method === 'GET') throw error; return answer; }));
             }
             // The URL parser already resolves "..", so the joined path stays inside UI.
             // The page of a session, /s/<id>, is the same page as /, which reads the id from its URL.
