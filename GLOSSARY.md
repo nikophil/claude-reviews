@@ -35,6 +35,11 @@ _Avoid_: vues par tour
 Le code que j'avais sous les yeux au moment d'un Send, gardé comme base Since my last review.
 _Avoid_: photo, état de la review
 
+**Viewed**:
+Se dit d'un fichier du diff que j'ai marqué vu ; son diff se replie.
+Il le reste tant que son contenu, dans le code affiché, garde celui que j'ai vu, même si la base change.
+_Avoid_: lu, relu
+
 **Claude session**:
 Une conversation Claude Code qui tourne dans un worktree.
 _Avoid_: session (seul, qui désigne la Session de relecture)

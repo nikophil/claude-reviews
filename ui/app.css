@@ -9,6 +9,14 @@
 .file-tree-row .file-tree-directory { color: var(--treeViewItem-leadingVisual-iconColor-rest); }
 .file-tree-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.viewed-progress circle { fill: none; stroke-width: 2; stroke: var(--borderColor-default); }
+.viewed-progress circle + circle { stroke: var(--fgColor-success); }
+/* As on GitHub, the header of a file stays at the top of the window while its diff scrolls by. */
+.file-header { position: sticky; top: 0; z-index: 1; }
+.file-viewed { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 1px solid var(--borderColor-default); border-radius: var(--borderRadius-medium); font-size: 12px; font-weight: normal; cursor: pointer; }
+.file-viewed:has(:checked) { background-color: var(--bgColor-accent-muted); border-color: var(--borderColor-accent-muted); }
+.file-viewed input { margin: 0; }
+
 .diff-table { width: 100%; border-collapse: collapse; font-family: var(--fontStack-monospace); font-size: 12px; line-height: 20px; }
 .diff-table tr { height: 20px; }
 .diff-num { width: 1%; min-width: 50px; padding: 0 10px; text-align: right; color: var(--fgColor-muted); user-select: none; vertical-align: top; }

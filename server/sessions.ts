@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, posix } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { diff, git, head, writeTree, type Hunk, type Line } from './diff.ts';
 import { reanchor } from './reanchor.ts';
 
@@ -24,11 +24,15 @@ type Thread = { id: number; anchor: Anchor; resolved: boolean; messages: Message
  * `commonDir` is the repository shared by the worktrees, where the refs stay once the worktree is gone; absent from sessions opened before it was kept.
  * `sentAt` is the date of the last Send.
  * `closedBecause` tells a session closed because its worktree is gone from an approved one.
+ * `viewed` maps each file marked Viewed to the id of its content in the tree it was marked on, DELETED for a file absent from it;
+ * absent from sessions opened before Viewed.
  */
 export type Session = {
     id: string; worktree: string; commonDir?: string; createdAt: string; approvedAt: string | null; closedBecause?: 'worktree-gone';
-    base: string; sends: number; sentAt?: string; threads: Thread[];
+    base: string; sends: number; sentAt?: string; threads: Thread[]; viewed?: Record<string, string>;
 };
+
+const DELETED = 'deleted';
 
 // ponytail: one queue for every session write keeps read-modify-write safe; per-session queues if writes ever wait on each other.
 let queue: Promise<unknown> = Promise.resolve();
@@ -176,7 +180,7 @@ export function openSession(path: unknown) {
     return exclusive(async () => {
         const { worktree, commonDir, session: open } = await lookup(path, task => task());
         if (open) return view(open);
-        const session = { id: randomBytes(8).toString('hex'), worktree, commonDir, createdAt: new Date().toISOString(), approvedAt: null, base: 'HEAD', sends: 0, threads: [] };
+        const session = { id: randomBytes(8).toString('hex'), worktree, commonDir, createdAt: new Date().toISOString(), approvedAt: null, base: 'HEAD', sends: 0, threads: [], viewed: {} };
         await save(session);
         return view(session);
     });
@@ -283,11 +287,17 @@ export async function placed(answer: unknown, query: URLSearchParams): Promise<u
         base: await checkObject(worktree, query.get('base'), 'base', ['commit', 'tree']),
         tree: await checkObject(worktree, query.get('tree'), 'tree', ['tree']),
     };
-    const files = forClaude ? [] : (await diff(worktree, shown)).files;
+    // A file stays Viewed while its content in the displayed tree keeps the id it was marked on, whatever the base.
+    const viewed = Object.entries(session.viewed ?? {});
+    const [files, blobsNow] = forClaude ? [[], []] : await Promise.all([
+        diff(worktree, shown).then(shown => shown.files),
+        blobs(worktree, shown.tree, viewed.map(([path]) => path)),
+    ]);
     // ponytail: one git cat-file per file and side on each 2 s poll; read them all in one `git cat-file --batch` if sessions grow many files.
     const read = new Map<string, Promise<string[] | null>>();
     return {
         ...session,
+        viewed: forClaude ? session.viewed : Object.fromEntries(viewed.filter(([, blob], i) => blob === blobsNow[i])),
         threads: await Promise.all(session.threads.map(async thread => {
             if (forClaude && thread.resolved) return thread;
             const { path, side } = thread.anchor;
@@ -345,9 +355,7 @@ export async function openThread(id: string, input: Record<string, unknown>) {
         || !Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from) {
         throw httpError(400, 'A thread needs a path, a side ("old" or "new") and a range of lines from start to end');
     }
-    if (posix.normalize(path) !== path || path.startsWith('/') || path.startsWith('../')) {
-        throw httpError(400, `${path} is not a canonical path from the top of the worktree`);
-    }
+    checkPath(path);
     const shown = first.author === 'me' ? {
         base: await checkObject(session.worktree, input.base, 'base', ['commit', 'tree']),
         tree: await checkObject(session.worktree, input.tree, 'tree', ['tree']),
@@ -372,6 +380,35 @@ export async function openThread(id: string, input: Record<string, unknown>) {
         resolved: false,
         messages: [first],
     });
+    await save(session);
+    return view(session);
+}
+
+function checkPath(path: unknown): asserts path is string {
+    // No leading or trailing slash, no empty, `.` or `..` segment; a newline would split the path in two for `git cat-file --batch`.
+    if (typeof path !== 'string' || path.split('/').some(segment => ['', '.', '..'].includes(segment)) || path.includes('\n')) {
+        throw httpError(400, `${path} is not a canonical path from the top of the worktree`);
+    }
+}
+
+/** The id of the entry at each path in `tree`, of any type (a submodule names a commit not in this repository), DELETED for a path absent from it. */
+async function blobs(worktree: string, tree: string, paths: string[]): Promise<string[]> {
+    if (!paths.length) return [];
+    // Literal pathspecs: a path may hold `*` or `?`.
+    const answer = await git(worktree, ['ls-tree', '-z', '--format=%(objectname) %(path)', tree, '--', ...paths], { GIT_LITERAL_PATHSPECS: '1' });
+    const ids = new Map(answer.split('\0').filter(Boolean).map(entry => [entry.slice(entry.indexOf(' ') + 1), entry.slice(0, entry.indexOf(' '))]));
+    return paths.map(path => ids.get(path) ?? DELETED);
+}
+
+/** Marks the file at `path` Viewed on the displayed `tree`, or no longer Viewed. */
+export async function markViewed(id: string, { path, tree, viewed }: Record<string, unknown>) {
+    const session = await writable(id);
+    checkPath(path);
+    if (typeof viewed !== 'boolean') throw httpError(400, 'viewed must be a boolean');
+    const others = Object.entries(session.viewed ?? {}).filter(([other]) => other !== path);
+    if (viewed) others.push([path, (await blobs(session.worktree, await checkObject(session.worktree, tree, 'tree', ['tree']), [path]))[0]]);
+    // Entries, not an assignment: a file named __proto__ is a key like any other.
+    session.viewed = Object.fromEntries(others);
     await save(session);
     return view(session);
 }

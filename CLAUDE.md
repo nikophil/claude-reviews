@@ -63,6 +63,7 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 | `POST /api/sessions/<id>/threads` `{ author, path, side, start, end, body, base?, tree? }` | Ouvre un thread avec son premier message (`open_thread` pour Claude). |
 | `POST /api/sessions/<id>/threads/<n>/messages` `{ author, body }` | Ajoute un message (`reply_to_thread` pour Claude). |
 | `POST /api/sessions/<id>/threads/<n>/resolve` `{}` | Résout le thread. |
+| `POST /api/sessions/<id>/viewed` `{ path, tree, viewed }` | Marque le fichier Viewed sur le tree affiché, ou le démarque. |
 | `POST /api/sessions/<id>/send` `{ tree }` | Send : Snapshot du tree affiché, puis publication des messages Pending. |
 | `POST /api/sessions/<id>/approve` `{}` | Approve : archive la session, puis supprime ses refs. |
 | `POST /api/sessions/<id>/turn-complete` `{}` | Notifie « Claude replied in N threads », suivi de « , M still waiting » s'il en reste, par `notify-send` (Linux) ou `osascript` (macOS). |
@@ -77,6 +78,7 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - Avec `?reanchor`, `at` vaut `{ start, end }`, sans `context` ni calcul du diff, et un thread Resolved n'a pas d'`at`.
 - Une `base` ou un `tree` mal formés dans la query reçoivent 400 avant toute écriture ; une écriture enregistrée répond 200, avec ses threads sans `at` si leur ré-ancrage échoue.
 - `context` liste, quand aucun hunk du diff de ce code ne montre la dernière ligne de la plage, les lignes de 3 au-dessus à 3 au-dessous de la plage, hors celles des hunks, inchangées et numérotées des deux côtés ; l'UI les affiche comme un hunk de plus.
+- Placée par `?base=&tree=`, la session ne garde dans `viewed` que les fichiers dont le contenu dans `tree` a toujours l'id enregistré : un fichier qui change n'est plus vu, un changement de base qui ne le touche pas le laisse vu.
 - `author` vaut `me` ou `claude` : un message de `me` naît Pending, un message de `claude` est publié sur-le-champ.
 - Un message de `me` rouvre un thread Resolved au Send qui le publie, pas un message de `claude`.
 - Les bases sont `HEAD` (Uncommitted changes), `last-review` (Since my last review, le Snapshot du dernier Send, grisé avant le premier), `origin/HEAD`, puis les branches locales `refs/heads/<nom>` hors celle du worktree, de la plus proche du merge-base à la plus lointaine.
@@ -129,6 +131,7 @@ Le dossier de données est `$XDG_DATA_HOME/claude-reviews`, sinon `~/.local/shar
   "base": "HEAD",
   "sends": 1,
   "sentAt": "2026-11-14T10:05:00.000Z",
+  "viewed": { "src/b.ts": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391" },
   "threads": [{
     "id": 1,
     "anchor": {
@@ -152,6 +155,7 @@ Le dossier de données est `$XDG_DATA_HOME/claude-reviews`, sinon `~/.local/shar
 - `base` : la dernière base choisie, une `ref` de `/bases`, `HEAD` à la création.
 - `sends` : le nombre de Send, donc le numéro de la dernière ref.
 - `sentAt` : la date du dernier Send, absente avant le premier.
+- `viewed` : chaque fichier marqué Viewed, avec l'id de son contenu dans le tree affiché quand je l'ai coché, `deleted` pour un fichier absent de ce tree ; absent des sessions plus anciennes.
 - `closedBecause` : `worktree-gone` pour une session close parce que son worktree a disparu, absent sinon, même après un Approve.
 - `anchor` : jusqu'à 3 voisines dans `before` et `after`, et `hunk`, l'extrait du diff jusqu'à la fin de la plage, `null` hors du diff ; aucun SHA.
 - Un message sans `date` est Pending ; un Send le date, lui donne son numéro dans `review`, et le place après les messages déjà publiés.

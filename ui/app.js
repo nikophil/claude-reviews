@@ -36,6 +36,7 @@ function escape(text) {
 const OCTICONS = {
     'sidebar-collapse': 'M6.823 7.823a.25.25 0 0 1 0 .354l-2.396 2.396A.25.25 0 0 1 4 10.396V5.604a.25.25 0 0 1 .427-.177ZM1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25V1.75C0 .784.784 0 1.75 0ZM1.5 1.75v12.5c0 .138.112.25.25.25H9.5v-13H1.75a.25.25 0 0 0-.25.25ZM11 14.5h3.25a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25H11Z',
     'sidebar-expand': 'm4.177 7.823 2.396-2.396A.25.25 0 0 1 7 5.604v4.792a.25.25 0 0 1-.427.177L4.177 8.177a.25.25 0 0 1 0-.354ZM0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25H9.5v-13Zm12.5 13a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25H11v13Z',
+    copy: 'M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z',
     'chevron-down': 'M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z',
     'chevron-right': 'M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z',
     'file-directory-fill': 'M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75Z',
@@ -192,6 +193,9 @@ function App() {
     const changedPaths = new Set(diff.files.map(file => file.path));
     const files = [...diff.files, ...[...new Set(session.threads.filter(thread => !thread.resolved).map(thread => thread.anchor.path))].filter(path => !changedPaths.has(path))
         .map(path => ({ path, status: 'unchanged', binary: false, collapsed: false, additions: 0, deletions: 0, hunks: [] }))];
+    // The answer placed on the displayed tree keeps only the files whose content did not change since they were marked.
+    const isViewed = path => Object.hasOwn(session.viewed ?? {}, path);
+    const viewedCount = diff.files.filter(file => isViewed(file.path)).length;
     const toggleFileTree = () => {
         try {
             localStorage.setItem('claude-reviews.file-tree', fileTreeOpen ? 'collapsed' : 'open');
@@ -214,6 +218,8 @@ function App() {
                     ${!fileTreeOpen && toggle}
                     <a class="mr-3" href="/">Reviews</a>
                     <h1 class="h4 flex-1">${diff.files.length} files changed <span class="text-mono text-normal color-fg-muted f6">${session.worktree}</span></h1>
+                    ${diff.files.length > 0 && html`
+                        <span class="d-flex flex-items-center mr-3 f6 color-fg-muted">${progress(viewedCount, diff.files.length)}${viewedCount} / ${diff.files.length} viewed</span>`}
                     <select aria-label="Base" class=${`form-select mr-2${forward ? ' color-border-accent-emphasis color-bg-accent' : ''}`} disabled=${busy || review.readOnly}
                         value=${diff.ref} onChange=${event => choose(event.target.value)}>
                         ${bases.map(base => html`
@@ -228,9 +234,19 @@ function App() {
                 ${session.closedBecause && html`<div class="flash mb-3">The worktree is gone: the threads show the code they were opened on.</div>`}
                 ${changed && html`<div class="flash mb-3">The code changed since it was loaded · <button class="btn-link" onClick=${refresh}>Refresh</button></div>`}
                 ${files.map((file, i) => html`
-                    <${FileDiff} key=${file.path} id=${`diff-${i}`} file=${file} threads=${session.threads.filter(thread => thread.anchor.path === file.path)} review=${review} />`)}
+                    <${FileDiff} key=${file.path} id=${`diff-${i}`} file=${file} viewed=${file.status !== 'unchanged' && isViewed(file.path)} threads=${session.threads.filter(thread => thread.anchor.path === file.path)} review=${review} />`)}
             </main>
         </div>`;
+}
+
+/** The share of files viewed, as GitHub's ring. */
+function progress(done, total) {
+    const length = 2 * Math.PI * 7;
+    return html`
+        <svg class="viewed-progress mr-2" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="7" />
+            <circle cx="8" cy="8" r="7" stroke-dasharray=${length} stroke-dashoffset=${total ? length * (1 - done / total) : length} transform="rotate(-90 8 8)" />
+        </svg>`;
 }
 
 function buildTree(files) {
@@ -320,21 +336,49 @@ function FileTree({ files }) {
     return html`<ul class="list-style-none">${items(buildTree(files), '', 0)}</ul>`;
 }
 
-function FileDiff({ id, file, threads, review }) {
+function FileDiff({ id, file, viewed, threads, review }) {
     const [open, setOpen] = useState(!file.collapsed);
+    // Folded by the chevron, apart from Viewed; marking a file Viewed folds it, and unmarking it unfolds it.
+    const [folded, setFolded] = useState(viewed);
+    // Checked at once, without waiting for the server, and back as it was if the write fails.
+    const [checked, setChecked] = useState(viewed);
+    const mark = value => {
+        setChecked(value);
+        setFolded(value);
+    };
+    // The answer to my own click changes nothing; a file that lost Viewed (its content changed) unfolds.
+    useEffect(() => { if (viewed !== checked) mark(viewed); }, [viewed]);
     const hunks = withContext(file.hunks, threads);
+    const { readOnly, busy, act, diff } = review;
     return html`
         <section id=${id} data-path=${file.path} class="Box mb-3">
-            <div class="Box-header py-2 d-flex flex-items-center">
-                <span class="text-mono text-bold flex-1">${file.path}</span>
+            <div class=${`Box-header file-header py-2 pl-2 d-flex flex-items-center${folded ? ' border-bottom-0 rounded-2' : ''}`}>
+                <button class="btn-octicon ml-0 mr-1" aria-label=${folded ? 'Expand file' : 'Collapse file'} aria-expanded=${!folded} onClick=${() => setFolded(!folded)}>
+                    ${octicon(folded ? 'chevron-right' : 'chevron-down')}
+                </button>
+                <span class="text-mono text-bold">${file.path}</span>
+                <button class="btn-octicon ml-1 mr-auto" aria-label="Copy file path"
+                    onClick=${() => Promise.resolve().then(() => navigator.clipboard.writeText(file.path)).catch(() => {})}>${octicon('copy')}</button>
                 <span class="color-fg-success mr-1">+${file.additions}</span>
                 <span class="color-fg-danger">−${file.deletions}</span>
+                ${file.status !== 'unchanged' && html`
+                    <label class="file-viewed ml-3">
+                        <input type="checkbox" checked=${checked} disabled=${readOnly || busy}
+                            onChange=${async event => {
+                                const value = event.target.checked;
+                                mark(value);
+                                if (!await act('/viewed', { path: file.path, tree: diff.tree, viewed: value })) mark(!value);
+                            }} />
+                        Viewed
+                    </label>`}
             </div>
-            ${threads.filter(thread => !thread.at).map(thread => html`<div key=${thread.id}>${threadBox(thread, review)}</div>`)}
-            ${file.binary ? html`<div class="Box-body color-fg-muted">Binary file not shown</div>`
-                : hunks.length === 0 ? file.status !== 'unchanged' && html`<div class="Box-body color-fg-muted">${file.status === 'modified' ? 'File mode changed' : 'Empty file'}</div>`
-                : !open ? html`<div class="Box-body text-center"><button class="btn-link" onClick=${() => setOpen(true)}>Load diff</button></div>`
-                : html`<table class="diff-table"><tbody>${rows({ ...file, hunks }, threads, review)}</tbody></table>`}
+            <div hidden=${folded}>
+                ${threads.filter(thread => !thread.at).map(thread => html`<div key=${thread.id}>${threadBox(thread, review)}</div>`)}
+                ${file.binary ? html`<div class="Box-body color-fg-muted">Binary file not shown</div>`
+                    : hunks.length === 0 ? file.status !== 'unchanged' && html`<div class="Box-body color-fg-muted">${file.status === 'modified' ? 'File mode changed' : 'Empty file'}</div>`
+                    : !open ? html`<div class="Box-body text-center"><button class="btn-link" onClick=${() => setOpen(true)}>Load diff</button></div>`
+                    : html`<table class="diff-table"><tbody>${rows({ ...file, hunks }, threads, review)}</tbody></table>`}
+            </div>
         </section>`;
 }
 

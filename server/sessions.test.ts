@@ -133,8 +133,19 @@ test('a thread path must be canonical, relative to the top of the worktree', asy
     const dir = repo({ 'd/a.txt': 'a\n' });
     const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
 
-    for (const path of ['./d/a.txt', 'd//a.txt', 'd/./a.txt', '/d/a.txt']) {
+    for (const path of ['./d/a.txt', 'd//a.txt', 'd/./a.txt', '/d/a.txt', '..', '.', 'd/../d/a.txt', 'd/']) {
         const refused = await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path, side: 'new', start: 1, end: 1, body: 'Hi' });
+        assert.equal(refused.status, 400, path);
+    }
+});
+
+test('a path marked Viewed must be canonical, relative to the top of the worktree', async () => {
+    const dir = repo({ 'd/a.txt': 'a\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const tree = await displayedTree(id);
+
+    for (const path of ['..', '.', 'd/../d/a.txt', 'd/', './d/a.txt', '/d/a.txt']) {
+        const refused = await api('POST', `/api/sessions/${id}/viewed`, { path, tree, viewed: true });
         assert.equal(refused.status, 400, path);
     }
 });
@@ -745,4 +756,75 @@ test('an unreadable session file is left out of the list and the lookups, logged
     assert.equal(readFileSync(file, 'utf8'), '{"id": "0123');
     // The tests that follow need not see it.
     renameSync(file, `${file}.broken`);
+});
+
+/** The paths the session, placed on the displayed `shown`, gives as Viewed. */
+async function viewedOn(id: string, shown: { base: string; tree: string }): Promise<string[]> {
+    return Object.keys((await api('GET', `/api/sessions/${id}?base=${shown.base}&tree=${shown.tree}`)).body.viewed);
+}
+
+test('a file marked Viewed on a tree stays Viewed on the next tree that does not change it, and no longer is on one that does', async () => {
+    const dir = repo({ 'a.txt': 'a\n', 'b.txt': 'b\n' });
+    write(dir, { 'a.txt': 'A\n', 'b.txt': 'B\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const first = (await api('GET', `/api/sessions/${id}/diff`)).body;
+
+    const marked = await api('POST', `/api/sessions/${id}/viewed`, { path: 'a.txt', tree: first.tree, viewed: true });
+    write(dir, { 'b.txt': 'B again\n' });
+    const second = (await api('GET', `/api/sessions/${id}/diff`)).body;
+    write(dir, { 'a.txt': 'A again\n' });
+    const third = (await api('GET', `/api/sessions/${id}/diff`)).body;
+
+    assert.equal(marked.status, 200);
+    assert.deepEqual(await viewedOn(id, first), ['a.txt']);
+    assert.deepEqual(await viewedOn(id, second), ['a.txt']);
+    assert.deepEqual(await viewedOn(id, third), []);
+});
+
+test('a file marked Viewed stays Viewed when the base changes without changing its content', async () => {
+    const dir = repo({ 'a.txt': 'a\n', 'b.txt': 'b\n' });
+    write(dir, { 'a.txt': 'A\n', 'b.txt': 'B\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const first = (await api('GET', `/api/sessions/${id}/diff`)).body;
+    await api('POST', `/api/sessions/${id}/viewed`, { path: 'a.txt', tree: first.tree, viewed: true });
+
+    git(dir, 'commit', '-qam', 'both');
+    const second = (await api('GET', `/api/sessions/${id}/diff`)).body;
+
+    assert.notEqual(second.base, first.base);
+    assert.equal(second.tree, first.tree);
+    assert.deepEqual(await viewedOn(id, second), ['a.txt']);
+});
+
+test('a submodule marked Viewed no longer is once it points at another commit', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    const sub = join(dir, 'sub');
+    write(sub, { 'x.txt': 'x\n' });
+    git(sub, 'init', '-q');
+    git(sub, 'add', '-A');
+    git(sub, 'commit', '-qm', 'x');
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const first = (await api('GET', `/api/sessions/${id}/diff`)).body;
+    await api('POST', `/api/sessions/${id}/viewed`, { path: 'sub', tree: first.tree, viewed: true });
+
+    git(sub, 'commit', '-q', '--allow-empty', '-m', 'y');
+    const second = (await api('GET', `/api/sessions/${id}/diff`)).body;
+
+    assert.deepEqual(await viewedOn(id, first), ['sub']);
+    assert.notEqual(second.tree, first.tree);
+    assert.deepEqual(await viewedOn(id, second), []);
+});
+
+test('an approved session refuses to mark a file Viewed with 409, and writes nothing', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    write(dir, { 'a.txt': 'A\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const { tree } = (await api('GET', `/api/sessions/${id}/diff`)).body;
+    await api('POST', `/api/sessions/${id}/approve`, {});
+
+    const marked = await api('POST', `/api/sessions/${id}/viewed`, { path: 'a.txt', tree, viewed: true });
+
+    assert.equal(marked.status, 409);
+    assert.equal(marked.body.error, 'session approuvée');
+    assert.deepEqual(JSON.parse(readFileSync(join(data, 'archive', `${id}.json`), 'utf8')).viewed, {});
 });

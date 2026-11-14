@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { extname, join } from 'node:path';
-import { addMessage, approve, bases, checkPlacement, chooseBase, currentTree, exclusive, findSession, getSession, httpError, listSessions, openSession, openThread, placed, replies, resolve, send, sessionDiff } from './sessions.ts';
+import { addMessage, approve, bases, checkPlacement, chooseBase, currentTree, exclusive, findSession, getSession, httpError, listSessions, markViewed, openSession, openThread, placed, replies, resolve, send, sessionDiff } from './sessions.ts';
 
 const UI = join(import.meta.dirname, '..', 'ui');
 const TYPES: Record<string, string> = {
@@ -97,7 +97,7 @@ async function route(method: string, { pathname: path, searchParams }: URL, body
     // Each takes the queue of the writes itself, only when it writes: the mod's 2 s poll must not wait for a long Send.
     if (path === '/api/sessions' && method === 'GET') return searchParams.has('worktree') ? findSession(searchParams.get('worktree')) : listSessions();
     if (path === '/api/sessions' && method === 'POST') return openSession(body.worktree);
-    const [, id, action = '', thread, threadAction = ''] = path.match(/^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|tree|bases|base|threads|send|approve|turn-complete))?(?:\/(\d+)\/(messages|resolve))?$/) ?? [];
+    const [, id, action = '', thread, threadAction = ''] = path.match(/^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|tree|bases|base|threads|send|approve|viewed|turn-complete))?(?:\/(\d+)\/(messages|resolve))?$/) ?? [];
     switch (id && `${method} ${action}/${threadAction}`) {
         case 'GET /': return getSession(id);
         case 'GET diff/': return sessionDiff(id);
@@ -108,6 +108,7 @@ async function route(method: string, { pathname: path, searchParams }: URL, body
         case 'POST threads/messages': return exclusive(() => addMessage(id, Number(thread), body));
         case 'POST threads/resolve': return exclusive(() => resolve(id, Number(thread)));
         case 'POST send/': return exclusive(() => send(id, body.tree));
+        case 'POST viewed/': return exclusive(() => markViewed(id, body));
         case 'POST approve/': return exclusive(() => approve(id));
         case 'POST turn-complete/': {
             const session = await getSession(id);
