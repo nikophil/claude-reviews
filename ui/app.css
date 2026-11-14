@@ -22,16 +22,23 @@
 .diff-num { width: 1%; min-width: 50px; padding: 0 10px; text-align: right; color: var(--fgColor-muted); user-select: none; vertical-align: top; }
 .diff-code { position: relative; padding: 0 10px 0 22px; white-space: pre-wrap; word-break: break-all; }
 .diff-code::before { position: absolute; top: 0; left: 8px; }
-.diff-line-add .diff-code { background-color: var(--diffBlob-addition-bgColor-line); }
-.diff-line-add .diff-num { background-color: var(--diffBlob-addition-bgColor-num); }
-.diff-line-add .diff-code::before { content: '+'; }
-.diff-line-del .diff-code { background-color: var(--diffBlob-deletion-bgColor-line); }
-.diff-line-del .diff-num { background-color: var(--diffBlob-deletion-bgColor-num); }
-.diff-line-del .diff-code::before { content: '-'; }
-.diff-line-note .diff-code { color: var(--fgColor-muted); }
+.diff-line-add .diff-code, .diff-code.diff-line-add { background-color: var(--diffBlob-addition-bgColor-line); }
+.diff-line-add .diff-num, .diff-num.diff-line-add { background-color: var(--diffBlob-addition-bgColor-num); }
+.diff-line-add .diff-code::before, .diff-code.diff-line-add::before { content: '+'; }
+.diff-line-del .diff-code, .diff-code.diff-line-del { background-color: var(--diffBlob-deletion-bgColor-line); }
+.diff-line-del .diff-num, .diff-num.diff-line-del { background-color: var(--diffBlob-deletion-bgColor-num); }
+.diff-line-del .diff-code::before, .diff-code.diff-line-del::before { content: '-'; }
+.diff-line-note .diff-code, .diff-code.diff-line-note { color: var(--fgColor-muted); }
 .diff-num:not(:empty) { cursor: pointer; }
-.diff-table tr.selected td { background-color: var(--bgColor-attention-muted); }
+.diff-table tr.selected td, .diff-table td.selected { background-color: var(--bgColor-attention-muted); }
 .diff-table .Box { font-family: var(--fontStack-system); font-size: 14px; line-height: 1.5; white-space: normal; }
+/* Split: two halves of equal width, the old code on the left, the new on the right. */
+.diff-split { table-layout: fixed; }
+.diff-split tr > :is(.diff-code, .diff-empty) + td { border-left: 1px solid var(--borderColor-muted); }
+.diff-empty { background-color: var(--bgColor-muted); }
+.diff-settings { width: 160px; }
+/* Without its caret, which would cover the gear and catch the click that closes the menu. */
+.diff-settings::before, .diff-settings::after { display: none; }
 .diff-hunk td { padding: 4px 10px; background-color: var(--diffBlob-hunk-bgColor-num); color: var(--fgColor-muted); }
 
 /* highlight.js classes on GitHub's syntax colors, grouped as in its github.css theme. */

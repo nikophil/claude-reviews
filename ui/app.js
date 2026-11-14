@@ -46,6 +46,7 @@ const OCTICONS = {
     'diff-removed': 'M13.25 1c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 15H2.75A1.75 1.75 0 0 1 1 13.25V2.75C1 1.784 1.784 1 2.75 1ZM2.75 2.5a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25Zm8.5 6.25h-6.5a.75.75 0 0 1 0-1.5h6.5a.75.75 0 0 1 0 1.5Z',
     // Not an octicon: the frame of diff-removed, without its sign.
     'diff-unchanged': 'M13.25 1c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 15H2.75A1.75 1.75 0 0 1 1 13.25V2.75C1 1.784 1.784 1 2.75 1ZM2.75 2.5a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25Z',
+    gear: 'M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm-.571 1.525c-.036.003-.108.036-.137.146l-.289 1.105c-.147.561-.549.967-.998 1.189-.173.086-.34.183-.5.29-.417.278-.97.423-1.529.27l-1.103-.303c-.109-.03-.175.016-.195.045-.22.312-.412.644-.573.99-.014.031-.021.11.059.19l.815.806c.411.406.562.957.53 1.456a4.709 4.709 0 0 0 0 .582c.032.499-.119 1.05-.53 1.456l-.815.806c-.081.08-.073.159-.059.19.162.346.353.677.573.989.02.03.085.076.195.046l1.102-.303c.56-.153 1.113-.008 1.53.27.161.107.328.204.501.29.447.222.85.629.997 1.189l.289 1.105c.029.109.101.143.137.146a6.6 6.6 0 0 0 1.142 0c.036-.003.108-.036.137-.146l.289-1.105c.147-.561.549-.967.998-1.189.173-.086.34-.183.5-.29.417-.278.97-.423 1.529-.27l1.103.303c.109.029.175-.016.195-.045.22-.313.411-.644.573-.99.014-.031.021-.11-.059-.19l-.815-.806c-.411-.406-.562-.957-.53-1.456a4.709 4.709 0 0 0 0-.582c-.032-.499.119-1.05.53-1.456l.815-.806c.081-.08.073-.159.059-.19a6.464 6.464 0 0 0-.573-.989c-.02-.03-.085-.076-.195-.046l-1.102.303c-.56.153-1.113.008-1.53-.27a4.44 4.44 0 0 0-.501-.29c-.447-.222-.85-.629-.997-1.189l-.289-1.105c-.029-.11-.101-.143-.137-.146a6.6 6.6 0 0 0-1.142 0ZM11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z',
     'diff-modified': 'M13.25 1c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 15H2.75A1.75 1.75 0 0 1 1 13.25V2.75C1 1.784 1.784 1 2.75 1ZM2.75 2.5a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25ZM8 10a2 2 0 1 1-.001-3.999A2 2 0 0 1 8 10Z',
 };
 
@@ -83,6 +84,8 @@ function App() {
     const draft = useState('');
     // Messages being written, by thread: a thread out of the displayed diff keeps its own.
     const [messages, setMessages] = useState({});
+    // Threads unfolded or folded by hand, by id and status: a change of view rebuilds them, and resolving a thread folds it again.
+    const [folds, setFolds] = useState({});
     const [bases, setBases] = useState([]);
     const [changed, setChanged] = useState(false);
     // Since my last review, put forward after a Refresh that a Snapshot came before.
@@ -96,6 +99,15 @@ function App() {
             return true;
         }
     });
+    // Unified or Split, a preference of the browser too; a browser that refuses its storage shows Unified.
+    const [split, setSplit] = useState(() => {
+        try {
+            return localStorage.getItem('claude-reviews.diff-view') === 'split';
+        } catch {
+            return false;
+        }
+    });
+    const settings = useRef();
     // The toggle moves between the file tree and the toolbar: the focus follows it, after a click only.
     const toggled = useRef(false);
     useEffect(() => {
@@ -183,7 +195,23 @@ function App() {
         act('/base', { base: ref }, load);
     };
     const message = id => [messages[id] ?? '', text => setMessages(all => ({ ...all, [id]: typeof text === 'function' ? text(all[id] ?? '') : text }))];
-    const review = { readOnly: !!session.approvedAt, busy, selection, setSelection, draft, message, act, diff, now };
+    const fold = thread => {
+        const key = `${thread.id}:${thread.resolved}`;
+        return [folds[key] ?? !thread.resolved, open => setFolds(all => all[key] === open ? all : { ...all, [key]: open })];
+    };
+    const review = { readOnly: !!session.approvedAt, busy, selection, setSelection, draft, message, fold, act, diff, now, split };
+    // As GitHub's, the menu closes once a view is chosen, and on Escape; the focus goes back to its button.
+    const closeSettings = () => {
+        settings.current.open = false;
+        settings.current.querySelector('summary').focus();
+    };
+    const chooseView = value => {
+        try {
+            localStorage.setItem('claude-reviews.diff-view', value ? 'split' : 'unified');
+        } catch {}
+        setSplit(value);
+        closeSettings();
+    };
     const pending = session.threads.some(thread => thread.messages.some(message => !message.date));
     const approve = () => {
         const open = session.threads.filter(thread => !thread.resolved).length;
@@ -218,6 +246,14 @@ function App() {
                     ${!fileTreeOpen && toggle}
                     <a class="mr-3" href="/">Reviews</a>
                     <h1 class="h4 flex-1">${diff.files.length} files changed <span class="text-mono text-normal color-fg-muted f6">${session.worktree}</span></h1>
+                    <details ref=${settings} class="details-reset details-overlay position-relative mr-3" onKeyDown=${event => { if (event.key === 'Escape') closeSettings(); }}>
+                        <summary class="btn-octicon" role="button" aria-label="Diff view settings">${octicon('gear')}</summary>
+                        <div class="dropdown-menu dropdown-menu-sw diff-settings">
+                            <div class="dropdown-header">Layout</div>
+                            ${[['Unified', false], ['Split', true]].map(([name, value]) => html`
+                                <label class="dropdown-item"><input type="radio" name="diff-view" class="mr-2" checked=${split === value} onChange=${() => chooseView(value)} />${name}</label>`)}
+                        </div>
+                    </details>
                     ${diff.files.length > 0 && html`
                         <span class="d-flex flex-items-center mr-3 f6 color-fg-muted">${progress(viewedCount, diff.files.length)}${viewedCount} / ${diff.files.length} viewed</span>`}
                     <select aria-label="Base" class=${`form-select mr-2${forward ? ' color-border-accent-emphasis color-bg-accent' : ''}`} disabled=${busy || review.readOnly}
@@ -377,9 +413,20 @@ function FileDiff({ id, file, viewed, threads, review }) {
                 ${file.binary ? html`<div class="Box-body color-fg-muted">Binary file not shown</div>`
                     : hunks.length === 0 ? file.status !== 'unchanged' && html`<div class="Box-body color-fg-muted">${file.status === 'modified' ? 'File mode changed' : 'Empty file'}</div>`
                     : !open ? html`<div class="Box-body text-center"><button class="btn-link" onClick=${() => setOpen(true)}>Load diff</button></div>`
-                    : html`<table class="diff-table"><tbody>${rows({ ...file, hunks }, threads, review)}</tbody></table>`}
+                    : html`
+                        <table class=${`diff-table${review.split ? ' diff-split' : ''}`}>
+                            ${review.split && html`<colgroup><col style=${numbers(hunks)} /><col /><col style=${numbers(hunks)} /><col /></colgroup>`}
+                            <tbody>${rows({ ...file, hunks }, threads, review)}</tbody>
+                        </table>`}
             </div>
         </section>`;
+}
+
+/** The width of the line numbers in Split, whose fixed layout cannot size them on their content: as wide as the largest. */
+function numbers(hunks) {
+    const largest = hunks.reduce((max, hunk) => hunk.lines.reduce((max, line) => Math.max(max, line.oldNo ?? 0, line.newNo ?? 0), max), 0);
+    // The padding of the cell, and the border between the halves.
+    return `width: max(50px, calc(${String(largest).length}ch + 22px))`;
 }
 
 /** The file's hunks, and the lines around threads out of them as hunks of their own, in the order of the file. */
@@ -396,8 +443,8 @@ function withContext(hunks, threads) {
         .sort((a, b) => start(a) - start(b));
 }
 
-function threadBox(thread, { message, readOnly, busy, act }) {
-    return html`<${Thread} thread=${thread} draft=${message(thread.id)} readOnly=${readOnly} busy=${busy} act=${act} />`;
+function threadBox(thread, { message, fold, readOnly, busy, act }) {
+    return html`<${Thread} thread=${thread} draft=${message(thread.id)} fold=${fold(thread)} readOnly=${readOnly} busy=${busy} act=${act} />`;
 }
 
 function language(path) {
@@ -405,14 +452,40 @@ function language(path) {
     return hljs.getLanguage(ext) ? ext : null;
 }
 
-/** Whether the range of lines (a thread's Anchor or the selection) ends on this line of the file. */
-function endsAt(range, file, line) {
-    return range?.path === file.path && (range.side === 'new' ? line.newNo : line.oldNo) === range.end;
+/** The lines of a hunk side by side: a context line on both sides, and each deleted line of a block facing the added line in its place. */
+function pairs(lines) {
+    const result = [];
+    let deleted = [];
+    let added = [];
+    // A note (no newline at end of file) about a deleted or added line takes no part in the facing: it gets a row of its own, after its line.
+    const notes = new Map();
+    const flush = () => {
+        for (let i = 0; i < Math.max(deleted.length, added.length); i++) {
+            const pair = [deleted[i] ?? null, added[i] ?? null];
+            result.push(pair);
+            if (pair.some(line => notes.has(line))) result.push(pair.map(line => notes.get(line) ?? null));
+        }
+        deleted = [];
+        added = [];
+    };
+    lines.forEach((line, i) => {
+        if (line.type === 'note' && ['del', 'add'].includes(lines[i - 1]?.type)) notes.set(lines[i - 1], line);
+        else if (line.type === 'del') {
+            if (added.length) flush();
+            deleted.push(line);
+        } else if (line.type === 'add') added.push(line);
+        else {
+            flush();
+            result.push([line, line]);
+        }
+    });
+    flush();
+    return result;
 }
 
 // Rows carry keys, so a thread arriving above a message being typed moves its row instead of rebuilding the textarea.
 function rows(file, threads, review) {
-    const { readOnly, busy, selection, setSelection, draft, act, diff, now } = review;
+    const { readOnly, busy, selection, setSelection, draft, act, diff, now, split } = review;
     const lang = language(file.path);
     const selected = (side, no) => selection?.path === file.path && selection.side === side && no >= selection.start && no <= selection.end;
     // A click selects a line, a Shift+click extends the selection from the line clicked first, on the same side of the same file.
@@ -434,34 +507,59 @@ function rows(file, threads, review) {
         setSelection(null);
         draft[1]('');
     };
-    return file.hunks.flatMap((hunk, h) => [
-        html`<tr key=${`h${h}`} class="diff-hunk"><td colspan="2"></td><td>${hunk.header}</td></tr>`,
-        ...hunk.lines.flatMap((line, l) => [
-            html`
-                <tr key=${`${h}-${l}`} class=${`diff-line-${line.type}${selected('old', line.oldNo) || selected('new', line.newNo) ? ' selected' : ''}`}>
-                    <td class="diff-num" onClick=${select('old', line.oldNo)}>${line.oldNo}</td>
-                    <td class="diff-num" onClick=${select('new', line.newNo)}>${line.newNo}</td>
-                    <td class="diff-code" dangerouslySetInnerHTML=${{ __html: highlight(line.text, line.type === 'note' ? null : lang) }}></td>
-                </tr>`,
-            ...threads.filter(thread => thread.at && endsAt({ ...thread.anchor, ...thread.at }, file, line)).map(thread => html`
-                <tr key=${`t${thread.id}`}><td colspan="3">${threadBox(thread, review)}</td></tr>`),
-            !readOnly && endsAt(selection, file, line) && html`
-                <tr key="selection"><td colspan="3"><div class="Box m-2 p-2">
+    const code = line => ({ __html: highlight(line.text, line.type === 'note' ? null : lang) });
+    // The threads that end on a line, then the box of the selection that ends there: on one side in Split, on either in Unified.
+    const under = (line, side) => {
+        const ends = range => range?.path === file.path && (!side || range.side === side) && (range.side === 'new' ? line.newNo : line.oldNo) === range.end;
+        return line ? [
+            ...threads.filter(thread => thread.at && ends({ ...thread.anchor, ...thread.at })).map(thread => html`<div key=${`t${thread.id}`}>${threadBox(thread, review)}</div>`),
+            !readOnly && ends(selection) && html`
+                <div key="selection" class="Box m-2 p-2">
                     <${Composer} draft=${draft} busy=${busy} onSubmit=${openThread} onCancel=${cancel} />
-                </div></td></tr>`,
-        // Preact matches keyed rows only among real children: a false left here rebuilds the rows after it, and their drafts.
-        ].filter(Boolean)),
-    ]);
+                </div>`,
+        ].filter(Boolean) : [];
+    };
+    /** The number and the code of a line on one side of Split, or an empty side. */
+    const half = (line, side) => {
+        if (!line) return html`<td class="diff-empty" colspan="2"></td>`;
+        const no = side === 'old' ? line.oldNo : line.newNo;
+        const cls = `diff-line-${line.type}${selected(side, no) ? ' selected' : ''}`;
+        return html`
+            <td class=${`diff-num ${cls}`} onClick=${select(side, no)}>${no}</td>
+            <td class=${`diff-code ${cls}`} dangerouslySetInnerHTML=${code(line)}></td>`;
+    };
+    return file.hunks.flatMap((hunk, h) => [
+        html`<tr key=${`h${h}`} class="diff-hunk"><td colspan=${split ? 1 : 2}></td><td colspan=${split ? 3 : 1}>${hunk.header}</td></tr>`,
+        ...split ? pairs(hunk.lines).flatMap(([left, right], r) => {
+            const [old, added] = [under(left, 'old'), under(right, 'new')];
+            return [
+                html`<tr key=${`${h}-${r}`}>${half(left, 'old')}${half(right, 'new')}</tr>`,
+                (old.length > 0 || added.length > 0) && html`<tr key=${`u${h}-${r}`}><td colspan="2">${old}</td><td colspan="2">${added}</td></tr>`,
+            ];
+        }) : hunk.lines.flatMap((line, l) => {
+            const items = under(line);
+            return [
+                html`
+                    <tr key=${`${h}-${l}`} class=${`diff-line-${line.type}${selected('old', line.oldNo) || selected('new', line.newNo) ? ' selected' : ''}`}>
+                        <td class="diff-num" onClick=${select('old', line.oldNo)}>${line.oldNo}</td>
+                        <td class="diff-num" onClick=${select('new', line.newNo)}>${line.newNo}</td>
+                        <td class="diff-code" dangerouslySetInnerHTML=${code(line)}></td>
+                    </tr>`,
+                items.length > 0 && html`<tr key=${`u${h}-${l}`}><td colspan="3">${items}</td></tr>`,
+            ];
+        }),
+    // Preact matches keyed rows only among real children: a false left here rebuilds the rows after it, and their drafts.
+    ]).filter(Boolean);
 }
 
-function Thread({ thread, draft, readOnly, busy, act }) {
+function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act }) {
     const [label, color] = STATUS[thread.status] ?? [];
     const { side } = thread.anchor;
     const { start, end } = thread.at ?? thread.anchor;
     const sign = side === 'new' ? '+' : '-';
-    // A Resolved thread arrives folded; once open, a poll does not fold it again, since `open` only changes with the status.
+    // A Resolved thread arrives folded; a fold by hand holds through polls and changes of view, until the status changes.
     return html`
-        <details class="Box m-2 thread" open=${!thread.resolved}>
+        <details class="Box m-2 thread" open=${open} onToggle=${event => setOpen(event.target.open)}>
             <summary class="Box-header py-2">
                 <span class="text-bold">${start === end ? `Line ${sign}${start}` : `Lines ${sign}${start} to ${sign}${end}`}</span>
                 ${label && html`<span class=${`Label ${color} ml-2`}>${label}</span>`}
