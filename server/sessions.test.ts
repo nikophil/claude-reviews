@@ -541,6 +541,58 @@ test('a thread on a file gone is Outdated, but a git that fails to read a file i
     }
 });
 
+test('a diff computed with whitespace is not served from the cache when asked with ?w=1, which hides it', async () => {
+    // A content of its own, so no other test cached this pair of ids.
+    const dir = repo({ 'a.txt': 'cache\nwhitespace\n' });
+    write(dir, { 'a.txt': 'cache\n\twhitespace\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    assert.deepEqual((await api('GET', `/api/sessions/${id}/diff`)).body.files.map((file: any) => file.path), ['a.txt']);
+
+    const hidden = await api('GET', `/api/sessions/${id}/diff?w=1`);
+
+    assert.equal(hidden.status, 200);
+    assert.deepEqual(hidden.body.files, []);
+});
+
+test('/diff with ?base=&tree= diffs those ids, not the working tree of now', async () => {
+    const dir = repo({ 'a.txt': 'one\ntwo\n' });
+    write(dir, { 'a.txt': 'one\n  two\nthree\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const shown = (await api('GET', `/api/sessions/${id}/diff`)).body;
+    write(dir, { 'a.txt': 'zero\n' });
+
+    const again = await api('GET', `/api/sessions/${id}/diff?base=${shown.base}&tree=${shown.tree}&w=1`);
+
+    assert.equal(again.status, 200);
+    assert.deepEqual([again.body.base, again.body.tree], [shown.base, shown.tree]);
+    assert.deepEqual(again.body.files[0].hunks.flatMap((hunk: any) => hunk.lines.filter((line: any) => line.type === 'add').map((line: any) => line.text)), ['three']);
+});
+
+test('w takes 1 or nothing: any other value is refused with 400, on /diff as on a placed session', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const { base, tree } = (await api('GET', `/api/sessions/${id}/diff`)).body;
+
+    for (const w of ['0', '', 'true']) {
+        assert.equal((await api('GET', `/api/sessions/${id}/diff?w=${w}`)).status, 400, w);
+        assert.equal((await api('GET', `/api/sessions/${id}?base=${base}&tree=${tree}&w=${w}`)).status, 400, w);
+    }
+    assert.equal((await api('GET', `/api/sessions/${id}/diff?w=1`)).status, 200);
+});
+
+test('placed with ?w=1, a thread on a line changed only by its spaces gets the lines around it, out of the diff', async () => {
+    const dir = repo({ 'a.txt': 'one\ntwo\nthree\n' });
+    write(dir, { 'a.txt': 'one\n  two\nthree\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path: 'a.txt', side: 'new', start: 2, end: 2, body: 'Here' });
+    const { base, tree } = (await api('GET', `/api/sessions/${id}/diff`)).body;
+
+    assert.deepEqual((await api('GET', `/api/sessions/${id}?base=${base}&tree=${tree}`)).body.threads[0].at.context, []);
+    assert.deepEqual((await api('GET', `/api/sessions/${id}?base=${base}&tree=${tree}&w=1`)).body.threads[0].at.context.map((line: any) => [line.oldNo, line.newNo, line.text]), [
+        [1, 1, 'one'], [2, 2, '  two'], [3, 3, 'three'],
+    ]);
+});
+
 test('?reanchor places the threads not Resolved on HEAD and the working tree, without a diff, reading each file once', async () => {
     const dir = repo({ 'a.txt': 'one\ntwo\nthree\n' });
     const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;

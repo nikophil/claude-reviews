@@ -36,7 +36,7 @@
 .diff-split { table-layout: fixed; }
 .diff-split tr > :is(.diff-code, .diff-empty) + td { border-left: 1px solid var(--borderColor-muted); }
 .diff-empty { background-color: var(--bgColor-muted); }
-.diff-settings { width: 160px; }
+.diff-settings { width: 180px; }
 /* Without its caret, which would cover the gear and catch the click that closes the menu. */
 .diff-settings::before, .diff-settings::after { display: none; }
 .diff-hunk td { padding: 4px 10px; background-color: var(--diffBlob-hunk-bgColor-num); color: var(--fgColor-muted); }

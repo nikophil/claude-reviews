@@ -227,10 +227,12 @@ export async function currentTree(id: string) {
     return current(await load(id));
 }
 
-export async function sessionDiff(id: string) {
+/** The diff of the ids the UI would display now, or, with `?base=&tree=`, of the displayed ones again; whitespace hidden with `w=1`. */
+export async function sessionDiff(id: string, query: URLSearchParams) {
     const session = await load(id);
+    if (query.has('base') || query.has('tree')) return diff(session.worktree, await displayed(session.worktree, query), query.has('w'));
     const shown = await current(session);
-    return { ...shown, ...await diff(session.worktree, shown) };
+    return { ...shown, ...await diff(session.worktree, shown, query.has('w')) };
 }
 
 function message(author: unknown, body: unknown): Message {
@@ -244,9 +246,18 @@ function checkId(id: unknown, name: string): asserts id is string {
     if (typeof id !== 'string' || !/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(id)) throw httpError(400, `${name} must be 40 or 64 hexadecimal characters`);
 }
 
-/** Refuses a malformed `base` or `tree` to place threads on, before a write is recorded. */
+/** Refuses a malformed `base`, `tree` or `w` to place threads on, before a write is recorded. */
 export function checkPlacement(query: URLSearchParams): void {
     for (const name of ['base', 'tree']) if (query.has(name)) checkId(query.get(name), name);
+    if (query.has('w') && query.get('w') !== '1') throw httpError(400, 'w must be 1, or absent');
+}
+
+/** The `base` and `tree` of the query, the code the UI displays, if they name a commit or tree and a tree of the worktree's repository. */
+async function displayed(worktree: string, query: URLSearchParams): Promise<{ base: string; tree: string }> {
+    return {
+        base: await checkObject(worktree, query.get('base'), 'base', ['commit', 'tree']),
+        tree: await checkObject(worktree, query.get('tree'), 'tree', ['tree']),
+    };
 }
 
 /** The id, if it names an object of one of these types in the worktree's repository. */
@@ -273,7 +284,7 @@ async function fileLines(worktree: string, object: string, path: string): Promis
 
 /**
  * A session answered, with each thread's place `at` in the code the query names, null when Outdated:
- * the displayed `base` and `tree` ids for the UI, with the context of a thread out of the diff,
+ * the displayed `base` and `tree` ids for the UI, with the context of a thread out of the diff, whitespace hidden with `w=1`,
  * or, with `reanchor`, HEAD and the working tree for list_open_threads(), Resolved threads left as they are.
  * Without either, the session as it is.
  */
@@ -283,14 +294,11 @@ export async function placed(answer: unknown, query: URLSearchParams): Promise<u
     const { worktree } = session;
     // list_open_threads() leaves Resolved threads out, and shows no context.
     const forClaude = query.has('reanchor');
-    const shown = forClaude ? { base: await head(worktree), tree: await writeTree(worktree) } : {
-        base: await checkObject(worktree, query.get('base'), 'base', ['commit', 'tree']),
-        tree: await checkObject(worktree, query.get('tree'), 'tree', ['tree']),
-    };
+    const shown = forClaude ? { base: await head(worktree), tree: await writeTree(worktree) } : await displayed(worktree, query);
     // A file stays Viewed while its content in the displayed tree keeps the id it was marked on, whatever the base.
     const viewed = Object.entries(session.viewed ?? {});
     const [files, blobsNow] = forClaude ? [[], []] : await Promise.all([
-        diff(worktree, shown).then(shown => shown.files),
+        diff(worktree, shown, query.has('w')).then(shown => shown.files),
         blobs(worktree, shown.tree, viewed.map(([path]) => path)),
     ]);
     // ponytail: one git cat-file per file and side on each 2 s poll; read them all in one `git cat-file --batch` if sessions grow many files.

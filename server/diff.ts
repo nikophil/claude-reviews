@@ -74,18 +74,23 @@ export async function head(worktree: string): Promise<string> {
 // ponytail: the last 20 diffs stay in memory whatever their size; bound the cache by bytes if big diffs pile up.
 const cache = new Map<string, FileDiff[]>();
 
-/** The diff from `base` to `tree`, by default from HEAD to a tree of the working tree written now. */
-export async function diff(worktree: string, shown?: { base?: string; tree?: string }): Promise<{ base: string; tree: string; files: FileDiff[] }> {
+/**
+ * The diff from `base` to `tree`, by default from HEAD to a tree of the working tree written now;
+ * hiding whitespace (`git diff -w`) leaves out the lines that change only by their spaces, and keeps the numbers of the file.
+ */
+export async function diff(worktree: string, shown?: { base?: string; tree?: string }, hideWhitespace = false): Promise<{ base: string; tree: string; files: FileDiff[] }> {
     const base = shown?.base ?? await head(worktree);
     const tree = shown?.tree ?? await writeTree(worktree);
-    let files = cache.get(`${base} ${tree}`);
+    const key = `${base} ${tree}${hideWhitespace ? ' -w' : ''}`;
+    let files = cache.get(key);
     if (!files) {
         // Pinned options, so the user's git config cannot change what gets parsed.
         files = parseDiff(await git(worktree, [
             '-c', 'diff.suppressBlankEmpty=false', '-c', 'core.quotePath=true',
-            'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--src-prefix=a/', '--dst-prefix=b/', base, tree,
+            'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--src-prefix=a/', '--dst-prefix=b/',
+            ...hideWhitespace ? ['-w'] : [], base, tree,
         ]));
-        cache.set(`${base} ${tree}`, files);
+        cache.set(key, files);
         if (cache.size > 20) cache.delete(cache.keys().next().value!);
     }
     return { base, tree, files };

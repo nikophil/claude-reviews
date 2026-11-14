@@ -100,7 +100,7 @@ async function route(method: string, { pathname: path, searchParams }: URL, body
     const [, id, action = '', thread, threadAction = ''] = path.match(/^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|tree|bases|base|threads|send|approve|viewed|turn-complete))?(?:\/(\d+)\/(messages|resolve))?$/) ?? [];
     switch (id && `${method} ${action}/${threadAction}`) {
         case 'GET /': return getSession(id);
-        case 'GET diff/': return sessionDiff(id);
+        case 'GET diff/': return sessionDiff(id, searchParams);
         case 'GET tree/': return currentTree(id);
         case 'GET bases/': return bases(await getSession(id));
         case 'POST base/': return exclusive(() => chooseBase(id, body.base));

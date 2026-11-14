@@ -64,8 +64,23 @@ const BADGES = {
     unchanged: ['diff-unchanged', 'Unchanged', 'color-fg-muted'],
 };
 
-/** The query that has the server place the threads in the displayed code. */
-const placedOn = shown => `?base=${shown.base}&tree=${shown.tree}`;
+/** The query that has the server place the threads in the displayed code, whitespace hidden as in the displayed diff. */
+const placedOn = shown => `?base=${shown.base}&tree=${shown.tree}${shown.hideWhitespace ? '&w=1' : ''}`;
+
+/** A preference of the browser, kept from page to page; `fallback` when the browser refuses its storage, or has none. */
+function preference(name, fallback) {
+    try {
+        return localStorage.getItem(`claude-reviews.${name}`) ?? fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+function setPreference(name, value) {
+    try {
+        localStorage.setItem(`claude-reviews.${name}`, value);
+    } catch {}
+}
 
 async function api(path, body) {
     const res = await fetch(path, body && { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -91,22 +106,11 @@ function App() {
     // Since my last review, put forward after a Refresh that a Snapshot came before.
     const [forward, setForward] = useState(false);
     const [busy, setBusy] = useState(false);
-    // A preference of the browser, kept from page to page; a browser that refuses its storage opens the file tree.
-    const [fileTreeOpen, setFileTreeOpen] = useState(() => {
-        try {
-            return localStorage.getItem('claude-reviews.file-tree') !== 'collapsed';
-        } catch {
-            return true;
-        }
-    });
-    // Unified or Split, a preference of the browser too; a browser that refuses its storage shows Unified.
-    const [split, setSplit] = useState(() => {
-        try {
-            return localStorage.getItem('claude-reviews.diff-view') === 'split';
-        } catch {
-            return false;
-        }
-    });
+    const [fileTreeOpen, setFileTreeOpen] = useState(() => preference('file-tree', 'open') !== 'collapsed');
+    // Unified or Split.
+    const [split, setSplit] = useState(() => preference('diff-view', 'unified') === 'split');
+    // Each diff asked for gets a number: the answer to an older one is stale.
+    const asked = useRef(0);
     const settings = useRef();
     // The toggle moves between the file tree and the toolbar: the focus follows it, after a click only.
     const toggled = useRef(false);
@@ -126,7 +130,10 @@ function App() {
             const opened = worktree ? await api('/api/sessions', { worktree }) : await api(`/api/sessions/${sessionId}`);
             if (worktree) history.replaceState(null, '', `/s/${opened.id}`);
             // A closed session may outlive its worktree: without code to show, its threads show the code they were opened on.
-            const loaded = await api(`/api/sessions/${opened.id}/diff`).catch(error => { if (!opened.approvedAt) throw error; });
+            // Hide whitespace lives in the displayed diff; the preference only chooses the first one.
+            const hideWhitespace = preference('hide-whitespace', 'false') === 'true';
+            const loaded = await api(`/api/sessions/${opened.id}/diff${hideWhitespace ? '?w=1' : ''}`).then(loaded => ({ ...loaded, hideWhitespace }))
+                .catch(error => { if (!opened.approvedAt) throw error; });
             setSession(loaded ? await api(`/api/sessions/${opened.id}${placedOn(loaded)}`) : opened);
             setDiff(loaded ?? { ref: 'HEAD', files: [] });
         })().catch(error => setError(error.message));
@@ -170,7 +177,9 @@ function App() {
         writes.current++;
         setBusy(true);
         try {
-            setSession(await api(`/api/sessions/${session.id}${path}${placedOn(diff)}`, body));
+            const answer = await api(`/api/sessions/${session.id}${path}${placedOn(diff)}`, body);
+            // Placed on a diff no longer displayed: the next poll places the write on the displayed one.
+            if (diff === shown.current) setSession(answer);
             await then?.();
             setFlash(null);
             return true;
@@ -182,14 +191,22 @@ function App() {
             setBusy(false);
         }
     };
-    const load = async () => {
-        const fresh = await api(`/api/sessions/${session.id}/diff`);
-        setSession(await api(`/api/sessions/${session.id}${placedOn(fresh)}`));
+    /**
+     * Shows the diff of the working tree, or of the `displayed` base and tree again, with the threads placed on it;
+     * null, and nothing shown, once another diff was asked for since.
+     */
+    const load = async (hideWhitespace = diff.hideWhitespace, displayed) => {
+        const n = ++asked.current;
+        const query = displayed ? placedOn({ ...displayed, hideWhitespace }) : hideWhitespace ? '?w=1' : '';
+        const fresh = { ...displayed, ...await api(`/api/sessions/${session.id}/diff${query}`), hideWhitespace };
+        const placed = await api(`/api/sessions/${session.id}${placedOn(fresh)}`);
+        if (n !== asked.current) return null;
+        setSession(placed);
         setDiff(fresh);
-        setChanged(false);
+        if (!displayed) setChanged(false);
         return fresh;
     };
-    const refresh = () => load().then(fresh => setForward(session.sends > 0 && fresh.ref !== 'last-review'), error => setFlash(error.message));
+    const refresh = () => load().then(fresh => fresh && setForward(session.sends > 0 && fresh.ref !== 'last-review'), error => setFlash(error.message));
     const choose = ref => {
         setForward(false);
         act('/base', { base: ref }, load);
@@ -206,11 +223,14 @@ function App() {
         settings.current.querySelector('summary').focus();
     };
     const chooseView = value => {
-        try {
-            localStorage.setItem('claude-reviews.diff-view', value ? 'split' : 'unified');
-        } catch {}
+        setPreference('diff-view', value ? 'split' : 'unified');
         setSplit(value);
         closeSettings();
+    };
+    // The diff of the displayed code reloads, and the banner of a code change stays; the box and the preference follow once it shows.
+    const chooseWhitespace = value => {
+        closeSettings();
+        load(value, diff).then(fresh => { if (fresh) setPreference('hide-whitespace', String(value)); }, error => setFlash(error.message));
     };
     const pending = session.threads.some(thread => thread.messages.some(message => !message.date));
     const approve = () => {
@@ -225,9 +245,7 @@ function App() {
     const isViewed = path => Object.hasOwn(session.viewed ?? {}, path);
     const viewedCount = diff.files.filter(file => isViewed(file.path)).length;
     const toggleFileTree = () => {
-        try {
-            localStorage.setItem('claude-reviews.file-tree', fileTreeOpen ? 'collapsed' : 'open');
-        } catch {}
+        setPreference('file-tree', fileTreeOpen ? 'collapsed' : 'open');
         toggled.current = true;
         setFileTreeOpen(!fileTreeOpen);
     };
@@ -252,6 +270,8 @@ function App() {
                             <div class="dropdown-header">Layout</div>
                             ${[['Unified', false], ['Split', true]].map(([name, value]) => html`
                                 <label class="dropdown-item"><input type="radio" name="diff-view" class="mr-2" checked=${split === value} onChange=${() => chooseView(value)} />${name}</label>`)}
+                            <div class="dropdown-divider"></div>
+                            <label class="dropdown-item"><input type="checkbox" class="mr-2" checked=${!!diff.hideWhitespace} onChange=${event => chooseWhitespace(event.target.checked)} />Hide whitespace</label>
                         </div>
                     </details>
                     ${diff.files.length > 0 && html`

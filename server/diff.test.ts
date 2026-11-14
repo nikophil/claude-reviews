@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { diff, writeTree } from './diff.ts';
+import { diff, writeTree, type FileDiff } from './diff.ts';
 import { git, removeRepos, repo, write } from './fixture.ts';
 
 after(removeRepos);
@@ -252,6 +252,15 @@ test('a missing newline at end of file shows as a note line', async () => {
     ]);
     assert.equal(files[0].additions, 1);
     assert.equal(files[0].deletions, 1);
+});
+
+test('hiding whitespace leaves out a line changed only by its indentation, but keeps a line changed by its content', async () => {
+    const dir = repo({ 'a.txt': 'one\ntwo\nthree\nfour\n' });
+    write(dir, { 'a.txt': 'one\n    two\nthree\nFOUR\n' });
+    const changed = (files: FileDiff[]) => files.flatMap(file => file.hunks.flatMap(hunk => hunk.lines.filter(line => line.type !== 'context').map(line => line.text)));
+
+    assert.deepEqual(changed((await diff(dir, undefined, true)).files), ['four', 'FOUR']);
+    assert.deepEqual(changed((await diff(dir)).files), ['two', '    two', 'four', 'FOUR']);
 });
 
 test('removeRepos deletes the fixture repositories', () => {
