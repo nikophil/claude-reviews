@@ -491,6 +491,8 @@ function App() {
                 ${flash && html`<div class="flash flash-error mb-3">${flash}</div>`}
                 ${!review.readOnly && !session.claudeSession && html`
                     <div class="flash flash-warn mb-3">No Claude session runs in this worktree: a Send wakes no one until one starts, with <code>cd ${shell(session.worktree)} && claude</code>.</div>`}
+                ${!review.readOnly && session.claudeBlocked && html`
+                    <div class="flash flash-warn mb-3">Claude is waiting for your answer in its session, to a permission or a question, before it replies in the threads.</div>`}
                 ${session.closedBecause && html`<div class="flash mb-3">The worktree is gone: the threads show the code they were opened on.</div>`}
                 ${changed && html`<div class="flash mb-3">The code changed since it was loaded · <button class="btn-link" onClick=${refresh}>Refresh</button></div>`}
                 ${files.map((file, i) => html`

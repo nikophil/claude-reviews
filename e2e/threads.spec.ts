@@ -404,6 +404,23 @@ test('without a Claude session in the worktree, the page says a Send wakes no on
     await expect(warning).toBeHidden({ timeout: 5000 });
 });
 
+test('while a thread waits for Claude, the page says the Claude session waits for my answer, until it no longer does', async ({ page, request }) => {
+    const dir = changed();
+    const { id, thread } = await claudeThread(request, dir, 2, 'Why 2?');
+    await request.post(`/api/sessions/${id}/threads/${thread}/messages`, { data: { author: 'me', body: 'Because.' } });
+    await request.post(`/api/sessions/${id}/send`, { data: { tree: (await (await request.get(`/api/sessions/${id}/diff`)).json()).tree } });
+    // The read of the mod, every 2 s, Blocked on a permission dialog or a question.
+    const read = (query: string) => request.get(`/api/sessions?worktree=${encodeURIComponent(dir)}&claude${query}`);
+    await read('&blocked');
+    await open(page, dir);
+    const warning = page.getByText('Claude is waiting for your answer in its session');
+    await expect(warning).toBeVisible();
+
+    await read('');
+
+    await expect(warning).toBeHidden({ timeout: 5000 });
+});
+
 test('j and k go from thread to thread, the Conversations menu lists them and marks those Claude replied in since my last Send', async ({ page, request }) => {
     const dir = repo({ 'a.txt': 'one\n', 'b.txt': 'one\n' });
     write(dir, { 'a.txt': 'ONE\n', 'b.txt': 'ONE\n' });

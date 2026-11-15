@@ -59,6 +59,9 @@ class ReviewTest {
         /** The token of the server, from its endpoint file: every call of the test carries it, as the plugin's do; health needs none. */
         private var token = ""
         private lateinit var server: Process
+        /** What the stand-in for the mod adds to its read every 2 s: `&blocked` while its Claude session waits for my answer. */
+        @Volatile
+        private var claudeQuery = ""
         private lateinit var ide: BackgroundRun
         private val driver: Driver get() = ide.driver
 
@@ -84,7 +87,7 @@ class ReviewTest {
             // As the mod of a Claude session in the worktree: without it, the plugin greys Send.
             thread(isDaemon = true) {
                 while (true) {
-                    runCatching { http.send(request("/api/sessions?worktree=${encode(worktree)}&claude").GET().build(), HttpResponse.BodyHandlers.discarding()) }
+                    runCatching { http.send(request("/api/sessions?worktree=${encode(worktree)}&claude$claudeQuery").GET().build(), HttpResponse.BodyHandlers.discarding()) }
                     Thread.sleep(2000)
                 }
             }
@@ -199,6 +202,19 @@ class ReviewTest {
 
     @Test
     @Order(4)
+    fun `while a thread waits for Claude, the tool window warns that the Claude session waits for my answer, until it no longer does`() {
+        val warning = "//div[@class='JBLabel' and contains(@text, 'Claude is waiting for your answer in its session')]"
+        claudeQuery = "&blocked"
+        frame { x(warning).shouldBe(enabled) }
+        claudeQuery = ""
+        frame {
+            repeat(50) { if (x(warning).present()) Thread.sleep(200) }
+            assert(!x(warning).present()) { "the warning is gone" }
+        }
+    }
+
+    @Test
+    @Order(5)
     fun `Viewed in the diff marks the file viewed`() {
         frame {
             radioButton("//div[@text='Diff']").click()
@@ -209,7 +225,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(5)
+    @Order(6)
     fun `an Outdated thread opens in its own window, the thread in a scroll pane`() {
         // Line 4 changes again: the thread of step 2 no longer finds its line.
         Files.writeString(Path.of(worktree, "a.php"), "<?php\n\necho 1;\necho 4;\n")
@@ -226,7 +242,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(6)
+    @Order(7)
     fun `Resolve in the context menu of a thread of the tree resolves it`() {
         frame { tree("//div[@class='Tree']").rightClickPath("a.php", "#1", fullMatch = false) }
         driver.ui.x("//div[@class='ActionMenuItem' and @text='Resolve']").click()

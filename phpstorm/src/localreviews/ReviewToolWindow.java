@@ -188,7 +188,10 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         private final JButton send = new JButton("Send", AllIcons.Actions.Upload);
         private final JButton approve = new JButton("Approve", AllIcons.Actions.Checked);
         private final JBLabel summary = new JBLabel();
-        private final JPanel startClaude = new JPanel(new BorderLayout());
+        /** How to start a Claude session, or the warning that the Claude session waits for my answer; empty otherwise. */
+        private final JPanel notice = new JPanel(new BorderLayout());
+        private final JBLabel blocked = new JBLabel("<html>Claude is waiting for your answer in its session, to a permission or a question, before it replies in the threads.</html>",
+            AllIcons.General.Warning, SwingConstants.LEFT);
         private final Tree tree = new Tree(new DefaultTreeModel(new DefaultMutableTreeNode()));
         // Made once: a new one at each change of the state would scroll back to the top, and take the focus from the tree.
         private final JBScrollPane scroll = new JBScrollPane(tree);
@@ -275,8 +278,8 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             header.add(toggles);
             header.add(buttons);
             header.add(summary);
-            startClaude.setOpaque(false);
-            header.add(startClaude);
+            notice.setOpaque(false);
+            header.add(notice);
             header.setBorder(JBUI.Borders.empty(8));
 
             start.addActionListener(e -> service.start());
@@ -417,8 +420,9 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             boolean claude = Placement.claude(changed.session());
             buttons();
             // A Send without a Claude session in the worktree would wait for nobody: it says how to start one instead.
-            startClaude.removeAll();
-            if (!claude) startClaude.add(ThreadView.startClaude(changed.session()), BorderLayout.CENTER);
+            notice.removeAll();
+            if (!claude) notice.add(ThreadView.startClaude(changed.session()), BorderLayout.CENTER);
+            else if (Placement.blocked(changed.session())) notice.add(blocked, BorderLayout.CENTER);
             summary.setForeground(changed.error() != null ? JBColor.RED : JBColor.GRAY);
             int viewed = 0;
             for (JsonElement file : changed.files()) {

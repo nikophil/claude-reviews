@@ -20,8 +20,8 @@ async function worktree(page: Page, { claude = false } = {}) {
         page.request.post(`${route}/threads`, { data: { author: 'claude', path, side, start: line, end: line, body } });
     if (claude) await thread('a.txt', 'new', 2, 'Why **2**?');
     const session = async () => (await page.request.get(route)).json();
-    // What the mod does every 2 s: a Claude session runs in the worktree, for 10 s.
-    const listen = () => page.request.get(`/api/sessions?worktree=${encodeURIComponent(dir)}&claude`);
+    // What the mod does every 2 s: a Claude session runs in the worktree, for 10 s; `&blocked` while it waits for my answer.
+    const listen = (query = '') => page.request.get(`/api/sessions?worktree=${encodeURIComponent(dir)}&claude${query}`);
     return { dir, id, route, thread, session, listen };
 }
 
@@ -93,6 +93,20 @@ test('a reply stays Pending until Send, which publishes it', async ({ page }) =>
     await view.getByRole('button', { name: 'Send' }).click();
     await expect(page.getByText('1 message sent to Claude', { exact: true })).toBeVisible();
     expect((await session()).threads[0].messages[1]).toMatchObject({ body: 'Because.', review: 1 });
+});
+
+test('while a thread waits for Claude, the view says the Claude session waits for my answer, until it no longer does', async ({ page }) => {
+    const { dir, route, listen } = await worktree(page, { claude: true });
+    await page.request.post(`${route}/threads/1/messages`, { data: { author: 'me', body: 'Because.' } });
+    await page.request.post(`${route}/send`, { data: { tree: (await (await page.request.get(`${route}/diff`)).json()).tree } });
+    await listen('&blocked');
+    const view = await open(page, dir);
+    const warning = view.getByText('Claude is waiting for your answer in its session');
+    await expect(warning).toBeVisible();
+
+    await listen();
+
+    await expect(warning).toBeHidden({ timeout: 10_000 });
 });
 
 test('a new thread opens from the + of the gutter, its first message Pending', async ({ page }) => {

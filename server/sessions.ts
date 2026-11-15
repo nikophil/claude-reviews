@@ -62,14 +62,18 @@ async function save(session: Session): Promise<void> {
 }
 
 /** The session as served: what is stored, plus whose turn it is in each thread. */
-/** When a Claude session last read the session of each worktree, by the 2 s poll of the mod. */
-const claudeReads = new Map<string, number>();
+/** When a Claude session last read the session of each worktree, by the 2 s poll of the mod, and whether it was Blocked then. */
+const claudeReads = new Map<string, { at: number; blocked: boolean }>();
 /** When /review-local last asked the IDE clients to show each session; a restart forgets it, as a request is for now. */
 const showRequests = new Map<string, string>();
 
 function view(session: Session) {
-    const claudeSession = Date.now() - (claudeReads.get(session.worktree) ?? -Infinity) <= 10_000;
-    return { ...session, claudeSession, showRequestedAt: showRequests.get(session.id) ?? null, threads: session.threads.map(thread => ({ ...thread, status: status(thread) })) };
+    const read = claudeReads.get(session.worktree);
+    const claudeSession = Date.now() - (read?.at ?? -Infinity) <= 10_000;
+    const threads = session.threads.map(thread => ({ ...thread, status: status(thread) }));
+    // Blocked matters to the review only while a thread waits for Claude: the clients show it then, and only then.
+    const claudeBlocked = claudeSession && read!.blocked && threads.some(thread => thread.status === 'waiting-for-claude');
+    return { ...session, claudeSession, claudeBlocked, showRequestedAt: showRequests.get(session.id) ?? null, threads };
 }
 
 /** Waiting for Claude when my message is the last published, open when Claude's is; null before any is published. */
@@ -225,9 +229,9 @@ function repository(commonDir: string): string {
 
 /** The open session of the worktree, never created: the mod looks for it without filling Reviews with empty sessions. */
 /** The open session of the worktree; `claude` when the mod reads it, for a Claude session runs there. */
-export async function findSession(path: unknown, claude = false) {
+export async function findSession(path: unknown, claude = false, blocked = false) {
     const { worktree, session } = await lookup(path);
-    if (claude) claudeReads.set(worktree, Date.now());
+    if (claude) claudeReads.set(worktree, { at: Date.now(), blocked });
     if (!session) throw httpError(404, `No open session for ${worktree}`);
     return view(session);
 }

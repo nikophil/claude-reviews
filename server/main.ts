@@ -228,7 +228,7 @@ export async function listen({ notify, uid = process.getuid?.(), legacy = Number
 async function route(method: string, { pathname: path, searchParams }: URL, body: Record<string, unknown>, notify: (argv: string[]) => void): Promise<unknown> {
     // Each takes the queue of the writes itself, only when it writes: the mod's 2 s poll must not wait for a long Send.
     if (path === '/api/sessions' && method === 'GET') {
-        return searchParams.has('worktree') ? findSession(searchParams.get('worktree'), searchParams.has('claude')) : searchParams.has('closed') ? closedSessions() : listSessions();
+        return searchParams.has('worktree') ? findSession(searchParams.get('worktree'), searchParams.has('claude'), searchParams.has('blocked')) : searchParams.has('closed') ? closedSessions() : listSessions();
     }
     if (path === '/api/sessions' && method === 'POST') return openSession(body.worktree);
     const [, id, action = '', thread, threadAction = '', index, messageAction = 'edit'] = path.match(
