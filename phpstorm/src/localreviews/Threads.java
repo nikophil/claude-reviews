@@ -173,7 +173,7 @@ final class Threads {
             int end = lines.toEditor(ranges.get(n)[1]);
             if (pill) {
                 if (old != null) old.dispose();
-                Inlay<?> inlay = editor.getInlayModel().addAfterLineEndElement(editor.getDocument().getLineEndOffset(end - 1), true, new Pill(this, n, "Thread #" + n + " · " + ThreadView.status(thread)));
+                Inlay<?> inlay = editor.getInlayModel().addAfterLineEndElement(editor.getDocument().getLineEndOffset(end - 1), true, new Pill(this, n, "Thread #" + n + (ThreadView.status(thread).isEmpty() ? "" : " · " + ThreadView.status(thread))));
                 if (inlay != null) Disposer.register(parent, inlay);
                 shown.put(n, new Shown(thread, claude, null, inlay));
                 return;
@@ -294,7 +294,6 @@ final class Threads {
 
     /** The pill of a collapsed thread, colored by its status. */
     private record Pill(Threads owner, int id, String text) implements EditorCustomElementRenderer {
-        private static final Color AWAITING = new JBColor(new Color(0x3574F0), new Color(0x3574F0));
         private static final Color OTHER = new JBColor(new Color(0xDFE1E5), new Color(0x393B40));
 
         private Font font() {
@@ -310,14 +309,13 @@ final class Threads {
         public void paint(@SuppressWarnings("rawtypes") Inlay inlay, Graphics g, Rectangle region, TextAttributes attributes) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            boolean awaiting = text.endsWith("Awaiting you");
             int height = Math.min(region.height - JBUI.scale(2), JBUI.scale(16));
             int x = region.x + JBUI.scale(8);
             int y = region.y + (region.height - height) / 2;
-            g2.setColor(awaiting ? AWAITING : OTHER);
+            g2.setColor(OTHER);
             g2.fillRoundRect(x, y, region.width - JBUI.scale(8), height, height, height);
             g2.setFont(font());
-            g2.setColor(awaiting ? Color.WHITE : JBColor.foreground());
+            g2.setColor(JBColor.foreground());
             FontMetrics metrics = g2.getFontMetrics();
             g2.drawString(text, x + JBUI.scale(8), y + (height + metrics.getAscent() - metrics.getDescent()) / 2);
             g2.dispose();

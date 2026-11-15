@@ -34,6 +34,7 @@ import java.util.function.Consumer;
 public final class ReviewService implements Disposable {
     private static final String THREADS_IN_EDITOR = "localreviews.threadsInEditor";
     private static final String RESOLVED_TOO = "localreviews.resolvedToo";
+    private static final String DIFF_VIEW = "localreviews.diffView";
 
     /** What a poll read: no session yet (`session` null), or the session anchored on the diff it shows; `error` when the server did not answer. */
     record State(String error, String root, String ref, String base, String tree, JsonArray files, JsonObject session) {
@@ -46,6 +47,7 @@ public final class ReviewService implements Disposable {
 
     private record Attached(String path, Disposable disposable, Threads threads) {}
 
+    private final List<Runnable> settings = new CopyOnWriteArrayList<>();
     private static final Logger LOG = Logger.getInstance(ReviewService.class);
 
     private final Project project;
@@ -89,6 +91,13 @@ public final class ReviewService implements Disposable {
         ApplicationManager.getApplication().invokeLater(() -> listener.accept(state), project.getDisposed());
     }
 
+    /** Runs `changed` on the EDT when « Show threads » or « Show resolved » changes, until `parent` is disposed. */
+    void onSettings(Runnable changed, Disposable parent) {
+        settings.add(changed);
+        Disposer.register(parent, () -> settings.remove(changed));
+    }
+
+    /** « Show threads »: the threads in full in the editors and the diffs, else as pills at the end of their last lines. */
     boolean threadsInEditor() {
         return PropertiesComponent.getInstance(project).getBoolean(THREADS_IN_EDITOR, true);
     }
@@ -100,11 +109,47 @@ public final class ReviewService implements Disposable {
     void threadsInEditor(boolean shown) {
         PropertiesComponent.getInstance(project).setValue(THREADS_IN_EDITOR, shown, true);
         showInEditors(true);
+        settings.forEach(Runnable::run);
     }
 
     void resolvedToo(boolean shown) {
         PropertiesComponent.getInstance(project).setValue(RESOLVED_TOO, shown, false);
         showInEditors(true);
+        settings.forEach(Runnable::run);
+    }
+
+    /** The Diff view of the tool window: its files open in the diff, each with its Viewed checkbox; else the Editor view, its files open in the editor. */
+    boolean diffView() {
+        return PropertiesComponent.getInstance(project).getBoolean(DIFF_VIEW, false);
+    }
+
+    void diffView(boolean diff) {
+        PropertiesComponent.getInstance(project).setValue(DIFF_VIEW, diff, false);
+    }
+
+    /** Whether `path` is Viewed in `session`, placed on the code shown: a file whose content changed since is not. */
+    static boolean viewed(JsonObject session, String path) {
+        return session != null && session.get("viewed") instanceof JsonObject viewed && viewed.has(path);
+    }
+
+    /**
+     * The Send button that sent last, the one spinning while Claude answers: `thread:<id>` (Send thread), `diff` (the toolbar of the diff),
+     * or `tool-window`, also for a Send this IDE did not make.
+     */
+    private volatile String sentFrom = SENT_FROM_TOOL_WINDOW;
+    static final String SENT_FROM_TOOL_WINDOW = "tool-window";
+    static final String SENT_FROM_DIFF = "diff";
+
+    void sentFrom(String from) {
+        sentFrom = from;
+    }
+
+    /** Whether the Send button `from` spins: it sent last, and Claude has yet to answer a thread it waits in, `thread` for Send thread. */
+    boolean spinning(String from, JsonObject thread) {
+        JsonObject session = state.session();
+        if (!from.equals(sentFrom) || session == null || !Placement.claude(session)) return false;
+        if (thread != null) return "waiting-for-claude".equals(thread.get("status") instanceof com.google.gson.JsonPrimitive status ? status.getAsString() : null);
+        return ThreadsInDiff.waiting(session) > 0;
     }
 
     /** Polls again at once, after a write. */
@@ -133,6 +178,12 @@ public final class ReviewService implements Disposable {
             read = new State(error, state.root(), state.ref(), state.base(), state.tree(), state.files(), state.session());
         }
         if (read.equals(state)) return;
+        // Once, for the project, however many diffs are open: the end of a turn that leaves threads waiting is told by the desktop notification of the mod.
+        JsonObject before = state.session();
+        if (before != null && read.session() != null && before.get("id").equals(read.session().get("id"))
+            && ThreadsInDiff.waiting(before) > 0 && ThreadsInDiff.waiting(read.session()) == 0) {
+            ReviewDiffAction.notify(project, "Claude replied in every thread", ThreadView.Avatars.CLAUDE_SMALL);
+        }
         State changed = read;
         state = changed;
         if (changed.session() != null) ThreadsInDiff.SESSIONS.put(changed.id(), changed.session());
@@ -207,7 +258,7 @@ public final class ReviewService implements Disposable {
         threads.show(resolvedToo() ? shown.session() : unresolved(shown.session()), all);
     }
 
-    private static JsonObject unresolved(JsonObject session) {
+    static JsonObject unresolved(JsonObject session) {
         JsonObject copy = session.deepCopy();
         JsonArray open = new JsonArray();
         for (JsonElement thread : copy.getAsJsonArray("threads")) {

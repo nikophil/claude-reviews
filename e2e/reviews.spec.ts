@@ -26,11 +26,10 @@ test('Reviews shows each open session with its repository, branch and counters, 
 
     const first = page.getByRole('link', { name: new RegExp(basename(awaiting.dir)) });
     await expect(first).toContainText('invoice-footer');
-    await expect(first).toContainText('1 Awaiting you');
     await expect(first).toContainText('0 Waiting for Claude');
     const second = page.getByRole('link', { name: new RegExp(basename(waiting.dir)) });
     await expect(second).toContainText('pdf-export');
-    await expect(second).toContainText('0 Awaiting you');
+    await expect(page.getByText(/Awaiting you/)).toHaveCount(0);
     await expect(second).toContainText('1 Waiting for Claude');
     await second.click();
     await expect(page).toHaveURL(`/s/${waiting.id}`);

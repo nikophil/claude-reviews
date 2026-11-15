@@ -7,7 +7,6 @@ const sessionId = location.pathname.match(/^\/s\/([0-9a-f]{16})$/)?.[1];
 
 const STATUS = {
     'waiting-for-claude': ['Waiting for Claude', 'Label--attention'],
-    'awaiting-you': ['Awaiting you', 'Label--accent'],
     resolved: ['Resolved', 'Label--done'],
 };
 
@@ -68,6 +67,16 @@ const BADGES = {
 };
 
 /** The query that has the server place the threads in the displayed code, whitespace hidden as in the displayed diff. */
+/** The bases in runs of the same group, in their order: `[group, bases]`, the group undefined for the quick choices. */
+function grouped(bases) {
+    const runs = [];
+    for (const base of bases) {
+        if (runs.length === 0 || runs.at(-1)[0] !== base.group) runs.push([base.group, []]);
+        runs.at(-1)[1].push(base);
+    }
+    return runs;
+}
+
 const placedOn = shown => `?base=${shown.base}&tree=${shown.tree}${shown.hideWhitespace ? '&w=1' : ''}`;
 
 /** A preference of the browser, kept from page to page; `fallback` when the browser refuses its storage, or has none. */
@@ -329,9 +338,12 @@ function App() {
                         <span class="d-flex flex-items-center mr-3 f6 color-fg-muted">${progress(viewedCount, diff.files.length)}${viewedCount} / ${diff.files.length} viewed</span>`}
                     <select aria-label="Base" class=${`form-select mr-2${forward ? ' color-border-accent-emphasis color-bg-accent' : ''}`} disabled=${busy || review.readOnly}
                         value=${diff.ref} onChange=${event => choose(event.target.value)}>
-                        ${bases.map(base => html`
-                            <option value=${base.ref} disabled=${base.disabled}
-                                class=${forward && base.ref === 'last-review' ? 'text-bold' : ''}>${base.name}${forward && base.ref === 'last-review' ? ' (new changes)' : ''}</option>`)}
+                        ${grouped(bases).map(([group, choices]) => {
+                            const options = choices.map(base => html`
+                                <option value=${base.ref} disabled=${base.disabled}
+                                    class=${forward && base.ref === 'last-review' ? 'text-bold' : ''}>${base.name}${forward && base.ref === 'last-review' ? ' (new changes)' : ''}</option>`);
+                            return group ? html`<optgroup label=${group}>${options}</optgroup>` : options;
+                        })}
                     </select>
                     ${review.readOnly ? html`<span class="Label Label--done">${session.closedBecause ? 'Closed' : 'Approved'}</span>` : html`
                         <button class="btn mr-2" disabled=${busy} onClick=${() => act('/send', { tree: diff.tree })}>Send</button>
@@ -777,7 +789,6 @@ function Reviews() {
                             <span class="text-bold mr-2">${session.repo}</span>
                             <span class="text-mono mr-2">${session.branch}</span>
                             <span class="flex-1 text-mono f6 color-fg-muted">${session.worktree}</span>
-                            <span class="Label Label--accent mr-2">${session.awaitingYou} Awaiting you</span>
                             <span class="Label Label--attention">${session.waitingForClaude} Waiting for Claude</span>
                         </a>`)}
                 </div>`}

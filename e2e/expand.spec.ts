@@ -134,7 +134,7 @@ test('the lines expanded go once the diff reloads, at the Refresh or at a change
 
     await down.click();
     await expect(row(page, 'l9')).toHaveCount(1);
-    await page.getByRole('combobox', { name: 'Base' }).selectOption({ label: 'other' });
+    await page.getByRole('combobox', { name: 'Base' }).selectOption('refs/heads/other');
     await expect(page.getByRole('combobox', { name: 'Base' })).toHaveValue('refs/heads/other');
     await expect(row(page, 'l9')).toHaveCount(0);
 });

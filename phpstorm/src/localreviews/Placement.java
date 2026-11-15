@@ -24,25 +24,24 @@ final class Placement {
     }
 
     /**
-     * The threads of `path`, of the whole session when null, by status: awaiting you, waiting for Claude, Resolved;
-     * and the Pending messages the next Send would publish, so none of a Resolved thread.
+     * The threads of `path`, of the whole session when null, the threads waiting for Claude, the Pending messages the next Send would publish,
+     * so none of a Resolved thread, and the Resolved threads.
      */
     static int[] counts(JsonObject session, String path) {
-        int[] counts = new int[4];
+        int[] counts = new int[3];
         for (JsonElement element : session.getAsJsonArray("threads")) {
             JsonObject thread = element.getAsJsonObject();
             if (path != null && !thread.getAsJsonObject("anchor").get("path").getAsString().equals(path)) continue;
             JsonElement status = thread.get("status");
             String name = status == null || status.isJsonNull() ? "" : status.getAsString();
-            if (name.equals("awaiting-you")) counts[0]++;
-            if (name.equals("waiting-for-claude")) counts[1]++;
+            if (name.equals("waiting-for-claude")) counts[0]++;
             if (thread.get("resolved").getAsBoolean()) {
-                counts[3]++;
+                counts[2]++;
                 continue;
             }
             for (JsonElement message : thread.getAsJsonArray("messages")) {
                 JsonElement date = message.getAsJsonObject().get("date");
-                if (date == null || date.isJsonNull()) counts[2]++;
+                if (date == null || date.isJsonNull()) counts[1]++;
             }
         }
         return counts;

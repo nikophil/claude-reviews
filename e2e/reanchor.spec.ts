@@ -99,11 +99,11 @@ test('a thread on the old side follows its line to a base where it moved, and is
     await expect(page.locator('.thread')).toContainText('Line -2');
     const base = page.getByRole('combobox', { name: 'Base' });
 
-    await base.selectOption({ label: 'moved' });
+    await base.selectOption('refs/heads/moved');
     await expect(page.locator('.thread')).toContainText('Line -3');
     await expect(above(page).locator('.diff-num').nth(0)).toHaveText('3');
     await expect(above(page).locator('.diff-code')).toHaveText('two');
 
-    await base.selectOption({ label: 'gone' });
+    await base.selectOption('refs/heads/gone');
     await expect(page.locator('.thread')).toContainText('Outdated');
 });

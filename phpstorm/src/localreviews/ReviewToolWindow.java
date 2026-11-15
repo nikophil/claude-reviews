@@ -1,7 +1,12 @@
 package localreviews;
 
 import com.google.gson.JsonArray;
+import com.intellij.diff.util.Side;
+import com.intellij.ide.impl.ProjectUtil;
+import com.intellij.ui.AppIcon;
+import com.intellij.ui.SystemNotifications;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonPrimitive;
 import com.google.gson.JsonObject;
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.ui.laf.darcula.ui.DarculaButtonUI;
@@ -20,13 +25,17 @@ import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.wm.ToolWindow;
 import com.intellij.openapi.wm.ToolWindowFactory;
-import com.intellij.ui.BadgeIconSupplier;
 import com.intellij.ui.ClientProperty;
 import com.intellij.ui.ColoredTreeCellRenderer;
 import com.intellij.ui.DoubleClickListener;
 import com.intellij.ui.JBColor;
 import com.intellij.ui.PopupHandler;
-import com.intellij.ui.SimpleListCellRenderer;
+import com.intellij.openapi.ui.popup.ListSeparator;
+import com.intellij.ui.ComboboxSpeedSearch;
+import com.intellij.ui.GroupedComboBoxRenderer;
+import com.intellij.ui.RowIcon;
+import com.intellij.ui.components.JBRadioButton;
+import com.intellij.util.ui.LafIconLookup;
 import com.intellij.ui.SimpleTextAttributes;
 import com.intellij.ui.components.JBCheckBox;
 import com.intellij.ui.components.JBLabel;
@@ -37,39 +46,61 @@ import com.intellij.ui.treeStructure.Tree;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.tree.TreeUtil;
 
+import javax.swing.ButtonGroup;
+import javax.swing.DefaultComboBoxModel;
+import javax.swing.Icon;
 import javax.swing.JButton;
-import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JTree;
 import javax.swing.SwingConstants;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeModel;
+import javax.swing.tree.TreePath;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.FlowLayout;
 import java.awt.GridLayout;
+import java.awt.Rectangle;
+import java.awt.event.MouseAdapter;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
 /** The review of the worktree, on the left: its base, Send and Approve, and its changed files with their threads. */
 public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
-    // The stripe button scales its icon: a badge of the platform, which a plain Icon is not.
-    private static final BadgeIconSupplier ICON = new BadgeIconSupplier(AllIcons.Toolwindows.ToolWindowMessages);
     private static final Color AMBER = new JBColor(new Color(0x8A5A00), new Color(0xE8B05A));
+    private static final Icon CHECKBOX = LafIconLookup.getIcon("checkBox", false);
+    private static final Icon CHECKED = LafIconLookup.getIcon("checkBox", true);
 
     // At the opening of the project, before any click on its button: the threads go in the editors, and the button tells what awaits.
     @Override
     public void init(ToolWindow toolWindow) {
+        String[] shown = {null};
         ReviewService.get(toolWindow.getProject()).listen(state -> {
-            int awaiting = state.session() == null ? 0 : Placement.counts(state.session(), null)[0];
-            toolWindow.setIcon(awaiting == 0 ? ICON.getOriginalIcon() : ICON.getWarningIcon());
-            toolWindow.setStripeTitle(awaiting == 0 ? "Claude Reviews" : "Claude Reviews (" + awaiting + ")");
+            // /review-local asked to show the review: once per request, and only a recent one, which a project the launcher opens still finds.
+            JsonElement requested = state.session() == null ? null : state.session().get("showRequestedAt");
+            if (requested instanceof JsonPrimitive at && !at.getAsString().equals(shown[0])) {
+                shown[0] = at.getAsString();
+                if (Instant.parse(shown[0]).isAfter(Instant.now().minusSeconds(30))) show(toolWindow, state.root());
+            }
         }, toolWindow.getDisposable());
+    }
+
+    /**
+     * Shows the tool window, and draws the eye to PhpStorm: a desktop notification, the icon of the dock, and the focus;
+     * under Wayland, GNOME refuses the focus without a token of activation, and shakes no icon: the notification remains.
+     */
+    private static void show(ToolWindow toolWindow, String root) {
+        Project project = toolWindow.getProject();
+        toolWindow.activate(null);
+        ProjectUtil.focusProjectWindow(project, true);
+        AppIcon.getInstance().requestAttention(project, true);
+        SystemNotifications.getInstance().notify("Local Reviews", "Claude Reviews", "The review of " + root + " is open in PhpStorm");
     }
 
     @Override
@@ -90,8 +121,10 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         private final transient Project project;
         private final transient ReviewService service;
         private final ComboBox<JsonObject> bases = new ComboBox<>();
-        private final JBCheckBox threadsInEditor = new JBCheckBox("Threads in the editor");
-        private final JBCheckBox resolvedToo = new JBCheckBox("Resolved too");
+        private final JBRadioButton editorView = new JBRadioButton("Editor");
+        private final JBRadioButton diffView = new JBRadioButton("Diff");
+        private final JBCheckBox threadsInEditor = new JBCheckBox("Show threads");
+        private final JBCheckBox resolvedToo = new JBCheckBox("Show resolved");
         private final JButton send = new JButton("Send", AllIcons.Actions.Upload);
         private final JButton approve = new JButton("Approve", AllIcons.Actions.Checked);
         private final JBLabel summary = new JBLabel();
@@ -105,20 +138,30 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         private transient String basesOf;
         private transient Object shownKey;
         private boolean updating;
+        private boolean rebuilding;
 
         Panel(Project project, ToolWindow toolWindow) {
             super(new BorderLayout());
             this.project = project;
             this.service = ReviewService.get(project);
 
-            bases.setRenderer(new SimpleListCellRenderer<JsonObject>() {
-                private static final long serialVersionUID = 1L;
+            // The quick choices, then the pull requests, the local and the remote branches, each under its separator; typing searches them.
+            bases.setRenderer(new GroupedComboBoxRenderer<JsonObject>(bases) {
+                @Override
+                public String getText(JsonObject base) {
+                    return base.get("name").getAsString() + (disabled(base) ? " (after a Send)" : "");
+                }
 
                 @Override
-                public void customize(JList<? extends JsonObject> list, JsonObject base, int index, boolean selected, boolean focused) {
-                    if (base != null) setText(base.get("name").getAsString() + (disabled(base) ? " (after a Send)" : ""));
+                public ListSeparator separatorFor(JsonObject base) {
+                    String group = group(base);
+                    int index = ((DefaultComboBoxModel<JsonObject>) bases.getModel()).getIndexOf(base);
+                    return group != null && (index == 0 || !group.equals(group(bases.getItemAt(index - 1)))) ? new ListSeparator(group) : null;
                 }
             });
+            ComboboxSpeedSearch.installSpeedSearch(bases, (JsonObject base) -> base.get("name").getAsString());
+            // A long title of a pull request widens the popup, not the tool window.
+            bases.setMinimumAndPreferredWidth(JBUI.scale(120));
             bases.addActionListener(e -> chooseBase());
             JPanel base = new JPanel(new BorderLayout(JBUI.scale(8), 0));
             base.add(new JBLabel("Base"), BorderLayout.WEST);
@@ -135,9 +178,26 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             toggles.add(threadsInEditor);
             toggles.add(resolvedToo);
 
+            ButtonGroup views = new ButtonGroup();
+            views.add(editorView);
+            views.add(diffView);
+            (service.diffView() ? diffView : editorView).setSelected(true);
+            editorView.addActionListener(e -> view(false));
+            diffView.addActionListener(e -> view(true));
+            JPanel view = new JPanel(new FlowLayout(FlowLayout.LEFT, JBUI.scale(12), 0));
+            view.add(new JBLabel("Open files in"));
+            view.add(editorView);
+            view.add(diffView);
+            editorView.setToolTipText("Double-click opens a file in the editor, with its threads");
+            diffView.setToolTipText("Double-click opens a file in the diff, and each file has its Viewed checkbox, as in a pull request");
+
             ClientProperty.put(send, DarculaButtonUI.DEFAULT_STYLE_KEY, true);
             // Bare Swing listeners: saving the documents before a Send needs the write-intent lock.
-            send.addActionListener(e -> WriteIntentReadAction.run(() -> ReviewDiffAction.send(project, state.id(), null, service::refresh)));
+            send.addActionListener(e -> {
+                send.setEnabled(false);
+                ThreadView.spin(send, true, AllIcons.Actions.Upload);
+                WriteIntentReadAction.run(() -> ReviewDiffAction.send(project, state.id(), null, ReviewService.SENT_FROM_TOOL_WINDOW, service::refresh));
+            });
             approve.addActionListener(e -> ReviewDiffAction.approve(project, state.id(), service::refresh));
             JPanel buttons = new JPanel(new GridLayout(1, 2, JBUI.scale(8), 0));
             buttons.add(send);
@@ -145,6 +205,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
 
             summary.setForeground(JBColor.GRAY);
             header.add(base);
+            header.add(view);
             header.add(toggles);
             header.add(buttons);
             header.add(summary);
@@ -163,20 +224,37 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             new DoubleClickListener() {
                 @Override
                 protected boolean onDoubleClick(MouseEvent event) {
-                    openSelected(false);
+                    if (checkbox(event) == null) openSelected(service.diffView(), true);
                     return true;
                 }
             }.installOn(tree);
+            tree.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mousePressed(MouseEvent event) {
+                    JsonObject file = checkbox(event);
+                    if (file == null) return;
+                    event.consume();
+                    toggleViewed(file);
+                }
+            });
             tree.addKeyListener(new KeyAdapter() {
                 @Override
                 public void keyPressed(KeyEvent e) {
-                    if (e.getKeyCode() == KeyEvent.VK_ENTER) openSelected(false);
+                    if (e.getKeyCode() == KeyEvent.VK_ENTER) openSelected(service.diffView(), true);
+                    if (e.getKeyCode() == KeyEvent.VK_SPACE && selectedFile() != null) toggleViewed(selectedFile());
                 }
             });
             DefaultActionGroup menu = new DefaultActionGroup(
-                DumbAwareAction.create("Open", event -> openSelected(false)),
-                DumbAwareAction.create("Show Diff", AllIcons.Actions.Diff, event -> openSelected(true)));
+                DumbAwareAction.create("Open", event -> openSelected(false, true)),
+                DumbAwareAction.create("Show Diff", AllIcons.Actions.Diff, event -> openSelected(true, true)),
+                DumbAwareAction.create("Toggle Viewed", event -> {
+                    if (selectedFile() != null) toggleViewed(selectedFile());
+                }));
             PopupHandler.installPopupMenu(tree, menu, "LocalReviewsFiles");
+            // A click, or the arrows, show the file or the thread selected, the focus kept in the tree; a double-click or Enter takes it there.
+            tree.addTreeSelectionListener(e -> {
+                if (!rebuilding) openSelected(service.diffView(), false);
+            });
 
             service.listen(changed -> show(changed, false), toolWindow.getDisposable());
         }
@@ -197,15 +275,21 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             add(new JBScrollPane(tree), BorderLayout.CENTER);
 
             int[] counts = Placement.counts(changed.session(), null);
-            send.setText(counts[2] == 0 ? "Send" : "Send " + counts[2] + " pending");
+            send.setText(counts[1] == 0 ? "Send" : "Send " + counts[1] + " pending");
             boolean claude = Placement.claude(changed.session());
-            send.setEnabled(counts[2] > 0 && claude);
+            send.setEnabled(counts[1] > 0 && claude);
+            ThreadView.spin(send, service.spinning(ReviewService.SENT_FROM_TOOL_WINDOW, null), AllIcons.Actions.Upload);
             // A Send without a Claude session in the worktree would wait for nobody: it says how to start one instead.
             startClaude.removeAll();
             if (!claude) startClaude.add(ThreadView.startClaude(changed.session()), BorderLayout.CENTER);
             summary.setForeground(changed.error() != null ? JBColor.RED : JBColor.GRAY);
+            int viewed = 0;
+            for (JsonElement file : changed.files()) {
+                if (ReviewService.viewed(changed.session(), file.getAsJsonObject().get("path").getAsString())) viewed++;
+            }
             summary.setText(changed.error() != null ? html(changed.error())
-                : changed.files().size() + " files · " + counts[0] + " awaiting you · " + counts[1] + " waiting for Claude");
+                : changed.files().size() + " files" + (service.diffView() ? " · " + viewed + " viewed" : "")
+                    + " · " + counts[0] + " waiting for Claude");
 
             String key = changed.id() + "#" + changed.session().get("sends").getAsInt();
             if (!key.equals(basesOf)) {
@@ -262,9 +346,11 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                     if (thread.get("id").getAsInt() == (selected instanceof Integer id ? id : 0)) reselect = child;
                 }
             }
+            rebuilding = true;
             tree.setModel(new DefaultTreeModel(root));
             TreeUtil.expandAll(tree);
             if (reselect != null) TreeUtil.selectNode(tree, reselect);
+            rebuilding = false;
         }
 
         private void loadBases(String id) {
@@ -303,7 +389,40 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             });
         }
 
-        /** The threads of `path` the tool window shows: Resolved ones only with « Resolved too ». */
+        private void view(boolean diff) {
+            service.diffView(diff);
+            show(state, true);
+        }
+
+        /** The file of the diff whose Viewed checkbox `event` is on, in the Diff view; null elsewhere. */
+        private JsonObject checkbox(MouseEvent event) {
+            if (!service.diffView()) return null;
+            TreePath path = tree.getPathForLocation(event.getX(), event.getY());
+            if (path == null || !(((DefaultMutableTreeNode) path.getLastPathComponent()).getUserObject() instanceof JsonObject file) || !checkable(file)) return null;
+            Rectangle bounds = tree.getPathBounds(path);
+            return bounds != null && event.getX() < bounds.x + CHECKBOX.getIconWidth() + JBUI.scale(4) ? file : null;
+        }
+
+        private JsonObject selectedFile() {
+            DefaultMutableTreeNode node = (DefaultMutableTreeNode) tree.getLastSelectedPathComponent();
+            return node != null && node.getUserObject() instanceof JsonObject file && checkable(file) ? file : null;
+        }
+
+        private void toggleViewed(JsonObject file) {
+            String path = file.get("path").getAsString();
+            WriteIntentReadAction.run(() -> ReviewDiffAction.markViewed(project, state.id(), path, !ReviewService.viewed(state.session(), path), service::refresh));
+        }
+
+        /** A file of the diff: a file that only threads name has nothing to view. */
+        private static boolean checkable(JsonObject file) {
+            return !file.get("status").getAsString().equals("unchanged");
+        }
+
+        private static String group(JsonObject base) {
+            return base.get("group") instanceof JsonPrimitive group ? group.getAsString() : null;
+        }
+
+        /** The threads of `path` the tool window shows: Resolved ones only with « Show resolved ». */
         private List<JsonObject> threads(String path) {
             List<JsonObject> threads = new ArrayList<>();
             for (JsonElement element : state.session().getAsJsonArray("threads")) {
@@ -324,36 +443,38 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
 
         /**
          * Opens the selected file in the editor at its first thread, else at its first added line; a deleted file, or `diff`, in the diff.
-         * A thread opens where its code is: the editor for the new code, the diff for the old one, its own window when Outdated.
+         * A thread opens where its code is: the editor for the new code, the diff for the old one, its own window when Outdated and `focus`.
+         * The focus goes there when `focus`, else stays in the tree.
          */
-        private void openSelected(boolean diff) {
+        private void openSelected(boolean diff, boolean focus) {
             DefaultMutableTreeNode node = (DefaultMutableTreeNode) tree.getLastSelectedPathComponent();
             if (node != null && node.getUserObject() instanceof ThreadNode shown) {
-                openThread(shown.thread(), diff);
+                openThread(shown.thread(), diff, focus);
                 return;
             }
             if (node == null || !(node.getUserObject() instanceof JsonObject file)) return;
             String path = file.get("path").getAsString();
             VirtualFile local = LocalFileSystem.getInstance().refreshAndFindFileByPath(state.root() + "/" + path);
             if (diff || local == null || file.get("status").getAsString().equals("deleted")) {
-                ReviewDiffAction.open(project, path);
+                ReviewDiffAction.open(project, path, Side.RIGHT, -1, focus);
                 return;
             }
-            new OpenFileDescriptor(project, local, firstLine(file) - 1, 0).navigate(true);
+            new OpenFileDescriptor(project, local, firstLine(file) - 1, 0).navigate(focus);
         }
 
-        private void openThread(JsonObject thread, boolean diff) {
+        private void openThread(JsonObject thread, boolean diff, boolean focus) {
             JsonObject anchor = thread.getAsJsonObject("anchor");
             String path = anchor.get("path").getAsString();
             if (!(thread.get("at") instanceof JsonObject at)) {
-                OutdatedThread.open(project, thread);
+                // A window of its own: not at each move of the selection.
+                if (focus) OutdatedThread.open(project, thread);
                 return;
             }
             int start = at.get("start").getAsInt();
             boolean old = anchor.get("side").getAsString().equals("old");
             VirtualFile local = old ? null : LocalFileSystem.getInstance().refreshAndFindFileByPath(state.root() + "/" + path);
-            if (diff || local == null) ReviewDiffAction.open(project, path, old ? start : -1);
-            else new OpenFileDescriptor(project, local, start - 1, 0).navigate(true);
+            if (diff || local == null) ReviewDiffAction.open(project, path, old ? Side.LEFT : Side.RIGHT, start, focus);
+            else new OpenFileDescriptor(project, local, start - 1, 0).navigate(focus);
         }
 
         private int firstLine(JsonObject file) {
@@ -396,31 +517,30 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                 String path = file.get("path").getAsString();
                 String name = path.substring(path.lastIndexOf('/') + 1);
                 String status = file.get("status").getAsString();
-                setIcon(FileTypeManager.getInstance().getFileTypeByFileName(name).getIcon());
+                boolean viewed = ReviewService.viewed(state.session(), path);
+                Icon icon = FileTypeManager.getInstance().getFileTypeByFileName(name).getIcon();
+                // The Diff view, as a pull request: a Viewed checkbox before each file of the diff, and a viewed file in grey.
+                setIcon(service.diffView() && checkable(file) ? new RowIcon(viewed ? CHECKED : CHECKBOX, icon) : icon);
                 FileStatus color = switch (status) {
                     case "added" -> FileStatus.ADDED;
                     case "deleted" -> FileStatus.DELETED;
                     case "unchanged" -> FileStatus.NOT_CHANGED;
                     default -> FileStatus.MODIFIED;
                 };
-                append(name, new SimpleTextAttributes(status.equals("deleted") ? SimpleTextAttributes.STYLE_STRIKEOUT : SimpleTextAttributes.STYLE_PLAIN, color.getColor()));
+                append(name, new SimpleTextAttributes(status.equals("deleted") ? SimpleTextAttributes.STYLE_STRIKEOUT : SimpleTextAttributes.STYLE_PLAIN,
+                    service.diffView() && viewed ? JBColor.GRAY : color.getColor()));
                 int[] counts = Placement.counts(state.session(), path);
-                if (counts[0] > 0) append("  " + counts[0] + " awaiting you", new SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, JBUI.CurrentTheme.Link.Foreground.ENABLED));
-                if (counts[1] > 0) append("  " + counts[1] + " waiting for Claude", SimpleTextAttributes.GRAYED_ATTRIBUTES);
-                if (counts[2] > 0) append("  " + counts[2] + " pending", new SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, AMBER));
-                if (counts[3] > 0 && service.resolvedToo()) append("  " + counts[3] + " resolved", SimpleTextAttributes.GRAYED_ATTRIBUTES);
+                if (counts[0] > 0) append("  " + counts[0] + " waiting for Claude", SimpleTextAttributes.GRAYED_ATTRIBUTES);
+                if (counts[1] > 0) append("  " + counts[1] + " pending", new SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, AMBER));
+                if (counts[2] > 0 && service.resolvedToo()) append("  " + counts[2] + " resolved", SimpleTextAttributes.GRAYED_ATTRIBUTES);
             }
 
-            /** « #12 · Line -5 · Awaiting you · old code », the status in the color of the file's counts. */
+            /** « #12 · Line -5 · Pending · old code », the status, if any, in the color of the file's counts. */
             private void thread(JsonObject thread) {
                 String status = ThreadView.status(thread);
                 setIcon(status.equals("Resolved") ? AllIcons.Actions.Checked : AllIcons.Toolwindows.ToolWindowMessages);
-                append("#" + thread.get("id").getAsInt() + " · " + ThreadView.lines(thread) + " · ");
-                append(status, switch (status) {
-                    case "Awaiting you" -> new SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, JBUI.CurrentTheme.Link.Foreground.ENABLED);
-                    case "Pending" -> new SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, AMBER);
-                    default -> SimpleTextAttributes.GRAYED_ATTRIBUTES;
-                });
+                append("#" + thread.get("id").getAsInt() + " · " + ThreadView.lines(thread));
+                if (!status.isEmpty()) append(" · " + status, status.equals("Pending") ? new SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, AMBER) : SimpleTextAttributes.GRAYED_ATTRIBUTES);
                 if (thread.getAsJsonObject("anchor").get("side").getAsString().equals("old")) append(" · old code", SimpleTextAttributes.GRAYED_ATTRIBUTES);
                 if (!(thread.get("at") instanceof JsonObject)) append(" · Outdated", SimpleTextAttributes.ERROR_ATTRIBUTES);
             }

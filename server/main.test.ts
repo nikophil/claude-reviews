@@ -259,3 +259,7 @@ test('GET /api/me keeps a failure of gh or of the name 60 s, then reads them aga
         assert.equal(calls(), 2);
     }, { config: '' });
 });
+
+test('an idle connection stays open longer than the JDK HTTP client keeps it, 30 s: the IDE never writes on a connection the server is closing', () => {
+    assert.ok(server.keepAliveTimeout > 30_000, String(server.keepAliveTimeout));
+});

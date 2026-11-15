@@ -28,7 +28,7 @@ La review qui clôt une session, alors en lecture seule ; elle n'envoie rien à 
 
 **Base**:
 Ce à quoi une session compare le working tree, choisi dans l'UI :
-les changements non commités (HEAD), le Snapshot de mon dernier Send, ou une branche.
+les changements non commités (HEAD), le Snapshot de mon dernier Send, une branche (par défaut, de base, locale ou distante), ou une PR ouverte.
 Le diff va toujours jusqu'au working tree, changements non commités compris.
 _Avoid_: vues par tour
 
@@ -72,8 +72,8 @@ _Avoid_: draft, brouillon
 Un thread non Resolved dont le dernier message envoyé est le mien.
 _Avoid_: unread, watermark
 
-**Awaiting you**:
-Un thread dont le dernier message est de Claude.
+Un thread non Resolved où Claude a parlé en dernier n'a pas de nom ni de statut affiché : la notification « Claude replied in every thread » et le message de Claude suffisent.
+_Avoid_: Awaiting you
 
 **Resolved**:
 Un thread que j'ai clos ; seul moi le résous, et seul mon Unresolve le rouvre.

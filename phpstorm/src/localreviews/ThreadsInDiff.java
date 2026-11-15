@@ -81,6 +81,7 @@ public final class ThreadsInDiff extends DiffExtension {
         } else {
             return;
         }
+        ReviewService.get(project).onSettings(poll::reshow, viewer);
         ScheduledFuture<?> future = AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay(poll, 0, 2, TimeUnit.SECONDS);
         Disposer.register(viewer, () -> future.cancel(false));
     }
@@ -101,7 +102,7 @@ public final class ThreadsInDiff extends DiffExtension {
         return false;
     }
 
-    private static int waiting(JsonObject session) {
+    static int waiting(JsonObject session) {
         int waiting = 0;
         for (JsonElement thread : session.getAsJsonArray("threads")) {
             JsonElement status = thread.getAsJsonObject().get("status");
@@ -176,7 +177,15 @@ public final class ThreadsInDiff extends DiffExtension {
             for (Editor editor : editors) {
                 if (editor.isDisposed()) return;
             }
-            for (Threads side : threads) side.show(session, all);
+            // « Show threads » off, the diff shows them as pills, as the editor does.
+            ReviewService service = ReviewService.get(project);
+            boolean collapsed = !service.threadsInEditor();
+            // « Show resolved » off, the diff hides them, as the editor does.
+            JsonObject shown = service.resolvedToo() ? session : ReviewService.unresolved(session);
+            for (Threads side : threads) {
+                side.collapsed(collapsed);
+                side.show(shown, all);
+            }
         }
 
         // Synchronized: a refresh after a write may run while the scheduled poll does.
@@ -192,8 +201,6 @@ public final class ThreadsInDiff extends DiffExtension {
             }
             SESSIONS.put(review.session(), session);
             if (session.equals(last)) return;
-            // ponytail: only once no thread waits any more; the end of a turn that leaves threads waiting is told by the desktop notification of the mod.
-            if (last != null && waiting(last) > 0 && waiting(session) == 0) ReviewDiffAction.notify(project, "Claude replied in every thread", ThreadView.Avatars.CLAUDE_SMALL);
             last = session;
             ApplicationManager.getApplication().invokeLater(() -> show(session, false), modality);
         }

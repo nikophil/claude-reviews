@@ -36,14 +36,15 @@ async function api(method: string, path: string, body?: unknown): Promise<any> {
  * The mod under a stand-in for Claude Code: its hooks, and a `$` that answers from the real server and real git,
  * records what reaches the host (prompts, commands, log lines), and fires the poll only when the test says so.
  */
-async function mod(cwd: string, { serverPort = port } = {}) {
+/** `launcher`, the PhpStorm launcher the mod finds, none by default; `choice`, the answer to its question, none for a dismissed one. */
+async function mod(cwd: string, { serverPort = port, launcher = '', choice = undefined as string | undefined } = {}) {
     const hooks: { event: string; matcher: Record<string, string>; hook: Function }[] = [];
     const on = (event: string, matcher: any, hook?: Function) => {
         hooks.push(hook ? { event, matcher, hook } : { event, matcher: {}, hook: matcher });
         return { catch() {} };
     };
     register(on as any, {} as any);
-    const seen = { fetched: [] as string[], submitted: [] as string[], appended: 0, run: [] as string[][], cwd: [] as (string | undefined)[], log: [] as string[], polls: [] as Function[] };
+    const seen = { asked: [] as string[], fetched: [] as string[], submitted: [] as string[], appended: 0, run: [] as string[][], cwd: [] as (string | undefined)[], log: [] as string[], polls: [] as Function[] };
     let answer: object = {};
     let down = false;
     const $ = {
@@ -62,6 +63,7 @@ async function mod(cwd: string, { serverPort = port } = {}) {
             run: async (argv: string[], init?: { cwd?: string }) => {
                 seen.run.push(argv);
                 seen.cwd.push(init?.cwd);
+                if (argv[3] === 'phpstorm-launcher') return { exitCode: 0, stdout: launcher && `${launcher}\n`, stderr: '' };
                 if (argv[0] !== 'git') return { exitCode: 0, stdout: '', stderr: '' };
                 const git = spawnSync(argv[0], argv.slice(1), { cwd: init?.cwd ?? cwd, encoding: 'utf8' });
                 return { exitCode: git.status, stdout: git.stdout, stderr: git.stderr };
@@ -75,7 +77,14 @@ async function mod(cwd: string, { serverPort = port } = {}) {
         session: { append: async () => { seen.appended++; } },
         tool: { register: async ({ name }: { name: string }) => ({ tool: `mcp__local-reviews__${name}` }) },
         command: { register: async ({ name }: { name: string }) => ({ command: name }) },
-        ui: { log: (text: string) => seen.log.push(text) },
+        ui: {
+            log: (text: string) => seen.log.push(text),
+            ask: async (question: string) => {
+                seen.asked.push(question);
+                if (choice === undefined) throw new Error('dismissed');
+                return choice;
+            },
+        },
     };
     const engine: Record<string, (e: any) => unknown> = {
         'session.start': e => ({ cwd: e.cwd }),
@@ -153,7 +162,7 @@ test('list_open_threads gives, but for Resolved threads and threads without publ
 
     const result = JSON.parse((await claude.tool('list_open_threads')).result);
 
-    assert.deepEqual(result.threads.map((thread: any) => [thread.id, thread.status]), [[1, 'waiting-for-claude'], [3, 'awaiting-you']]);
+    assert.deepEqual(result.threads.map((thread: any) => [thread.id, thread.status]), [[1, 'waiting-for-claude'], [3, 'open']]);
     const { date } = result.threads[0].messages[0];
     assert.match(date, /^\d{4}-\d\d-\d\dT/);
     assert.deepEqual(result.threads[0], {
@@ -208,10 +217,10 @@ test('reply_to_thread publishes the reply of Claude in the thread', async () => 
     await claude.tool('reply_to_thread', { id: 1, body: 'Because' });
 
     const thread = (await api('GET', `/api/sessions/${id}`)).threads[0];
-    assert.deepEqual([thread.status, thread.messages.at(-1).author, thread.messages.at(-1).body], ['awaiting-you', 'claude', 'Because']);
+    assert.deepEqual([thread.status, thread.messages.at(-1).author, thread.messages.at(-1).body], ['open', 'claude', 'Because']);
 });
 
-test('open_thread opens the session of a worktree that has none, with a thread Awaiting you', async () => {
+test('open_thread opens the session of a worktree that has none, with a thread open', async () => {
     const dir = repo({ 'a.txt': 'one\ntwo\n' });
     const claude = await mod(dir);
 
@@ -219,7 +228,7 @@ test('open_thread opens the session of a worktree that has none, with a thread A
 
     const session = await api('GET', `/api/sessions?worktree=${encodeURIComponent(dir)}`);
     assert.deepEqual(opened, { result: 'Opened thread 1' });
-    assert.deepEqual([session.threads[0].status, session.threads[0].anchor.lines], ['awaiting-you', ['one', 'two']]);
+    assert.deepEqual([session.threads[0].status, session.threads[0].anchor.lines], ['open', ['one', 'two']]);
 });
 
 test('a Claude session starting in a worktree where threads wait adds "N threads t\'attendent" to its first prompt, and to no subagent\'s first message', async () => {
@@ -270,10 +279,48 @@ test('when the server does not answer, the tools and /review-local say so instea
 
     const replied = await claude.tool('reply_to_thread', { id: 1, body: 'Hi' });
     const opened = await claude.tool('open_thread', { file: 'a.txt', side: 'new', lines: [1], body: 'Hi' });
-    const command = await claude.fire('command.run', { command: 'review-local' });
+    const command = await claude.fire('command.run', { command: 'review-local', args: '' });
 
     assert.ok(replied.deny && opened.deny, 'both tools deny');
     assert.match(command.text, /does not answer/);
+});
+
+test('/review-local phpstorm asks the IDE to show the session, then runs the PhpStorm launcher on the worktree, without a question', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir, { launcher: '/opt/bin/phpstorm' });
+
+    const command = await claude.fire('command.run', { command: 'review-local', args: 'phpstorm' });
+
+    assert.deepEqual(claude.seen.asked, []);
+    assert.ok((await api('GET', `/api/sessions/${id}`)).showRequestedAt);
+    assert.ok(claude.seen.run.some(argv => argv.includes('/opt/bin/phpstorm') && argv.includes(dir)), JSON.stringify(claude.seen.run));
+    assert.match(command.text, /PhpStorm/);
+});
+
+test('/review-local asks where to open the review when PhpStorm is there, and opens the browser on Browser', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir, { launcher: '/opt/bin/phpstorm', choice: 'Browser' });
+
+    const command = await claude.fire('command.run', { command: 'review-local', args: '' });
+
+    assert.deepEqual(claude.seen.asked, ['Where to open the review?']);
+    assert.equal((await api('GET', `/api/sessions/${id}`)).showRequestedAt, null);
+    assert.ok(claude.seen.run.some(argv => argv.includes(`http://127.0.0.1:${port}/s/${id}`)));
+    assert.match(command.text, new RegExp(`/s/${id}`));
+});
+
+test('/review-local opens the browser without a question when no PhpStorm launcher is found, and opens nothing when the question is dismissed', async () => {
+    const { dir, id } = await session([]);
+    const alone = await mod(dir);
+    const dismissed = await mod(dir, { launcher: '/opt/bin/phpstorm' });
+
+    await alone.fire('command.run', { command: 'review-local', args: '' });
+    const nothing = await dismissed.fire('command.run', { command: 'review-local', args: '' });
+
+    assert.deepEqual(alone.seen.asked, []);
+    assert.ok(alone.seen.run.some(argv => argv.includes(`http://127.0.0.1:${port}/s/${id}`)));
+    assert.ok(!dismissed.seen.run.some(argv => argv.includes(`http://127.0.0.1:${port}/s/${id}`) || argv.includes('/opt/bin/phpstorm')));
+    assert.match(nothing.text, new RegExp(`/s/${id}`));
 });
 
 test('reply_to_thread refuses a thread id that is not a positive integer', async () => {

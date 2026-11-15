@@ -51,7 +51,7 @@ Décisions structurantes : [docs/adr/](docs/adr/).
 4. **Le mod Claude Code**, livré en plugin (`hooks/hooks.json` → `"modules"`) :
    - il enregistre les outils `list_open_threads()`, qui renvoie en entier les threads Waiting for Claude,
      `reply_to_thread(id, body)` et `open_thread(file, side, lines, body)`, ainsi que la commande `/review-local`,
-     qui ouvre la session du worktree dans le navigateur ;
+     qui ouvre la session du worktree dans PhpStorm ou le navigateur, et demande lequel quand PhpStorm est installé ;
    - il relie la Claude session à sa session de relecture par le chemin du worktree (`git rev-parse --show-toplevel` sur le `cwd`) ;
    - sans session ouverte, `open_thread` en ouvre une ; une session close refuse les messages de Claude, et le mod cesse alors de le relancer ;
    - il interroge le serveur, et sur un Send injecte « N threads t'attendent » avec `$.prompt.submit` ;
@@ -73,8 +73,10 @@ Décisions structurantes : [docs/adr/](docs/adr/).
 - La base se choisit dans l'UI, et le diff va toujours jusqu'au working tree, changements non commités et fichiers non suivis compris :
   - **Uncommitted changes** : HEAD, le choix par défaut ;
   - **Since my last review** : le Snapshot du dernier Send, ce qui remplace les « vues par tour » ; grisée avant le premier Send ;
-  - **origin/HEAD** : depuis le merge-base ;
-  - **les autres branches**, triées par distance au merge-base, la branche parente d'une pile de PR en tête.
+  - **la branche par défaut** (origin/HEAD) : depuis le merge-base ;
+  - **la branche de base** : la base de la PR de la branche, sinon la branche locale la plus proche ;
+  - **une PR ouverte**, par sa branche sur origin, pour relire depuis la PR sur laquelle la branche s'empile ;
+  - **les autres branches**, locales puis distantes, triées par distance au merge-base, la branche parente d'une pile de PR en tête.
 - Chaque session garde la dernière base choisie.
 
 ## Modèle d'un thread
@@ -83,10 +85,10 @@ Décisions structurantes : [docs/adr/](docs/adr/).
   et l'extrait de diff d'origine (comme le `diff_hunk` de GitHub), sans SHA.
   Elle se capture sur le code que voit son auteur : la base et le code affiché pour moi, la base de la session et le working tree pour Claude.
 - **Messages** : auteur (`me` | `claude`), corps en markdown, date, et pour les miens la review qui l'a publié ; sans review, mon message est Pending.
-  Un message de Claude est publié dès qu'il l'écrit, hors de toute review : un thread que Claude ouvre est Awaiting you sur-le-champ.
+  Un message de Claude est publié dès qu'il l'écrit, hors de toute review : un thread que Claude ouvre est publié sur-le-champ, sans attendre de Send.
   Un message prend sa date et sa place dans le thread à sa publication, donc mon message Pending passe après une réponse de Claude arrivée entre-temps.
 - Trois faits indépendants, qui se combinent :
-  - **à qui le tour**, déduit du dernier message envoyé : **Waiting for Claude** si c'est le mien, **Awaiting you** si c'est celui de Claude ;
+  - **à qui le tour**, déduit du dernier message envoyé : **Waiting for Claude** si c'est le mien ; si c'est celui de Claude, le thread n'affiche pas de statut ;
   - **Resolved**, que moi seul change, sur-le-champ, sans review ; un thread Resolved n'attend plus Claude, même si mon message est le dernier,
     et seul un message que j'y écris le rouvre, pas une réponse de Claude ;
   - **Outdated**, calculé quand l'ancre ne se retrouve plus dans le code qu'on regarde.

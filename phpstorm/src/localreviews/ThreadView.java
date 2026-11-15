@@ -131,17 +131,25 @@ final class ThreadView extends JPanel implements Disposable {
         card.add(header("Thread #" + id + " · " + lines(thread), waiting && !claude ? "No Claude session" : status));
         messages(project, thread.getAsJsonArray("messages"));
         // At the bottom too: the header of a long thread is out of sight.
-        if (waiting && claude) content.add(hint("Waiting for Claude…", AnimatedIcon.Default.INSTANCE));
+        if (waiting && claude) content.add(hint("Waiting for Claude…"));
         if (waiting && !claude) content.add(startClaude(session));
         field = field(project, "Reply");
         // A Resolved thread takes no message until its Unresolve.
         other = resolved ? button("Unresolve", AllIcons.Actions.Rollback) : button("Resolve", AllIcons.Actions.Checked);
         String toggle = route + (resolved ? "/unresolve" : "/resolve");
         other.addActionListener(e -> write(body -> Server.post(toggle, new JsonObject()), written));
-        // Sends this thread alone, without the Pending messages of the others.
-        if (!resolved && claude && pending(thread)) {
-            send = button("Send thread", AllIcons.Actions.Upload);
-            send.addActionListener(e -> WriteIntentReadAction.run(() -> ReviewDiffAction.send(project, sessionId, id, written)));
+        // Sends this thread alone, without the Pending messages of the others; it spins, the only spinner, until Claude answers the thread.
+        boolean spinning = ReviewService.get(project).spinning("thread:" + id, thread);
+        if (!resolved && claude && (pending(thread) || spinning)) {
+            JButton button = button("Send thread", AllIcons.Actions.Upload);
+            send = button;
+            spin(button, spinning, AllIcons.Actions.Upload);
+            button.setEnabled(pending(thread));
+            button.addActionListener(e -> {
+                button.setEnabled(false);
+                spin(button, true, AllIcons.Actions.Upload);
+                WriteIntentReadAction.run(() -> ReviewDiffAction.send(project, sessionId, id, null, written));
+            });
         }
         finish(body -> Server.post(route + "/messages", reply(body)), written);
         if (resolved) {
@@ -220,8 +228,6 @@ final class ThreadView extends JPanel implements Disposable {
         header.setOpaque(false);
         header.add(title, BorderLayout.WEST);
         JBLabel right = hint(status);
-        if (status.equals("Awaiting you")) right.setForeground(JBUI.CurrentTheme.Link.Foreground.ENABLED);
-        if (status.equals("Waiting for Claude")) right.setIcon(AnimatedIcon.Default.INSTANCE);
         if (status.equals("Resolved")) right.setIcon(AllIcons.Actions.Checked);
         header.add(right, BorderLayout.EAST);
         header.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
@@ -248,31 +254,33 @@ final class ThreadView extends JPanel implements Disposable {
         for (JsonElement element : messages) {
             JsonObject message = element.getAsJsonObject();
             List<JsonObject> last = turns.isEmpty() ? null : turns.get(turns.size() - 1);
-            if (last != null && author(last.get(0)).equals(author(message))) last.add(message);
+            // My Pending messages make a turn of their own, all of it in the color of Pending.
+            if (last != null && author(last.get(0)).equals(author(message)) && unsent(last.get(0)) == unsent(message)) last.add(message);
             else turns.add(new ArrayList<>(List.of(message)));
         }
         for (List<JsonObject> turn : turns) {
             if (content.getComponentCount() > 0) content.add(new JSeparator());
             String author = author(turn.get(0));
+            boolean unsent = unsent(turn.get(0));
             JPanel column = new JPanel(new VerticalLayout(JBUI.scale(4)));
             column.setOpaque(false);
             JBLabel name = new JBLabel(author);
             name.setFont(JBUI.Fonts.label().asBold());
-            column.add(name);
+            // In a row of its own: the vertical layout would stretch the badge over the width.
+            JPanel nameRow = new JPanel(new FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0));
+            nameRow.setOpaque(false);
+            nameRow.add(name);
+            if (unsent) nameRow.add(badge());
+            column.add(nameRow);
             for (JsonObject message : turn) {
-                JsonElement date = message.get("date");
-                if (date == null || date.isJsonNull()) {
-                    column.add(pending(project, message));
-                } else {
-                    column.add(hint(when(message)));
-                    column.add(body(project, message.get("body").getAsString()));
-                }
+                if (!unsent) column.add(hint(when(message)));
+                column.add(body(project, message.get("body").getAsString()));
             }
             JPanel avatar = new JPanel(new BorderLayout());
             avatar.setOpaque(false);
             avatar.setBorder(JBUI.Borders.emptyRight(8));
             avatar.add(new JBLabel(author.equals("claude") ? Avatars.CLAUDE : Avatars.me(project)), BorderLayout.NORTH);
-            JPanel shown = new JPanel(new BorderLayout());
+            JPanel shown = unsent ? pendingTurn() : new JPanel(new BorderLayout());
             shown.setOpaque(false);
             shown.add(avatar, BorderLayout.WEST);
             shown.add(column, BorderLayout.CENTER);
@@ -391,7 +399,7 @@ final class ThreadView extends JPanel implements Disposable {
         JsonElement status = thread.get("status");
         if (status == null || status.isJsonNull()) return "Pending";
         return switch (status.getAsString()) {
-            case "awaiting-you" -> "Awaiting you";
+            case "open" -> "";
             case "resolved" -> "Resolved";
             default -> "Waiting for Claude";
         };
@@ -418,9 +426,9 @@ final class ThreadView extends JPanel implements Disposable {
         return panel;
     }
 
-    /** A Pending message stands out from the published ones: an amber « Pending » badge, over an amber tint. */
-    private JPanel pending(Project project, JsonObject message) {
-        JPanel panel = new JPanel(new VerticalLayout(JBUI.scale(4))) {
+        /** A turn of my Pending messages: its avatar, name and bodies on the color of Pending. */
+    private static JPanel pendingTurn() {
+        JPanel panel = new JPanel(new BorderLayout()) {
             private static final long serialVersionUID = 1L;
 
             @Override
@@ -432,19 +440,27 @@ final class ThreadView extends JPanel implements Disposable {
                 g2.dispose();
             }
         };
-        panel.setOpaque(false);
-        panel.setBorder(JBUI.Borders.empty(4, 6));
+        panel.setBorder(JBUI.Borders.empty(6));
+        return panel;
+    }
+
+    private static JBLabel badge() {
         JBLabel badge = new JBLabel("Pending");
         badge.setFont(JBUI.Fonts.smallFont().asBold());
         badge.setForeground(PENDING);
         badge.setBorder(BorderFactory.createCompoundBorder(new RoundedLineBorder(PENDING, JBUI.scale(8), 1), JBUI.Borders.empty(0, 6)));
-        // In a row of its own: the vertical layout would stretch the badge over the width.
-        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        row.setOpaque(false);
-        row.add(badge);
-        panel.add(row);
-        panel.add(body(project, message.get("body").getAsString()));
-        return panel;
+        return badge;
+    }
+
+    private static boolean unsent(JsonObject message) {
+        JsonElement date = message.get("date");
+        return date == null || date.isJsonNull();
+    }
+
+    /** A spinner in place of the icon of `button`, also while it is greyed, or its own `icon` back. */
+    static void spin(JButton button, boolean spinning, Icon icon) {
+        button.setIcon(spinning ? AnimatedIcon.Default.INSTANCE : icon);
+        button.setDisabledIcon(spinning ? AnimatedIcon.Default.INSTANCE : null);
     }
 
     /** « Today 23:05 », « Send #2 · Today 23:05 ». */

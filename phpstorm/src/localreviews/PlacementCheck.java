@@ -29,14 +29,15 @@ final class PlacementCheck {
         check(Placement.claude(new JsonObject()), "a server without the field takes a Claude session for granted");
         JsonObject statuses = JsonParser.parseString("""
             { "threads": [
-              { "id": 1, "resolved": false, "status": "awaiting-you", "anchor": { "path": "a.php", "side": "new" }, "messages": [{ "date": "x" }, { "date": null }] },
-              { "id": 2, "resolved": false, "status": "awaiting-you", "anchor": { "path": "a.php", "side": "old" }, "messages": [{ "date": "x" }] },
+              { "id": 1, "resolved": false, "status": "open", "anchor": { "path": "a.php", "side": "new" }, "messages": [{ "date": "x" }, { "date": null }] },
+              { "id": 2, "resolved": false, "status": "open", "anchor": { "path": "a.php", "side": "old" }, "messages": [{ "date": "x" }] },
               { "id": 3, "resolved": false, "status": "waiting-for-claude", "anchor": { "path": "a.php", "side": "new" }, "messages": [{ "date": "x" }] },
               { "id": 4, "resolved": true, "status": "resolved", "anchor": { "path": "a.php", "side": "new" }, "messages": [{ "date": null }] },
-              { "id": 5, "resolved": false, "status": "awaiting-you", "anchor": { "path": "b.php", "side": "new" }, "messages": [{ "date": "x" }] }
+              { "id": 5, "resolved": false, "status": "open", "anchor": { "path": "b.php", "side": "new" }, "messages": [{ "date": "x" }] }
             ] }""").getAsJsonObject();
-        check(java.util.Arrays.equals(Placement.counts(statuses, "a.php"), new int[] {2, 1, 1, 1}), "awaiting you, waiting for Claude, Pending outside Resolved threads, Resolved, of one file");
-        check(java.util.Arrays.equals(Placement.counts(statuses, null), new int[] {3, 1, 1, 1}), "the same counts for the whole session");
+        check(java.util.Arrays.equals(Placement.counts(statuses, "a.php"), new int[] {1, 1, 1}), "waiting for Claude, Pending outside Resolved threads, Resolved, of one file");
+        check(java.util.Arrays.equals(Placement.counts(statuses, null), new int[] {1, 1, 1}), "the same counts for the whole session");
+        check(ThreadView.status(statuses.getAsJsonArray("threads").get(0).getAsJsonObject()).isEmpty(), "an open thread shows no status");
         check(ThreadView.lines(session.getAsJsonArray("threads").get(1).getAsJsonObject()).equals("Line -5"), "the place of a thread on the old side");
         JsonObject outdated = JsonParser.parseString("""
             { "anchor": { "side": "new", "start": 3, "end": 5 }, "at": null }""").getAsJsonObject();

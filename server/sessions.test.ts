@@ -14,6 +14,10 @@ let base: string;
 /** The notification commands the server ran, instead of showing them. */
 const notified: string[][] = [];
 before(async () => {
+    // A gh that fails, ahead of the real one: the fixtures have no GitHub repository, and my login must not reach them.
+    write(join(data, '..', 'bin'), { gh: '#!/bin/sh\nexit 1\n' });
+    chmodSync(join(data, '..', 'bin', 'gh'), 0o755);
+    process.env.PATH = `${join(data, '..', 'bin')}:${process.env.PATH}`;
     server = await start(0, argv => notified.push(argv));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -247,6 +251,20 @@ test('a session says whether a Claude session read it, with ?claude, in the last
     assert.equal(later.claudeSession, false);
 });
 
+test('/show asks the IDE clients to show the session: the session carries the date of the request, null before', async () => {
+    const { id } = await sessionWithThread();
+    const before = (await api('GET', `/api/sessions/${id}`)).body;
+    const asked = new Date().toISOString();
+
+    const shown = await api('POST', `/api/sessions/${id}/show`, {});
+
+    assert.equal(before.showRequestedAt, null);
+    assert.equal(shown.status, 200);
+    assert.ok(shown.body.showRequestedAt >= asked);
+    assert.equal((await api('GET', `/api/sessions/${id}`)).body.showRequestedAt, shown.body.showRequestedAt);
+    assert.equal((await api('POST', '/api/sessions/0000000000000000/show', {})).status, 404);
+});
+
 test('a Send of some threads publishes only their Pending messages, and still takes its Snapshot', async () => {
     const { dir, id, path } = await sessionWithThread();
     await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path: 'a.txt', side: 'new', start: 1, end: 1, body: 'And here' });
@@ -292,7 +310,7 @@ test('a Resolved thread no longer waits for Claude, a reply of Claude does not r
     const unresolved = await api('POST', `${path}/unresolve`, {});
     assert.equal(unresolved.status, 200);
     assert.equal(unresolved.body.threads[0].resolved, false);
-    assert.equal(unresolved.body.threads[0].status, 'awaiting-you');
+    assert.equal(unresolved.body.threads[0].status, 'open');
     assert.equal((await api('POST', `${path}/messages`, { author: 'me', body: 'One more thing' })).status, 200);
 });
 
@@ -387,7 +405,7 @@ test('an approved session refuses the reply_to_thread and open_thread of Claude 
     assert.equal(existsSync(join(data, 'sessions', `${id}.json`)), false);
 });
 
-test('on a worktree without open session, the open_thread of Claude opens one, with a thread Awaiting you without Send', async () => {
+test('on a worktree without open session, the open_thread of Claude opens one, with a thread open without Send', async () => {
     const dir = repo({ 'a.txt': 'a\n' });
     write(dir, { 'b.txt': 'not displayed anywhere yet\n' });
 
@@ -397,7 +415,7 @@ test('on a worktree without open session, the open_thread of Claude opens one, w
 
     assert.equal(opened.status, 200);
     assert.equal(opened.body.sends, 0);
-    assert.equal(opened.body.threads[0].status, 'awaiting-you');
+    assert.equal(opened.body.threads[0].status, 'open');
     assert.deepEqual(opened.body.threads[0].anchor.lines, ['not displayed anywhere yet']);
     assert.ok(existsSync(join(data, 'sessions', `${id}.json`)));
 });
@@ -483,7 +501,21 @@ test('the diff against origin/HEAD starts from the merge-base: a commit added on
     assert.deepEqual(shown.body.files.map((file: any) => file.path), ['mine.txt', 'uncommitted.txt']);
 });
 
-test('the bases are Uncommitted changes, Since my last review, origin/HEAD, then the other branches from the nearest merge-base to the farthest', async () => {
+/** A gh on the PATH that answers `pr list` with `pulls`, and fails at anything else; `restore` puts the PATH back. */
+function fakeGh(dir: string, pulls: object[]): { restore: () => void } {
+    const bin = join(dir, '.git', 'gh-bin');
+    write(bin, { gh: `#!/bin/sh\n[ "$1 $2" = "pr list" ] || exit 1\ncat <<'JSON'\n${JSON.stringify(pulls)}\nJSON\n` });
+    chmodSync(join(bin, 'gh'), 0o755);
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    return { restore: () => { process.env.PATH = path; } };
+}
+
+/**
+ * Branch mine, with commits of its own, among branches far, mid and near, from the farthest merge-base to the nearest;
+ * origin/HEAD points at origin/main, the first commit, and origin has mid, feature and other too.
+ */
+function branches(): string {
     const dir = repo({ 'a.txt': 'a\n' });
     git(dir, 'branch', '-m', 'far');
     git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
@@ -491,26 +523,79 @@ test('the bases are Uncommitted changes, Since my last review, origin/HEAD, then
     git(dir, 'checkout', '-qb', 'mine');
     commit(dir, { 'b.txt': 'b\n' });
     git(dir, 'branch', 'mid');
+    git(dir, 'update-ref', 'refs/remotes/origin/mid', 'HEAD');
     commit(dir, { 'c.txt': 'c\n' });
     git(dir, 'branch', 'near');
+    git(dir, 'update-ref', 'refs/remotes/origin/feature', 'HEAD');
+    git(dir, 'update-ref', 'refs/remotes/origin/other', 'HEAD');
     commit(dir, { 'd.txt': 'd\n' });
     for (const branch of ['far', 'mid']) {
         git(dir, 'checkout', '-q', branch);
         commit(dir, { [`${branch}.txt`]: `${branch}\n` });
     }
     git(dir, 'checkout', '-q', 'mine');
+    return dir;
+}
+
+test('the bases are Uncommitted changes, Since my last review, the default branch, the base branch of the pull request of the branch, the open pull requests, then the local and remote branches from the nearest merge-base', async () => {
+    const dir = branches();
+    const { restore } = fakeGh(dir, [
+        { number: 5, title: 'Mine', headRefName: 'mine', baseRefName: 'mid', isCrossRepository: false },
+        { number: 7, title: 'Add the feature', headRefName: 'feature', baseRefName: 'main', isCrossRepository: false },
+        { number: 8, title: 'From a fork', headRefName: 'other', baseRefName: 'main', isCrossRepository: true },
+        { number: 9, title: 'Not fetched', headRefName: 'gone', baseRefName: 'main', isCrossRepository: false },
+    ]);
+    try {
+        const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+
+        const listed = await api('GET', `/api/sessions/${id}/bases`);
+        const chosen = await api('POST', `/api/sessions/${id}/base`, { base: 'refs/remotes/origin/feature' });
+
+        assert.equal(listed.status, 200);
+        assert.deepEqual(listed.body, [
+            { ref: 'HEAD', name: 'Uncommitted changes' },
+            { ref: 'last-review', name: 'Since my last review', disabled: true },
+            { ref: 'origin/HEAD', name: 'main (default branch)' },
+            { ref: 'refs/remotes/origin/mid', name: 'mid (base branch)' },
+            { ref: 'refs/remotes/origin/feature', name: '#7 Add the feature', group: 'Pull requests' },
+            { ref: 'refs/heads/near', name: 'near', group: 'Local branches' },
+            { ref: 'refs/heads/mid', name: 'mid', group: 'Local branches' },
+            { ref: 'refs/heads/far', name: 'far', group: 'Local branches' },
+            { ref: 'refs/remotes/origin/other', name: 'origin/other', group: 'Remote branches' },
+        ]);
+        assert.equal(chosen.body.base, 'refs/remotes/origin/feature');
+    } finally {
+        restore();
+    }
+});
+
+test('without gh, the base branch is the nearest local branch, is the default branch when it bears its name, and none on the default branch', async () => {
+    const dir = branches();
+    const other = branches();
+    git(other, 'branch', '-m', 'near', 'main');
+    const onDefault = branches();
+    git(onDefault, 'branch', '-m', 'mine', 'main');
     const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const { id: same } = (await api('POST', '/api/sessions', { worktree: other })).body;
+    const { id: main } = (await api('POST', '/api/sessions', { worktree: onDefault })).body;
 
-    const listed = await api('GET', `/api/sessions/${id}/bases`);
+    const listed = (await api('GET', `/api/sessions/${id}/bases`)).body;
+    const merged = (await api('GET', `/api/sessions/${same}/bases`)).body;
+    const none = (await api('GET', `/api/sessions/${main}/bases`)).body;
 
-    assert.equal(listed.status, 200);
-    assert.deepEqual(listed.body, [
-        { ref: 'HEAD', name: 'Uncommitted changes' },
-        { ref: 'last-review', name: 'Since my last review', disabled: true },
-        { ref: 'origin/HEAD', name: 'origin/HEAD' },
-        { ref: 'refs/heads/near', name: 'near' },
-        { ref: 'refs/heads/mid', name: 'mid' },
-        { ref: 'refs/heads/far', name: 'far' },
+    assert.deepEqual(listed.slice(2, 5), [
+        { ref: 'origin/HEAD', name: 'main (default branch)' },
+        { ref: 'refs/heads/near', name: 'near (base branch)' },
+        { ref: 'refs/heads/mid', name: 'mid', group: 'Local branches' },
+    ]);
+    assert.ok(!listed.some((base: any) => base.group === 'Pull requests'));
+    assert.deepEqual(merged.slice(2, 4), [
+        { ref: 'origin/HEAD', name: 'main (default and base branch)' },
+        { ref: 'refs/heads/main', name: 'main', group: 'Local branches' },
+    ]);
+    assert.deepEqual(none.slice(2, 4), [
+        { ref: 'origin/HEAD', name: 'main (default branch)' },
+        { ref: 'refs/heads/near', name: 'near', group: 'Local branches' },
     ]);
 });
 
@@ -687,20 +772,21 @@ test('a write refuses a malformed base or tree to place threads on before it is 
     assert.equal(sent.body.sends, 1);
 });
 
-test('the list of sessions gives the open ones, Awaiting you first, then Waiting for Claude, then the rest, without the approved', async () => {
+test('the list of sessions gives the open ones, Waiting for Claude first, then the rest, the latest active first, without the approved', async () => {
     const rest = (await api('POST', '/api/sessions', { worktree: repo({ 'a.txt': 'a\n' }) })).body.id;
     const waiting = await sessionWithThread();
     await api('POST', `${waiting.path}/messages`, { author: 'me', body: 'Why?' });
     await api('POST', `/api/sessions/${waiting.id}/send`, { tree: await displayedTree(waiting.id) });
-    const awaiting = (await sessionWithThread()).id;
+    const replied = (await sessionWithThread()).id;
     const approved = (await sessionWithThread()).id;
     await api('POST', `/api/sessions/${approved}/approve`, {});
 
     const list = await api('GET', '/api/sessions');
 
     assert.equal(list.status, 200);
-    const ours = list.body.filter((session: any) => [rest, waiting.id, awaiting, approved].includes(session.id));
-    assert.deepEqual(ours.map((session: any) => [session.id, session.awaitingYou, session.waitingForClaude]), [[awaiting, 1, 0], [waiting.id, 0, 1], [rest, 0, 0]]);
+    const ours = list.body.filter((session: any) => [rest, waiting.id, replied, approved].includes(session.id));
+    assert.deepEqual(ours.map((session: any) => [session.id, session.waitingForClaude]), [[waiting.id, 1], [replied, 0], [rest, 0]]);
+    assert.ok(ours.every((session: any) => !('awaitingYou' in session)));
 });
 
 test('a session whose worktree is gone, with Snapshots, is closed once the sessions are read: archived, its refs deleted from the common repository, out of the list', async () => {

@@ -15,7 +15,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
-/** The claude-reviews server, through its HTTP API only, as the mod calls it: no Origin, 2 s at most per call. */
+/** The claude-reviews server, through its HTTP API only, as the mod calls it: no Origin, 2 s at most per read, 10 s per write. */
 final class Server {
     static final String URL = "http://127.0.0.1:" + System.getenv().getOrDefault("CLAUDE_REVIEWS_PORT", "7778");
     private static final HttpClient CLIENT = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
@@ -57,7 +57,9 @@ final class Server {
     private static JsonElement call(HttpRequest.Builder request) throws IOException {
         HttpResponse<String> response;
         try {
-            response = CLIENT.send(request.timeout(Duration.ofSeconds(2)).build(), HttpResponse.BodyHandlers.ofString());
+            // A write may wait for the others, a Send for its Snapshot too: a timeout would say it failed, though the server records it.
+            HttpRequest built = request.build();
+            response = CLIENT.send(request.timeout(Duration.ofSeconds(built.method().equals("GET") ? 2 : 10)).build(), HttpResponse.BodyHandlers.ofString());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted", e);

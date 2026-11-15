@@ -8,20 +8,29 @@ import com.intellij.notification.Notification;
 import com.intellij.notification.NotificationGroupManager;
 import com.intellij.notification.NotificationType;
 import com.intellij.diff.DiffContentFactory;
-import com.intellij.diff.DiffDialogHints;
-import com.intellij.diff.DiffManager;
+import com.intellij.diff.editor.ChainDiffVirtualFile;
+import com.intellij.diff.editor.DiffEditorTabFilesManager;
+import com.intellij.diff.editor.DiffEditorViewerFileEditor;
+import com.intellij.diff.impl.CacheDiffRequestChainProcessor;
+import com.intellij.diff.tools.fragmented.UnifiedDiffViewer;
+import com.intellij.diff.tools.util.side.TwosideTextDiffViewer;
+import com.intellij.openapi.fileEditor.FileEditor;
+import com.intellij.openapi.fileEditor.FileEditorManager;
+import com.intellij.openapi.util.Key;
 import com.intellij.diff.chains.DiffRequestProducer;
 import com.intellij.diff.chains.DiffRequestProducerException;
 import com.intellij.diff.chains.SimpleDiffRequestChain;
 import com.intellij.diff.contents.DiffContent;
 import com.intellij.diff.requests.DiffRequest;
 import com.intellij.diff.requests.SimpleDiffRequest;
+import com.intellij.diff.tools.util.DiffDataKeys;
 import com.intellij.diff.util.DiffUserDataKeys;
 import com.intellij.diff.util.Side;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.Presentation;
+import com.intellij.openapi.actionSystem.ex.CheckboxAction;
 import com.intellij.openapi.actionSystem.ex.CustomComponentAction;
 import com.intellij.ide.ui.laf.darcula.ui.DarculaButtonUI;
 import com.intellij.openapi.application.ApplicationManager;
@@ -38,6 +47,7 @@ import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.UserDataHolder;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.ui.AnimatedIcon;
 import com.intellij.ui.ClientProperty;
 import com.intellij.util.ui.JBUI;
 
@@ -51,6 +61,7 @@ import java.awt.Cursor;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /** Opens the diff of the project's session in the diff viewer of the IDE: the base on the left, the files of the worktree on the right. */
@@ -77,13 +88,27 @@ public final class ReviewDiffAction extends DumbAwareAction {
         if (project != null) open(project, null);
     }
 
-    /** Opens the diff of the session, at the file `path` when it is one of the diff. */
-    static void open(Project project, String path) {
-        open(project, path, -1);
+    /** The diff of the review opened last: its tab is reused while it is open and shows the same files against the same base. */
+    private record Opened(ChainDiffVirtualFile file, String base, List<String> paths, List<Target> targets) {}
+
+    private static final Key<Opened> OPENED = Key.create("localreviews.Opened");
+
+    /** Where a file of the diff scrolls when it shows, a side and a line from 0, null for its top; and the request it made last. */
+    private static final class Target {
+        volatile Pair<Side, Integer> line;
+        volatile DiffRequest made;
     }
 
-    /** Opens the diff of the session at the file `path`, scrolled to `oldLine`, from 1, of its old side. */
-    static void open(Project project, String path, int oldLine) {
+    /** Opens the diff of the session, at the file `path` when it is one of the diff, focused. */
+    static void open(Project project, String path) {
+        open(project, path, Side.RIGHT, -1, true);
+    }
+
+    /**
+     * Opens the diff of the session at the file `path`, scrolled to `line`, from 1, of its side `side` when above 0, focused when `focus`.
+     * The tab of the review opened last shows the file instead, if it is still open: a click on each file of the tool window does not open a tab each.
+     */
+    static void open(Project project, String path, Side side, int line, boolean focus) {
         background(project, () -> {
             JsonObject worktree = new JsonObject();
             worktree.addProperty("worktree", project.getBasePath());
@@ -93,28 +118,61 @@ public final class ReviewDiffAction extends DumbAwareAction {
             String root = session.get("worktree").getAsString();
             String base = diff.get("base").getAsString();
             List<DiffRequestProducer> files = new ArrayList<>();
+            List<String> paths = new ArrayList<>();
+            List<Target> targets = new ArrayList<>();
             int at = 0;
             for (JsonElement file : diff.getAsJsonArray("files")) {
                 // The diff viewer shows no text of a binary file.
                 if (file.getAsJsonObject().get("binary").getAsBoolean()) continue;
                 if (path(file).equals(path)) at = files.size();
-                files.add(producer(project, new Review(id, root, base, path(file)), status(file), path(file).equals(path) ? oldLine : -1));
+                Target target = new Target();
+                paths.add(path(file));
+                targets.add(target);
+                files.add(producer(project, new Review(id, root, base, path(file)), status(file), target));
             }
             int index = at;
+            Pair<Side, Integer> scroll = line > 0 ? Pair.create(side, line - 1) : null;
             ApplicationManager.getApplication().invokeLater(() -> {
                 if (files.isEmpty()) {
                     Messages.showInfoMessage(project, "No changes against " + diff.get("ref").getAsString() + ".", TITLE);
                     return;
                 }
+                Opened last = project.getUserData(OPENED);
+                if (last != null && last.base().equals(base) && last.paths().equals(paths) && reuse(project, last, index, scroll, focus)) return;
+                targets.get(index).line = scroll;
                 SimpleDiffRequestChain chain = SimpleDiffRequestChain.fromProducers(files, index);
-                chain.putUserData(DiffUserDataKeys.CONTEXT_ACTIONS, List.of(send(project, id), approve(project, id)));
-                DiffManager.getInstance().showDiff(project, chain, DiffDialogHints.DEFAULT);
-            });
+                chain.putUserData(DiffUserDataKeys.CONTEXT_ACTIONS, List.of(viewed(project, id), send(project, id), approve(project, id)));
+                ChainDiffVirtualFile file = new ChainDiffVirtualFile(chain, TITLE);
+                project.putUserData(OPENED, new Opened(file, base, paths, targets));
+                DiffEditorTabFilesManager.getInstance(project).showDiffFile(file, focus);
+            }, project.getDisposed());
         });
     }
 
-    /** Loads one file only when the diff shows it. */
-    private static DiffRequestProducer producer(Project project, Review review, String status, int oldLine) {
+    /** Shows the file `index` in the open tab of `opened`, scrolled to `scroll`; false when the tab is closed. */
+    private static boolean reuse(Project project, Opened opened, int index, Pair<Side, Integer> scroll, boolean focus) {
+        for (FileEditor editor : FileEditorManager.getInstance(project).getEditors(opened.file())) {
+            if (!(editor instanceof DiffEditorViewerFileEditor shown) || !(shown.getEditorViewer() instanceof CacheDiffRequestChainProcessor processor)) continue;
+            Target target = opened.targets().get(index);
+            DiffRequest active = processor.getActiveRequest();
+            if (active != null && active == target.made) {
+                // Already shown: its viewer scrolls; a viewer made for a file reads SCROLL_TO_LINE once only.
+                // ponytail: the viewers of text only, side by side or unified; an added or deleted file stays where it is.
+                if (scroll != null && processor.getActiveViewer() instanceof TwosideTextDiffViewer twoside) twoside.scrollToLine(scroll.first, scroll.second);
+                if (scroll != null && processor.getActiveViewer() instanceof UnifiedDiffViewer unified) unified.scrollToLine(scroll.first, scroll.second);
+            } else {
+                target.line = scroll;
+                if (target.made != null) target.made.putUserData(DiffUserDataKeys.SCROLL_TO_LINE, scroll);
+                processor.setCurrentRequest(index);
+            }
+            DiffEditorTabFilesManager.getInstance(project).showDiffFile(opened.file(), focus);
+            return true;
+        }
+        return false;
+    }
+
+    /** Loads one file only when the diff shows it, scrolled to the line of its `target`. */
+    private static DiffRequestProducer producer(Project project, Review review, String status, Target target) {
         FileType type = FileTypeManager.getInstance().getFileTypeByFileName(review.path());
         return new DiffRequestProducer() {
             @Override
@@ -145,10 +203,60 @@ public final class ReviewDiffAction extends DumbAwareAction {
                 // The base is read only, the working tree is the file itself.
                 request.putUserData(DiffUserDataKeys.FORCE_READ_ONLY_CONTENTS, new boolean[] {true, false});
                 request.putUserData(Review.KEY, review);
-                if (oldLine > 0) request.putUserData(DiffUserDataKeys.SCROLL_TO_LINE, Pair.create(Side.LEFT, oldLine - 1));
+                request.putUserData(DiffUserDataKeys.SCROLL_TO_LINE, target.line);
+                target.made = request;
                 return request;
             }
         };
+    }
+
+    /** « Viewed », as in the review of the GitHub plugin: the file the diff shows, marked on the working tree. */
+    private static AnAction viewed(Project project, String id) {
+        return new CheckboxAction("Viewed", "Mark the file as viewed, until it changes", null) {
+            @Override
+            public ActionUpdateThread getActionUpdateThread() {
+                return ActionUpdateThread.BGT;
+            }
+
+            @Override
+            public void update(AnActionEvent event) {
+                super.update(event);
+                event.getPresentation().setEnabled(review(event) != null);
+            }
+
+            @Override
+            public boolean isSelected(AnActionEvent event) {
+                Review review = review(event);
+                return review != null && ReviewService.viewed(ReviewService.get(project).state().session(), review.path());
+            }
+
+            @Override
+            public void setSelected(AnActionEvent event, boolean viewed) {
+                Review review = review(event);
+                if (review != null) markViewed(project, id, review.path(), viewed, ReviewService.get(project)::refresh);
+            }
+        };
+    }
+
+    private static Review review(AnActionEvent event) {
+        DiffRequest request = event.getData(DiffDataKeys.DIFF_REQUEST);
+        return request == null ? null : request.getUserData(Review.KEY);
+    }
+
+    /**
+     * Marks `path` Viewed, or no longer, on the tree of the working tree, once its documents are saved, then runs `done` off the EDT:
+     * what I viewed is the file as it is now. Needs the write-intent lock.
+     */
+    static void markViewed(Project project, String id, String path, boolean viewed, Runnable done) {
+        FileDocumentManager.getInstance().saveAllDocuments();
+        background(project, () -> {
+            JsonObject body = new JsonObject();
+            body.addProperty("path", path);
+            body.add("tree", Server.get("/api/sessions/" + id + "/tree").get("tree"));
+            body.addProperty("viewed", viewed);
+            Server.post("/api/sessions/" + id + "/viewed", body);
+            done.run();
+        });
     }
 
     /** Send: the tree the diff shows is the working tree, once its documents are saved. */
@@ -160,14 +268,16 @@ public final class ReviewDiffAction extends DumbAwareAction {
             if (!Placement.claude(session)) return "Start a Claude session in this worktree to send to Claude: " + Placement.startClaude(session);
             return ThreadsInDiff.pending(session) ? null : "No pending message to send";
         };
-        return new ToolbarButton("Send", AllIcons.Actions.Upload, true, refusal, () -> send(project, id, null, () -> {}));
+        return new ToolbarButton("Send", AllIcons.Actions.Upload, true, refusal, () -> ReviewService.get(project).spinning(ReviewService.SENT_FROM_DIFF, null),
+            () -> send(project, id, null, ReviewService.SENT_FROM_DIFF, () -> {}));
     }
 
     /**
-     * Send of the whole session, or of the thread `thread` only when not null, then `sent` on the EDT:
+     * Send of the whole session, or of the thread `thread` only when not null, from the button `from`, then `sent` on the EDT:
      * the documents saved, the tree of the working tree is the one the diff and the editors show. Needs the write-intent lock.
      */
-    static void send(Project project, String id, Integer thread, Runnable sent) {
+    static void send(Project project, String id, Integer thread, String from, Runnable sent) {
+        ReviewService.get(project).sentFrom(thread != null ? "thread:" + thread : from);
         FileDocumentManager.getInstance().saveAllDocuments();
         background(project, () -> {
             JsonObject tree = new JsonObject();
@@ -186,7 +296,7 @@ public final class ReviewDiffAction extends DumbAwareAction {
     }
 
     private static AnAction approve(Project project, String id) {
-        return new ToolbarButton("Approve", AllIcons.Actions.Checked, false, () -> null, () -> approve(project, id, () -> {}));
+        return new ToolbarButton("Approve", AllIcons.Actions.Checked, false, () -> null, () -> false, () -> approve(project, id, () -> {}));
     }
 
     /** Approve, once confirmed, then `approved` on the EDT. */
@@ -213,13 +323,17 @@ public final class ReviewDiffAction extends DumbAwareAction {
     private static final class ToolbarButton extends DumbAwareAction implements CustomComponentAction {
         private final boolean primary;
         private final Supplier<String> refusal;
+        private final BooleanSupplier spinning;
+        private final Icon icon;
         private final Runnable run;
 
-        /** `refusal` gives why the button is greyed, null while it is enabled. */
-        ToolbarButton(String text, Icon icon, boolean primary, Supplier<String> refusal, Runnable run) {
+        /** `refusal` gives why the button is greyed, null while it is enabled; `spinning`, whether a spinner takes the place of its icon. */
+        ToolbarButton(String text, Icon icon, boolean primary, Supplier<String> refusal, BooleanSupplier spinning, Runnable run) {
             super(text, null, icon);
             this.primary = primary;
             this.refusal = refusal;
+            this.spinning = spinning;
+            this.icon = icon;
             this.run = run;
         }
 
@@ -233,6 +347,7 @@ public final class ReviewDiffAction extends DumbAwareAction {
             String why = refusal.get();
             event.getPresentation().setEnabled(why == null);
             event.getPresentation().setDescription(why);
+            event.getPresentation().setIcon(spinning.getAsBoolean() ? AnimatedIcon.Default.INSTANCE : icon);
         }
 
         @Override
@@ -242,9 +357,10 @@ public final class ReviewDiffAction extends DumbAwareAction {
 
         @Override
         public void updateCustomComponent(JComponent component, Presentation presentation) {
-            JComponent button = (JComponent) component.getComponent(0);
+            JButton button = (JButton) component.getComponent(0);
             button.setEnabled(presentation.isEnabled());
             button.setToolTipText(presentation.getDescription());
+            ThreadView.spin(button, presentation.getIcon() == AnimatedIcon.Default.INSTANCE, icon);
         }
 
         @Override

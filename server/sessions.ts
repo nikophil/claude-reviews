@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -20,7 +21,7 @@ type Anchor = {
 };
 type Thread = { id: number; anchor: Anchor; resolved: boolean; messages: Message[] };
 /**
- * `base` is the last base chosen: HEAD, last-review, origin/HEAD or refs/heads/<branch>.
+ * `base` is the last base chosen: HEAD, last-review, origin/HEAD, refs/heads/<branch> or refs/remotes/<remote>/<branch>.
  * `commonDir` is the repository shared by the worktrees, where the refs stay once the worktree is gone; absent from sessions opened before it was kept.
  * `sentAt` is the date of the last Send.
  * `closedBecause` tells a session closed because its worktree is gone from an approved one.
@@ -63,16 +64,19 @@ async function save(session: Session): Promise<void> {
 /** The session as served: what is stored, plus whose turn it is in each thread. */
 /** When a Claude session last read the session of each worktree, by the 2 s poll of the mod. */
 const claudeReads = new Map<string, number>();
+/** When /review-local last asked the IDE clients to show each session; a restart forgets it, as a request is for now. */
+const showRequests = new Map<string, string>();
 
 function view(session: Session) {
     const claudeSession = Date.now() - (claudeReads.get(session.worktree) ?? -Infinity) <= 10_000;
-    return { ...session, claudeSession, threads: session.threads.map(thread => ({ ...thread, status: status(thread) })) };
+    return { ...session, claudeSession, showRequestedAt: showRequests.get(session.id) ?? null, threads: session.threads.map(thread => ({ ...thread, status: status(thread) })) };
 }
 
-function status(thread: Thread): 'resolved' | 'waiting-for-claude' | 'awaiting-you' | null {
+/** Waiting for Claude when my message is the last published, open when Claude's is; null before any is published. */
+function status(thread: Thread): 'resolved' | 'waiting-for-claude' | 'open' | null {
     if (thread.resolved) return 'resolved';
     const last = thread.messages.findLast(message => message.date);
-    return !last ? null : last.author === 'me' ? 'waiting-for-claude' : 'awaiting-you';
+    return !last ? null : last.author === 'me' ? 'waiting-for-claude' : 'open';
 }
 
 async function load(id: string): Promise<Session> {
@@ -152,24 +156,20 @@ async function lookup(path: unknown, lock: typeof exclusive = exclusive): Promis
     return { worktree, commonDir, session: (await openSessions(lock, { worktree, commonDir })).find(session => session.worktree === worktree) };
 }
 
-/** The open sessions of all worktrees, for Reviews: Awaiting you first, then Waiting for Claude, then the rest, the latest active first at a tie. */
+/** The open sessions of all worktrees, for Reviews: Waiting for Claude first, then the rest, the latest active first at a tie. */
 export async function listSessions() {
     const list = await Promise.all((await openSessions()).map(async session => {
-        const statuses = session.threads.map(status);
-        const count = (wanted: string) => statuses.filter(status => status === wanted).length;
         return {
             id: session.id,
             worktree: session.worktree,
             repo: basename(dirname(session.commonDir ?? join(session.worktree, '.git'))),
             // Empty on a detached HEAD.
             branch: (await git(session.worktree, ['symbolic-ref', '--short', '-q', 'HEAD']).catch(() => '')).trim(),
-            awaitingYou: count('awaiting-you'),
-            waitingForClaude: count('waiting-for-claude'),
+            waitingForClaude: session.threads.filter(thread => status(thread) === 'waiting-for-claude').length,
             updatedAt: [session.createdAt, ...session.threads.flatMap(thread => thread.messages.map(message => message.date ?? ''))].sort().at(-1)!,
         };
     }));
-    const rank = (entry: typeof list[number]) => entry.awaitingYou ? 0 : entry.waitingForClaude ? 1 : 2;
-    return list.sort((a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt));
+    return list.sort((a, b) => Number(b.waitingForClaude > 0) - Number(a.waitingForClaude > 0) || b.updatedAt.localeCompare(a.updatedAt));
 }
 
 /** The open session of the worktree, never created: the mod looks for it without filling Reviews with empty sessions. */
@@ -192,17 +192,70 @@ export function openSession(path: unknown) {
     });
 }
 
-/** The bases of the selector, in its order. */
-export async function bases(session: Session): Promise<{ ref: string; name: string; disabled?: boolean }[]> {
-    const list = [{ ref: 'HEAD', name: 'Uncommitted changes' }, { ref: 'last-review', name: 'Since my last review', disabled: session.sends === 0 }];
-    if (await git(session.worktree, ['rev-parse', '--verify', '-q', 'origin/HEAD']).then(() => true, () => false)) list.push({ ref: 'origin/HEAD', name: 'origin/HEAD' });
-    // Each line: "*" on the checked-out branch, the ref, then its commits not in HEAD and HEAD's commits not in it, past their merge-base.
-    const lines = await git(session.worktree, ['for-each-ref', '--format=%(HEAD) %(refname) %(ahead-behind:HEAD)', 'refs/heads/']).catch(() => '');
-    const branches = lines.split('\n').filter(line => line.startsWith('  ')).map(line => line.slice(2).split(' '))
-        .map(([ref, ahead, behind]) => ({ ref, ahead: Number(ahead), behind: Number(behind) }));
+type Pull = { number: number; title: string; headRefName: string; baseRefName: string; isCrossRepository: boolean };
+
+/** The open pull requests of the worktree's GitHub repository, by gh, kept 60 s; none when gh fails or takes over 2 s. */
+const pulls = new Map<string, { at: number; list: Promise<Pull[]> }>();
+function openPulls(worktree: string): Promise<Pull[]> {
+    const kept = pulls.get(worktree);
+    if (kept && Date.now() - kept.at < 60_000) return kept.list;
+    const list = new Promise<Pull[]>(resolve => execFile('gh', ['pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,headRefName,baseRefName,isCrossRepository'],
+        { cwd: worktree, timeout: 2000 }, (error, stdout) => {
+            try {
+                resolve(error ? [] : JSON.parse(stdout));
+            } catch {
+                resolve([]);
+            }
+        }));
+    pulls.set(worktree, { at: Date.now(), list });
+    return list;
+}
+
+type Base = { ref: string; name: string; disabled?: boolean; group?: string };
+
+/**
+ * The bases of the selector, in its order: Uncommitted changes, Since my last review, the default branch, the base branch,
+ * then, each in a group, the open pull requests by their head on origin, the local branches and the remote ones, from the nearest merge-base.
+ * The base branch is the base of the branch's pull request, else the nearest local branch, none on the default branch.
+ */
+export async function bases(session: Session): Promise<Base[]> {
+    const list: Base[] = [{ ref: 'HEAD', name: 'Uncommitted changes' }, { ref: 'last-review', name: 'Since my last review', disabled: session.sends === 0 }];
+    const [lines, branch, origin, prs] = await Promise.all([
+        // Each line: "*" on the checked-out branch, the ref, then its commits not in HEAD and HEAD's commits not in it, past their merge-base.
+        git(session.worktree, ['for-each-ref', '--format=%(HEAD) %(refname) %(ahead-behind:HEAD)', 'refs/heads/', 'refs/remotes/']).catch(() => ''),
+        git(session.worktree, ['symbolic-ref', '--short', '-q', 'HEAD']).then(name => name.trim(), () => ''),
+        git(session.worktree, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']).then(ref => ref.trim(), () => ''),
+        openPulls(session.worktree),
+    ]);
+    const refs = lines.split('\n').filter(line => line.startsWith('  ')).map(line => line.slice(2).split(' '))
+        .filter(([ref]) => !ref.endsWith('/HEAD'))
+        .map(([ref, ahead, behind]) => ({ ref, remote: ref.startsWith('refs/remotes/'), ahead: Number(ahead), behind: Number(behind) }));
     // The nearest merge-base is the one fewest commits of HEAD lie after: the parent of a stacked branch comes first.
-    branches.sort((a, b) => a.behind - b.behind || a.ahead - b.ahead);
-    return [...list, ...branches.map(({ ref }) => ({ ref, name: ref.slice('refs/heads/'.length) }))];
+    refs.sort((a, b) => Number(a.remote) - Number(b.remote) || a.behind - b.behind || a.ahead - b.ahead);
+    const has = (ref: string) => refs.some(found => found.ref === ref);
+    const name = (ref: string) => ref.replace(/^refs\/(heads|remotes)\//, '');
+
+    const defaultName = origin.replace(/^refs\/remotes\/origin\//, '');
+    const mine = prs.find(pr => !pr.isCrossRepository && pr.headRefName === branch);
+    // The default branch itself has no base branch.
+    const baseRef = mine ? [`refs/remotes/origin/${mine.baseRefName}`, `refs/heads/${mine.baseRefName}`].find(has)
+        : branch === defaultName ? undefined : refs.find(found => !found.remote)?.ref;
+    const baseName = mine ? mine.baseRefName : baseRef && name(baseRef);
+    const listed = new Set([origin]);
+    if (origin) list.push({ ref: 'origin/HEAD', name: `${defaultName} (${baseName === defaultName ? 'default and base branch' : 'default branch'})` });
+    if (baseRef && baseName !== defaultName) {
+        list.push({ ref: baseRef, name: `${baseName} (base branch)` });
+        listed.add(baseRef);
+    }
+    for (const pr of prs) {
+        const ref = `refs/remotes/origin/${pr.headRefName}`;
+        if (pr.isCrossRepository || pr === mine || !has(ref) || listed.has(ref)) continue;
+        list.push({ ref, name: `#${pr.number} ${pr.title}`, group: 'Pull requests' });
+        listed.add(ref);
+    }
+    // ponytail: every remote branch is listed, hundreds on a big repository; the clients search by typing.
+    for (const { ref, remote } of refs) if (!listed.has(ref)) list.push({ ref, name: name(ref), group: remote ? 'Remote branches' : 'Local branches' });
+    return list;
 }
 
 export async function chooseBase(id: string, base: unknown) {
@@ -510,6 +563,13 @@ export async function send(id: string, tree: unknown, threads?: unknown) {
     session.sends = review;
     session.sentAt = date;
     await save(session);
+    return view(session);
+}
+
+/** Asks the IDE clients to show the session: each shows it once it reads a recent request. */
+export async function show(id: string) {
+    const session = await writable(id);
+    showRequests.set(id, new Date().toISOString());
     return view(session);
 }
 

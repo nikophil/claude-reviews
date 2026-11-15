@@ -6,7 +6,7 @@ type Session = { id: string; sends: number; threads: { id: number; status: strin
 const TOOLS = [
     {
         name: 'list_open_threads',
-        description: 'Lists the claude-reviews threads of this worktree that are not resolved: those waiting for your reply and those awaiting the user, with their anchor and published messages. '
+        description: 'Lists the claude-reviews threads of this worktree that are not resolved: those waiting for your reply (status waiting-for-claude) and those you answered last (status open), with their anchor and published messages. '
             + 'start and end are the range reanchored on HEAD and the working tree, and lines the lines the thread was opened on. '
             + 'outdated is true when those lines are no longer found: start and end are then the original range, and hunk the original diff excerpt, as unified diff (null if the lines were out of the diff).',
         inputSchema: { type: 'object', properties: {} },
@@ -55,6 +55,17 @@ async function api($: EngineInterface, method: string, path: string, body?: obje
     } catch {
         return { status: 0, body: { error: silent() } };
     }
+}
+
+/** The PhpStorm launcher: `phpstorm` on the PATH, else the script of JetBrains Toolbox, on Linux or macOS; '' without one. */
+async function phpstorm($: EngineInterface): Promise<string> {
+    const found = await $.process.run(['/bin/sh', '-c', 'for l in "$(command -v phpstorm)" "$HOME/.local/share/JetBrains/Toolbox/scripts/phpstorm" "$HOME/Library/Application Support/JetBrains/Toolbox/scripts/phpstorm"; do [ -x "$l" ] && echo "$l" && break; done', 'phpstorm-launcher']);
+    return found.stdout.trim();
+}
+
+/** Runs `argv` detached, its output dropped. */
+async function detach($: EngineInterface, argv: string[]): Promise<void> {
+    await $.process.run(['/bin/sh', '-c', '"$@" >/dev/null 2>&1 &', 'claude-reviews', ...argv]);
 }
 
 /** The open session of the worktree, null when the server says it has none, undefined when the server fails to say. */
@@ -152,7 +163,7 @@ export const register: Register = on => {
         worktree = top.stdout.trim();
         base = `http://127.0.0.1:${await $.env.get('CLAUDE_REVIEWS_PORT') ?? 7778}`;
         for (const tool of TOOLS) await $.tool.register({ ...tool, isDeferred: false });
-        await $.command.register({ name: 'review-local', description: 'Opens the claude-reviews session of this worktree in the browser', immediate: true });
+        await $.command.register({ name: 'review-local', description: 'Opens the claude-reviews session of this worktree in PhpStorm or the browser: phpstorm, browser, or a question', immediate: true });
         // Not awaited: a poll before the server is ready fails, and leaves the watch as it is.
         serve($).catch(error => $.ui.log(`claude-reviews: ${(error as Error).message}`));
         // ponytail: an interval the engine ends (a refused period) is not armed again; re-arm at turn.complete if wakes go missing.
@@ -202,7 +213,7 @@ export const register: Register = on => {
         const open = await find($, '&reanchor');
         if (open === undefined) return { deny: silent() };
         session = open?.id;
-        const threads = (open?.threads ?? []).filter(thread => thread.status === 'waiting-for-claude' || thread.status === 'awaiting-you');
+        const threads = (open?.threads ?? []).filter(thread => thread.status === 'waiting-for-claude' || thread.status === 'open');
         // A tool of a mod answers text: the model reads the threads as JSON.
         return {
             result: JSON.stringify({
@@ -232,12 +243,24 @@ export const register: Register = on => {
 
     on('tool.call', { tool: 'mcp__local-reviews__open_thread' }, ($, e: any) => openThread($, e));
 
-    on('command.run', { command: 'review-local' }, async $ => {
+    on('command.run', { command: 'review-local' }, async ($, e) => {
         const opened = await api($, 'POST', '/api/sessions', { worktree });
         if (opened.status !== 200) return { text: `claude-reviews: ${opened.body.error}` };
         session = opened.body.id as string;
         const url = `${base}/s/${session}`;
-        await $.process.run(['/bin/sh', '-c', 'if command -v xdg-open >/dev/null 2>&1; then xdg-open "$1"; else open "$1"; fi >/dev/null 2>&1 &', 'claude-reviews', url]);
+        const launcher = e.args.trim() === 'browser' ? '' : await phpstorm($);
+        let where = e.args.trim() === 'phpstorm' && launcher ? 'PhpStorm' : 'Browser';
+        if (!e.args.trim() && launcher) {
+            where = await $.ui.ask('Where to open the review?', { options: ['PhpStorm', 'Browser'], header: 'Review' }).catch(() => '');
+        }
+        if (where === 'PhpStorm') {
+            // The request first: the plugin shows the review at its first poll, even in a project the launcher is opening.
+            const shown = await api($, 'POST', `/api/sessions/${session}/show`, {});
+            if (shown.status !== 200) return { text: `claude-reviews: ${shown.body.error}` };
+            await detach($, [launcher, worktree!]);
+            return { text: `claude-reviews: opened in PhpStorm, ${url}` };
+        }
+        if (where === 'Browser') await detach($, ['/bin/sh', '-c', 'if command -v xdg-open >/dev/null 2>&1; then xdg-open "$1"; else open "$1"; fi', 'claude-reviews', url]);
         return { text: `claude-reviews: ${url}` };
     });
 };

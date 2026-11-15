@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { extname, join } from 'node:path';
-import { addMessage, approve, bases, checkPlacement, chooseBase, currentTree, exclusive, file, findSession, getSession, httpError, listSessions, markViewed, openSession, openThread, placed, replies, resolve, send, sessionDiff, treeLines } from './sessions.ts';
+import { addMessage, approve, bases, checkPlacement, chooseBase, currentTree, exclusive, file, findSession, getSession, httpError, listSessions, markViewed, openSession, openThread, placed, replies, resolve, send, sessionDiff, show, treeLines } from './sessions.ts';
 
 const UI = join(import.meta.dirname, '..', 'ui');
 const TYPES: Record<string, string> = {
@@ -116,6 +116,8 @@ export function start(port: number, notify = (argv: string[]) => { execFile(argv
             json(res, status ?? (code === 'ENOENT' ? 404 : 500), { error: (error as Error).message });
         }
     });
+    // Past the 30 s the JDK HTTP client of PhpStorm keeps an idle connection: closed by the server first, it would lose the answer of a write sent on it.
+    server.keepAliveTimeout = 65_000;
     return new Promise((resolve, reject) => {
         server.once('error', reject);
         server.listen(port, '127.0.0.1', () => resolve(server));
@@ -127,7 +129,7 @@ async function route(method: string, { pathname: path, searchParams }: URL, body
     // Each takes the queue of the writes itself, only when it writes: the mod's 2 s poll must not wait for a long Send.
     if (path === '/api/sessions' && method === 'GET') return searchParams.has('worktree') ? findSession(searchParams.get('worktree'), searchParams.has('claude')) : listSessions();
     if (path === '/api/sessions' && method === 'POST') return openSession(body.worktree);
-    const [, id, action = '', thread, threadAction = ''] = path.match(/^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|tree|file|lines|bases|base|threads|send|approve|viewed|turn-complete))?(?:\/(\d+)\/(messages|resolve|unresolve))?$/) ?? [];
+    const [, id, action = '', thread, threadAction = ''] = path.match(/^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|tree|file|lines|bases|base|threads|send|approve|viewed|show|turn-complete))?(?:\/(\d+)\/(messages|resolve|unresolve))?$/) ?? [];
     switch (id && `${method} ${action}/${threadAction}`) {
         case 'GET /': return getSession(id);
         case 'GET diff/': return sessionDiff(id, searchParams);
@@ -143,6 +145,7 @@ async function route(method: string, { pathname: path, searchParams }: URL, body
         case 'POST send/': return exclusive(() => send(id, body.tree, body.threads));
         case 'POST viewed/': return exclusive(() => markViewed(id, body));
         case 'POST approve/': return exclusive(() => approve(id));
+        case 'POST show/': return show(id);
         case 'POST turn-complete/': {
             const session = await getSession(id);
             notify(notification(replies(session)));

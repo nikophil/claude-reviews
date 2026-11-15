@@ -33,11 +33,25 @@ test('the base chosen stays selected after a reload', async ({ page }) => {
     git(dir, 'branch', 'other');
     await open(page, dir);
 
-    await base(page).selectOption({ label: 'other' });
+    await base(page).selectOption('refs/heads/other');
     await expect(base(page)).toHaveValue('refs/heads/other');
     await page.reload();
 
     await expect(base(page)).toHaveValue('refs/heads/other');
+});
+
+test('the selector names the default and base branches, then groups the other branches', async ({ page }) => {
+    const dir = changed();
+    git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    // Both on HEAD: the first by name is the base branch.
+    git(dir, 'branch', 'alpha');
+    git(dir, 'branch', 'beta');
+    await open(page, dir);
+
+    await expect(base(page).locator('option[value="origin/HEAD"]')).toHaveText('main (default branch)');
+    await expect(base(page).locator('option[value="refs/heads/alpha"]')).toHaveText(/\(base branch\)/);
+    await expect(base(page).locator('optgroup[label="Local branches"] option')).toHaveCount(1);
 });
 
 test('a change of the worktree shows the banner without touching the diff, and Refresh loads it, keeping my draft', async ({ page }) => {
@@ -111,7 +125,7 @@ test('the base shown follows the diff when a branch without merge-base falls bac
     git(dir, 'branch', 'unrelated', git(dir, 'commit-tree', '-m', 'unrelated', git(dir, 'hash-object', '-t', 'tree', '/dev/null').trim()).trim());
     await open(page, dir);
 
-    await base(page).selectOption({ label: 'unrelated' });
+    await base(page).selectOption('refs/heads/unrelated');
 
     await expect(page.locator('.diff-line-add')).toHaveText([/2/]);
     await expect(base(page)).toHaveValue('HEAD');
@@ -158,7 +172,7 @@ test('a poll answered after a change of base shows no banner', async ({ page }) 
     await open(page, dir);
     await holding;
 
-    await base(page).selectOption({ label: 'other' });
+    await base(page).selectOption('refs/heads/other');
     await expect(page.locator('section')).toHaveCount(2);
     release();
     // The next poll leaves once the late answer is applied.
