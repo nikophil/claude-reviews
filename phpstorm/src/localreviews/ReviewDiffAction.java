@@ -1,5 +1,6 @@
 package localreviews;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.intellij.icons.AllIcons;
@@ -50,7 +51,7 @@ import java.awt.Cursor;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /** Opens the diff of the project's session in the diff viewer of the IDE: the base on the left, the files of the worktree on the right. */
 public final class ReviewDiffAction extends DumbAwareAction {
@@ -152,20 +153,30 @@ public final class ReviewDiffAction extends DumbAwareAction {
 
     /** Send: the tree the diff shows is the working tree, once its documents are saved. */
     private static AnAction send(Project project, String id) {
-        // Greyed when no message is Pending, as the last poll of the diff read the session; until the first poll, Send stays enabled.
-        BooleanSupplier pending = () -> {
+        // Greyed, with why, as the last poll of the diff read the session; until the first poll, Send stays enabled.
+        Supplier<String> refusal = () -> {
             JsonObject session = ThreadsInDiff.SESSIONS.get(id);
-            return session == null || ThreadsInDiff.pending(session);
+            if (session == null) return null;
+            if (!Placement.claude(session)) return "Start a Claude session in this worktree to send to Claude: " + Placement.startClaude(session);
+            return ThreadsInDiff.pending(session) ? null : "No pending message to send";
         };
-        return new ToolbarButton("Send", AllIcons.Actions.Upload, true, pending, () -> send(project, id, () -> {}));
+        return new ToolbarButton("Send", AllIcons.Actions.Upload, true, refusal, () -> send(project, id, null, () -> {}));
     }
 
-    /** Send, then `sent` on the EDT: the documents saved, the tree of the working tree is the one the diff and the editors show. Needs the write-intent lock. */
-    static void send(Project project, String id, Runnable sent) {
+    /**
+     * Send of the whole session, or of the thread `thread` only when not null, then `sent` on the EDT:
+     * the documents saved, the tree of the working tree is the one the diff and the editors show. Needs the write-intent lock.
+     */
+    static void send(Project project, String id, Integer thread, Runnable sent) {
         FileDocumentManager.getInstance().saveAllDocuments();
         background(project, () -> {
             JsonObject tree = new JsonObject();
             tree.add("tree", Server.get("/api/sessions/" + id + "/tree").get("tree"));
+            if (thread != null) {
+                JsonArray threads = new JsonArray();
+                threads.add(thread);
+                tree.add("threads", threads);
+            }
             JsonObject session = Server.post("/api/sessions/" + id + "/send", tree);
             ThreadsInDiff.SESSIONS.put(id, session);
             int count = sent(session);
@@ -175,7 +186,7 @@ public final class ReviewDiffAction extends DumbAwareAction {
     }
 
     private static AnAction approve(Project project, String id) {
-        return new ToolbarButton("Approve", AllIcons.Actions.Checked, false, () -> true, () -> approve(project, id, () -> {}));
+        return new ToolbarButton("Approve", AllIcons.Actions.Checked, false, () -> null, () -> approve(project, id, () -> {}));
     }
 
     /** Approve, once confirmed, then `approved` on the EDT. */
@@ -201,13 +212,14 @@ public final class ReviewDiffAction extends DumbAwareAction {
     /** A button in the toolbar of the diff, as « Submit Review » in the review of the GitHub plugin; `primary` makes it blue. */
     private static final class ToolbarButton extends DumbAwareAction implements CustomComponentAction {
         private final boolean primary;
-        private final BooleanSupplier enabled;
+        private final Supplier<String> refusal;
         private final Runnable run;
 
-        ToolbarButton(String text, Icon icon, boolean primary, BooleanSupplier enabled, Runnable run) {
+        /** `refusal` gives why the button is greyed, null while it is enabled. */
+        ToolbarButton(String text, Icon icon, boolean primary, Supplier<String> refusal, Runnable run) {
             super(text, null, icon);
             this.primary = primary;
-            this.enabled = enabled;
+            this.refusal = refusal;
             this.run = run;
         }
 
@@ -218,7 +230,9 @@ public final class ReviewDiffAction extends DumbAwareAction {
 
         @Override
         public void update(AnActionEvent event) {
-            event.getPresentation().setEnabled(enabled.getAsBoolean());
+            String why = refusal.get();
+            event.getPresentation().setEnabled(why == null);
+            event.getPresentation().setDescription(why);
         }
 
         @Override
@@ -228,7 +242,9 @@ public final class ReviewDiffAction extends DumbAwareAction {
 
         @Override
         public void updateCustomComponent(JComponent component, Presentation presentation) {
-            component.getComponent(0).setEnabled(presentation.isEnabled());
+            JComponent button = (JComponent) component.getComponent(0);
+            button.setEnabled(presentation.isEnabled());
+            button.setToolTipText(presentation.getDescription());
         }
 
         @Override

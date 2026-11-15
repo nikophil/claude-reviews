@@ -232,6 +232,47 @@ test('a Send without Pending message creates the next ref and publishes no messa
     assert.equal(git(dir, 'for-each-ref', '--format=%(refname)', `refs/claude-reviews/${id}/`), `refs/claude-reviews/${id}/1\nrefs/claude-reviews/${id}/2\n`);
 });
 
+test('a session says whether a Claude session read it, with ?claude, in the last 10 s, even before it existed', async t => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    const before = await api('GET', `/api/sessions?worktree=${encodeURIComponent(dir)}&claude`);
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const read = (await api('GET', `/api/sessions/${id}`)).body;
+    await api('GET', `/api/sessions?worktree=${encodeURIComponent(dir)}`);
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 10_001 });
+
+    const later = (await api('GET', `/api/sessions/${id}`)).body;
+
+    assert.equal(before.status, 404);
+    assert.equal(read.claudeSession, true);
+    assert.equal(later.claudeSession, false);
+});
+
+test('a Send of some threads publishes only their Pending messages, and still takes its Snapshot', async () => {
+    const { dir, id, path } = await sessionWithThread();
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path: 'a.txt', side: 'new', start: 1, end: 1, body: 'And here' });
+    await api('POST', `${path}/messages`, { author: 'me', body: 'Kept' });
+    await api('POST', `/api/sessions/${id}/threads/2/messages`, { author: 'me', body: 'Sent' });
+
+    const sent = await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id), threads: [2] });
+
+    assert.equal(sent.status, 200);
+    assert.deepEqual(sent.body.threads.map((t: any) => t.messages.map((m: any) => [m.body, m.review ?? null])), [[['Look here', null], ['Kept', null]], [['And here', null], ['Sent', 1]]]);
+    assert.equal(sent.body.threads[0].messages[1].date, null);
+    assert.equal(sent.body.sends, 1);
+    assert.equal(git(dir, 'for-each-ref', '--format=%(refname)', `refs/claude-reviews/${id}/`), `refs/claude-reviews/${id}/1\n`);
+});
+
+test('a Send refuses threads that are not a list of thread ids of the session, before taking its Snapshot', async () => {
+    const { dir, id } = await sessionWithThread();
+    const tree = await displayedTree(id);
+
+    for (const threads of ['1', [1.5], ['1'], null]) {
+        assert.equal((await api('POST', `/api/sessions/${id}/send`, { tree, threads })).status, 400, JSON.stringify(threads));
+    }
+    assert.equal((await api('POST', `/api/sessions/${id}/send`, { tree, threads: [9] })).status, 404);
+    assert.equal(git(dir, 'for-each-ref', `refs/claude-reviews/${id}/`), '');
+});
+
 test('a Resolved thread no longer waits for Claude, a reply of Claude does not reopen it, a message of mine is refused until its Unresolve', async () => {
     const { id, path } = await sessionWithThread();
     await api('POST', `${path}/messages`, { author: 'me', body: 'Thanks' });

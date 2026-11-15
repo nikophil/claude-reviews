@@ -6,11 +6,12 @@ import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.SelectionModel;
+import com.intellij.openapi.editor.ex.EditorGutterComponentEx;
 import com.intellij.openapi.project.DumbAwareAction;
 
 import java.util.List;
 
-/** Opens a thread on the selected lines, or the line of the caret, in a side of the diff of the review. */
+/** Opens a thread on the selected lines, the line of the caret, or the line number right-clicked, in an editor or a side of a diff that shows threads. */
 public final class OpenThreadAction extends DumbAwareAction {
     public OpenThreadAction() {
         super("Open Review Thread", "Open a review thread on the selected lines", null);
@@ -41,6 +42,12 @@ public final class OpenThreadAction extends DumbAwareAction {
             end = document.getLineNumber(endOffset);
             // A selection of whole lines ends at column 0 of the next one.
             if (end > start && endOffset == document.getLineStartOffset(end)) end--;
+        }
+        // A right click on a line number outside the selection opens the thread on that line.
+        Integer clicked = event.getData(EditorGutterComponentEx.LOGICAL_LINE_AT_CURSOR);
+        if (clicked != null && (clicked < start || clicked > end)) {
+            start = clicked;
+            end = clicked;
         }
         // In the unified diff, the new side when the last line has one, else the old side; the first line moves down onto a line of that side.
         for (Threads threads : sides) {

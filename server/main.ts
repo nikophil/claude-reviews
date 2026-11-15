@@ -125,7 +125,7 @@ export function start(port: number, notify = (argv: string[]) => { execFile(argv
 /** The session API; its contract is written in CLAUDE.md. */
 async function route(method: string, { pathname: path, searchParams }: URL, body: Record<string, unknown>, notify: (argv: string[]) => void): Promise<unknown> {
     // Each takes the queue of the writes itself, only when it writes: the mod's 2 s poll must not wait for a long Send.
-    if (path === '/api/sessions' && method === 'GET') return searchParams.has('worktree') ? findSession(searchParams.get('worktree')) : listSessions();
+    if (path === '/api/sessions' && method === 'GET') return searchParams.has('worktree') ? findSession(searchParams.get('worktree'), searchParams.has('claude')) : listSessions();
     if (path === '/api/sessions' && method === 'POST') return openSession(body.worktree);
     const [, id, action = '', thread, threadAction = ''] = path.match(/^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|tree|file|lines|bases|base|threads|send|approve|viewed|turn-complete))?(?:\/(\d+)\/(messages|resolve|unresolve))?$/) ?? [];
     switch (id && `${method} ${action}/${threadAction}`) {
@@ -140,7 +140,7 @@ async function route(method: string, { pathname: path, searchParams }: URL, body
         case 'POST threads/messages': return exclusive(() => addMessage(id, Number(thread), body));
         case 'POST threads/resolve': return exclusive(() => resolve(id, Number(thread)));
         case 'POST threads/unresolve': return exclusive(() => resolve(id, Number(thread), false));
-        case 'POST send/': return exclusive(() => send(id, body.tree));
+        case 'POST send/': return exclusive(() => send(id, body.tree, body.threads));
         case 'POST viewed/': return exclusive(() => markViewed(id, body));
         case 'POST approve/': return exclusive(() => approve(id));
         case 'POST turn-complete/': {

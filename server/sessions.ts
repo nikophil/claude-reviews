@@ -61,8 +61,12 @@ async function save(session: Session): Promise<void> {
 }
 
 /** The session as served: what is stored, plus whose turn it is in each thread. */
+/** When a Claude session last read the session of each worktree, by the 2 s poll of the mod. */
+const claudeReads = new Map<string, number>();
+
 function view(session: Session) {
-    return { ...session, threads: session.threads.map(thread => ({ ...thread, status: status(thread) })) };
+    const claudeSession = Date.now() - (claudeReads.get(session.worktree) ?? -Infinity) <= 10_000;
+    return { ...session, claudeSession, threads: session.threads.map(thread => ({ ...thread, status: status(thread) })) };
 }
 
 function status(thread: Thread): 'resolved' | 'waiting-for-claude' | 'awaiting-you' | null {
@@ -169,8 +173,10 @@ export async function listSessions() {
 }
 
 /** The open session of the worktree, never created: the mod looks for it without filling Reviews with empty sessions. */
-export async function findSession(path: unknown) {
+/** The open session of the worktree; `claude` when the mod reads it, for a Claude session runs there. */
+export async function findSession(path: unknown, claude = false) {
     const { worktree, session } = await lookup(path);
+    if (claude) claudeReads.set(worktree, Date.now());
     if (!session) throw httpError(404, `No open session for ${worktree}`);
     return view(session);
 }
@@ -484,15 +490,20 @@ export async function resolve(id: string, threadId: number, resolved = true) {
 const SNAPSHOT_AUTHOR = { GIT_AUTHOR_NAME: 'claude-reviews', GIT_AUTHOR_EMAIL: 'claude-reviews@localhost', GIT_COMMITTER_NAME: 'claude-reviews', GIT_COMMITTER_EMAIL: 'claude-reviews@localhost' };
 
 /** Takes a Snapshot of the displayed `tree`, then publishes the Pending messages of the threads not Resolved, dated now, after the messages already published. */
-export async function send(id: string, tree: unknown) {
+/** Send: the Snapshot of the displayed tree, then the Pending messages of the session, or of `threads` only when given. */
+export async function send(id: string, tree: unknown, threads?: unknown) {
     const session = await writable(id);
+    if (threads !== undefined && !(Array.isArray(threads) && threads.every(Number.isInteger))) {
+        throw httpError(400, 'threads must be a list of thread ids');
+    }
+    const sent = threads === undefined ? session.threads : (threads as number[]).map(n => findThread(session, n));
     const shown = await checkObject(session.worktree, tree, 'tree', ['tree']);
     const commit = await git(session.worktree, ['commit-tree', '-m', `claude-reviews session ${id}`, shown], SNAPSHOT_AUTHOR);
     const review = session.sends + 1;
     await git(session.worktree, ['update-ref', `refs/claude-reviews/${id}/${review}`, commit.trim()]);
     const date = new Date().toISOString();
     // A Pending message of a Resolved thread waits for its Unresolve.
-    for (const thread of session.threads.filter(thread => !thread.resolved)) {
+    for (const thread of sent.filter(thread => !thread.resolved)) {
         const pending = thread.messages.filter(message => !message.date);
         thread.messages = [...thread.messages.filter(message => message.date), ...pending.map(message => ({ ...message, date, review }))];
     }

@@ -23,6 +23,10 @@ final class PlacementCheck {
         check(ids(Placement.threads(session, "a.php", "new")).equals(List.of(1, 3, 6)), "the placed threads of a.php on the new side, Resolved included");
         check(ids(Placement.threads(session, "a.php", "old")).equals(List.of(2)), "the thread of a.php on the old side");
         check(Placement.end(Placement.threads(session, "a.php", "new").get(2)) == 12, "the last line of a thread's place");
+        check(Placement.startClaude(JsonParser.parseString("{ \"worktree\": \"/home/me/src/app\" }").getAsJsonObject()).equals("cd /home/me/src/app && claude"), "the command that starts a Claude session");
+        check(Placement.startClaude(JsonParser.parseString("{ \"worktree\": \"/home/me/my app's\" }").getAsJsonObject()).equals("cd '/home/me/my app'\\''s' && claude"), "the command quotes a worktree with a space or a quote");
+        check(!Placement.claude(JsonParser.parseString("{ \"claudeSession\": false }").getAsJsonObject()), "no Claude session reads the session");
+        check(Placement.claude(new JsonObject()), "a server without the field takes a Claude session for granted");
         JsonObject statuses = JsonParser.parseString("""
             { "threads": [
               { "id": 1, "resolved": false, "status": "awaiting-you", "anchor": { "path": "a.php", "side": "new" }, "messages": [{ "date": "x" }, { "date": null }] },

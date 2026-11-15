@@ -133,6 +133,15 @@ test('a Send seen during a turn calls $.prompt.submit with the text of #12, with
     assert.equal(claude.seen.appended, 0);
 });
 
+test('the poll of the mod tells the server that a Claude session runs in the worktree', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir);
+
+    await claude.poll();
+
+    assert.equal((await api('GET', `/api/sessions/${id}`)).claudeSession, true);
+});
+
 test('list_open_threads gives, but for Resolved threads and threads without published message, the id, file, side, range, lines and published messages', async () => {
     const { dir, id } = await session(['Waiting', 'To resolve']);
     await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path: 'a.txt', side: 'new', start: 1, end: 1, body: 'Look here' });

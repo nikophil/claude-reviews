@@ -60,7 +60,8 @@ async function api($: EngineInterface, method: string, path: string, body?: obje
 /** The open session of the worktree, null when the server says it has none, undefined when the server fails to say. */
 async function find($: EngineInterface, query = ''): Promise<Session | null | undefined> {
     // ponytail: each look makes the server run git rev-parse, every 2 s per Claude session; cache the top of a worktree if it shows.
-    const res = await api($, 'GET', `/api/sessions?worktree=${encodeURIComponent(worktree!)}${query}`);
+    // `claude` tells the server a Claude session runs in the worktree, which the clients show instead of waiting for it.
+    const res = await api($, 'GET', `/api/sessions?worktree=${encodeURIComponent(worktree!)}&claude${query}`);
     return res.status === 200 ? res.body : res.status === 404 ? null : undefined;
 }
 

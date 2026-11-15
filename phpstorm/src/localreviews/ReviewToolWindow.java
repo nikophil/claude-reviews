@@ -95,6 +95,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         private final JButton send = new JButton("Send", AllIcons.Actions.Upload);
         private final JButton approve = new JButton("Approve", AllIcons.Actions.Checked);
         private final JBLabel summary = new JBLabel();
+        private final JPanel startClaude = new JPanel(new BorderLayout());
         private final Tree tree = new Tree(new DefaultTreeModel(new DefaultMutableTreeNode()));
         private final JPanel header = new JPanel(new VerticalLayout(JBUI.scale(8)));
         private final JPanel empty = new JPanel(new VerticalLayout(JBUI.scale(8)));
@@ -136,7 +137,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
 
             ClientProperty.put(send, DarculaButtonUI.DEFAULT_STYLE_KEY, true);
             // Bare Swing listeners: saving the documents before a Send needs the write-intent lock.
-            send.addActionListener(e -> WriteIntentReadAction.run(() -> ReviewDiffAction.send(project, state.id(), service::refresh)));
+            send.addActionListener(e -> WriteIntentReadAction.run(() -> ReviewDiffAction.send(project, state.id(), null, service::refresh)));
             approve.addActionListener(e -> ReviewDiffAction.approve(project, state.id(), service::refresh));
             JPanel buttons = new JPanel(new GridLayout(1, 2, JBUI.scale(8), 0));
             buttons.add(send);
@@ -147,6 +148,8 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             header.add(toggles);
             header.add(buttons);
             header.add(summary);
+            startClaude.setOpaque(false);
+            header.add(startClaude);
             header.setBorder(JBUI.Borders.empty(8));
 
             start.addActionListener(e -> service.start());
@@ -195,7 +198,11 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
 
             int[] counts = Placement.counts(changed.session(), null);
             send.setText(counts[2] == 0 ? "Send" : "Send " + counts[2] + " pending");
-            send.setEnabled(counts[2] > 0);
+            boolean claude = Placement.claude(changed.session());
+            send.setEnabled(counts[2] > 0 && claude);
+            // A Send without a Claude session in the worktree would wait for nobody: it says how to start one instead.
+            startClaude.removeAll();
+            if (!claude) startClaude.add(ThreadView.startClaude(changed.session()), BorderLayout.CENTER);
             summary.setForeground(changed.error() != null ? JBColor.RED : JBColor.GRAY);
             summary.setText(changed.error() != null ? html(changed.error())
                 : changed.files().size() + " files · " + counts[0] + " awaiting you · " + counts[1] + " waiting for Claude");

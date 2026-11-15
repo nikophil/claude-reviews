@@ -14,6 +14,7 @@ import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.application.WriteIntentReadAction;
 import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.editor.colors.EditorColorsManager;
 import com.intellij.openapi.extensions.PluginId;
 import com.intellij.openapi.fileTypes.FileTypes;
 import com.intellij.openapi.keymap.KeymapUtil;
@@ -23,6 +24,9 @@ import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.IconLoader;
 import com.intellij.ui.AnimatedIcon;
 import com.intellij.ui.ClientProperty;
+import com.intellij.ui.components.ActionLink;
+import com.intellij.openapi.ide.CopyPasteManager;
+import com.intellij.ui.ColorUtil;
 import com.intellij.ui.EditorTextField;
 import com.intellij.ui.JBColor;
 import com.intellij.ui.RoundedLineBorder;
@@ -36,6 +40,7 @@ import com.intellij.util.text.DateFormatUtil;
 import com.intellij.util.io.HttpRequests;
 import com.intellij.util.ui.ImageUtil;
 import com.intellij.util.ui.JBUI;
+import com.intellij.util.ui.WrapLayout;
 
 import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
@@ -48,16 +53,20 @@ import javax.swing.JSeparator;
 import javax.swing.SwingUtilities;
 import javax.swing.text.DefaultCaret;
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Font;
+import java.awt.datatransfer.StringSelection;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.RenderingHints;
 import java.awt.KeyboardFocusManager;
+import java.awt.event.ActionListener;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.awt.event.MouseAdapter;
@@ -82,34 +91,58 @@ final class ThreadView extends JPanel implements Disposable {
     private static final int AVATAR = 24;
     private static final Pattern IMAGE = Pattern.compile("<img\\b[^>]*>", Pattern.CASE_INSENSITIVE);
 
-    private final JPanel card = new JPanel(new VerticalLayout(JBUI.scale(8)));
+    // Filled with the background of the editor, inside its rounded border: the code and the colors of the diff stay out of it.
+    private final JPanel card = new JPanel(new VerticalLayout(JBUI.scale(8))) {
+        private static final long serialVersionUID = 1L;
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(EditorColorsManager.getInstance().getGlobalScheme().getDefaultBackground());
+            g2.fillRoundRect(0, 0, getWidth(), getHeight(), JBUI.scale(8), JBUI.scale(8));
+            g2.dispose();
+        }
+    };
     private final JPanel content = new JPanel(new VerticalLayout(JBUI.scale(10)));
     private final JBLabel title = new JBLabel();
     private final EditorTextField field;
     private final JBLabel error = new JBLabel();
     private final JButton other;
+    private static final Color PENDING = new JBColor(new Color(0xB86E00), new Color(0xD9A343));
     private final JButton add = button("Add pending", null);
+    private JButton send;
     private final JBLabel shortcutHint = hint(KeymapUtil.getFirstKeyboardShortcutText(CommonShortcuts.getCtrlEnter()) + " to add pending");
     private boolean folded;
     private boolean resolved;
     private volatile boolean hovered;
 
     /** An open thread of the session. */
-    ThreadView(Project project, String session, JsonObject thread, Runnable written) {
+    ThreadView(Project project, JsonObject session, JsonObject thread, Runnable written) {
         super(null);
         int id = thread.get("id").getAsInt();
-        String route = "/api/sessions/" + session + "/threads/" + id;
+        String sessionId = session.get("id").getAsString();
+        String route = "/api/sessions/" + sessionId + "/threads/" + id;
         resolved = thread.get("resolved").getAsBoolean();
+        boolean claude = Placement.claude(session);
         String status = status(thread);
-        card.add(header("Thread #" + id + " · " + lines(thread), status));
+        // Without a Claude session in the worktree, nobody answers: no spinner, but how to start one.
+        boolean waiting = status.equals("Waiting for Claude");
+        card.add(header("Thread #" + id + " · " + lines(thread), waiting && !claude ? "No Claude session" : status));
         messages(project, thread.getAsJsonArray("messages"));
         // At the bottom too: the header of a long thread is out of sight.
-        if (status.equals("Waiting for Claude")) content.add(hint("Waiting for Claude…", AnimatedIcon.Default.INSTANCE));
+        if (waiting && claude) content.add(hint("Waiting for Claude…", AnimatedIcon.Default.INSTANCE));
+        if (waiting && !claude) content.add(startClaude(session));
         field = field(project, "Reply");
         // A Resolved thread takes no message until its Unresolve.
         other = resolved ? button("Unresolve", AllIcons.Actions.Rollback) : button("Resolve", AllIcons.Actions.Checked);
         String toggle = route + (resolved ? "/unresolve" : "/resolve");
         other.addActionListener(e -> write(body -> Server.post(toggle, new JsonObject()), written));
+        // Sends this thread alone, without the Pending messages of the others.
+        if (!resolved && claude && pending(thread)) {
+            send = button("Send thread", AllIcons.Actions.Upload);
+            send.addActionListener(e -> WriteIntentReadAction.run(() -> ReviewDiffAction.send(project, sessionId, id, written)));
+        }
         finish(body -> Server.post(route + "/messages", reply(body)), written);
         if (resolved) {
             field.setVisible(false);
@@ -227,8 +260,13 @@ final class ThreadView extends JPanel implements Disposable {
             name.setFont(JBUI.Fonts.label().asBold());
             column.add(name);
             for (JsonObject message : turn) {
-                column.add(hint(when(message)));
-                column.add(body(project, message.get("body").getAsString()));
+                JsonElement date = message.get("date");
+                if (date == null || date.isJsonNull()) {
+                    column.add(pending(project, message));
+                } else {
+                    column.add(hint(when(message)));
+                    column.add(body(project, message.get("body").getAsString()));
+                }
             }
             JPanel avatar = new JPanel(new BorderLayout());
             avatar.setOpaque(false);
@@ -252,14 +290,13 @@ final class ThreadView extends JPanel implements Disposable {
         error.setForeground(JBColor.RED);
         error.setVisible(false);
         content.add(error);
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0));
-        buttons.setOpaque(false);
-        buttons.add(other);
-        buttons.add(add);
-        JPanel footer = new JPanel(new BorderLayout());
+        // In a narrow column, the hint and the buttons wrap onto more rows rather than running out of the card.
+        JPanel footer = new JPanel(new WrapLayout(FlowLayout.RIGHT, JBUI.scale(6), JBUI.scale(4)));
         footer.setOpaque(false);
-        footer.add(shortcutHint, BorderLayout.WEST);
-        footer.add(buttons, BorderLayout.EAST);
+        footer.add(shortcutHint);
+        if (send != null) footer.add(send);
+        footer.add(other);
+        footer.add(add);
         content.add(footer);
         content.setOpaque(false);
         card.add(content);
@@ -342,6 +379,14 @@ final class ThreadView extends JPanel implements Disposable {
         return start == end ? "Line " + sign + start : "Lines " + sign + start + " to " + sign + end;
     }
 
+    private static boolean pending(JsonObject thread) {
+        for (JsonElement message : thread.getAsJsonArray("messages")) {
+            JsonElement date = message.getAsJsonObject().get("date");
+            if (date == null || date.isJsonNull()) return true;
+        }
+        return false;
+    }
+
     static String status(JsonObject thread) {
         JsonElement status = thread.get("status");
         if (status == null || status.isJsonNull()) return "Pending";
@@ -356,10 +401,55 @@ final class ThreadView extends JPanel implements Disposable {
         return message.get("author").getAsString();
     }
 
-    /** « Today 23:05 », « Send #2 · Today 23:05 », « Pending ». */
+    /** « Start a Claude session in this worktree », its command, and a link that copies the command. */
+    static JPanel startClaude(JsonObject session) {
+        String command = Placement.startClaude(session);
+        JPanel panel = new JPanel(new VerticalLayout(JBUI.scale(2)));
+        panel.setOpaque(false);
+        JBLabel text = new JBLabel("Start a Claude session in this worktree to send to Claude:");
+        text.setForeground(PENDING);
+        JBLabel shown = new JBLabel(command);
+        shown.setFont(JBUI.Fonts.create(Font.MONOSPACED, JBUI.Fonts.label().getSize()));
+        shown.setToolTipText(command);
+        panel.add(text);
+        panel.add(shown);
+        ActionListener copy = e -> CopyPasteManager.getInstance().setContents(new StringSelection(command));
+        panel.add(new ActionLink("Copy command", copy));
+        return panel;
+    }
+
+    /** A Pending message stands out from the published ones: an amber « Pending » badge, over an amber tint. */
+    private JPanel pending(Project project, JsonObject message) {
+        JPanel panel = new JPanel(new VerticalLayout(JBUI.scale(4))) {
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(ColorUtil.withAlpha(PENDING, 0.12));
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), JBUI.scale(8), JBUI.scale(8));
+                g2.dispose();
+            }
+        };
+        panel.setOpaque(false);
+        panel.setBorder(JBUI.Borders.empty(4, 6));
+        JBLabel badge = new JBLabel("Pending");
+        badge.setFont(JBUI.Fonts.smallFont().asBold());
+        badge.setForeground(PENDING);
+        badge.setBorder(BorderFactory.createCompoundBorder(new RoundedLineBorder(PENDING, JBUI.scale(8), 1), JBUI.Borders.empty(0, 6)));
+        // In a row of its own: the vertical layout would stretch the badge over the width.
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        row.setOpaque(false);
+        row.add(badge);
+        panel.add(row);
+        panel.add(body(project, message.get("body").getAsString()));
+        return panel;
+    }
+
+    /** « Today 23:05 », « Send #2 · Today 23:05 ». */
     private static String when(JsonObject message) {
         JsonElement date = message.get("date");
-        if (date == null || date.isJsonNull()) return "Pending";
         String when = DateFormatUtil.formatPrettyDateTime(Instant.parse(date.getAsString()).toEpochMilli());
         return author(message).equals("me") ? "Send #" + message.get("review").getAsInt() + " · " + when : when;
     }

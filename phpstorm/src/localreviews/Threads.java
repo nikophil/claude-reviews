@@ -10,6 +10,7 @@ import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.EditorCustomElementRenderer;
 import com.intellij.openapi.editor.Inlay;
+import com.intellij.openapi.editor.RangeMarker;
 import com.intellij.openapi.editor.event.EditorMouseEvent;
 import com.intellij.openapi.editor.event.EditorMouseListener;
 import com.intellij.openapi.editor.markup.TextAttributes;
@@ -68,7 +69,7 @@ final class Threads {
     }
 
     /** A thread shown as a view, or as a pill at the end of its last line while the threads are collapsed. */
-    private record Shown(JsonObject thread, ThreadView view, Inlay<?> pill) {
+    private record Shown(JsonObject thread, boolean claude, ThreadView view, Inlay<?> pill) {
         void dispose() {
             if (view != null) Disposer.dispose(view);
             if (pill != null) Disposer.dispose(pill);
@@ -79,21 +80,30 @@ final class Threads {
     private final Editor editor;
     private final Review review;
     private final String side;
+    private final Document document;
     private final Lines lines;
     private final Runnable refresh;
     private final Disposable parent;
     private final Map<Integer, Shown> shown = new HashMap<>();
     private final Set<Integer> opened = new HashSet<>();
+    private final Map<Integer, Anchor> anchors = new HashMap<>();
     private ThreadView draft;
     private boolean collapsed;
     private JsonObject last;
 
-    /** `refresh` polls the server again at once, after a write; the views are disposed with `parent` at the latest. */
-    Threads(Project project, Editor editor, Review review, String side, Lines lines, Runnable refresh, Disposable parent) {
+    /** The lines the server gave a thread, followed by a marker through the edits of the document since. */
+    private record Anchor(JsonObject at, RangeMarker marker) {}
+
+    /**
+     * `document` holds the side, which the editor shows itself or through `lines`;
+     * `refresh` polls the server again at once, after a write; the views are disposed with `parent` at the latest.
+     */
+    Threads(Project project, Editor editor, Review review, String side, Document document, Lines lines, Runnable refresh, Disposable parent) {
         this.project = project;
         this.editor = editor;
         this.review = review;
         this.side = side;
+        this.document = document;
         this.lines = lines;
         this.refresh = refresh;
         this.parent = parent;
@@ -108,6 +118,7 @@ final class Threads {
                 if (last != null) show(last, false);
             }
         }, parent);
+        Disposer.register(parent, () -> anchors.values().forEach(anchor -> anchor.marker().dispose()));
     }
 
     Lines lines() {
@@ -132,10 +143,21 @@ final class Threads {
         last = session;
         if (all) closeDraft();
         Map<Integer, JsonObject> placed = new HashMap<>();
+        Map<Integer, int[]> ranges = new HashMap<>();
         for (JsonObject thread : Placement.threads(session, review.path(), side)) {
-            int end = lines.toEditor(Placement.end(thread));
-            if (end > 0 && end <= editor.getDocument().getLineCount()) placed.put(thread.get("id").getAsInt(), thread);
+            int n = thread.get("id").getAsInt();
+            int[] range = range(n, thread.getAsJsonObject("at"));
+            int end = lines.toEditor(range[1]);
+            if (end > 0 && end <= editor.getDocument().getLineCount()) {
+                placed.put(n, thread);
+                ranges.put(n, range);
+            }
         }
+        anchors.keySet().removeIf(n -> {
+            if (placed.containsKey(n)) return false;
+            anchors.get(n).marker().dispose();
+            return true;
+        });
         for (Iterator<Map.Entry<Integer, Shown>> it = shown.entrySet().iterator(); it.hasNext(); ) {
             Shown old = it.next().getValue();
             if (!placed.containsKey(old.thread().get("id").getAsInt())) {
@@ -143,21 +165,21 @@ final class Threads {
                 it.remove();
             }
         }
-        String id = session.get("id").getAsString();
+        boolean claude = Placement.claude(session);
         placed.forEach((n, thread) -> {
             Shown old = shown.get(n);
             boolean pill = collapsed && !opened.contains(n);
-            if (!all && old != null && old.thread().equals(thread) && (old.pill() != null) == pill) return;
-            int end = lines.toEditor(Placement.end(thread));
+            if (!all && old != null && old.thread().equals(thread) && old.claude() == claude && (old.pill() != null) == pill) return;
+            int end = lines.toEditor(ranges.get(n)[1]);
             if (pill) {
                 if (old != null) old.dispose();
                 Inlay<?> inlay = editor.getInlayModel().addAfterLineEndElement(editor.getDocument().getLineEndOffset(end - 1), true, new Pill(this, n, "Thread #" + n + " · " + ThreadView.status(thread)));
                 if (inlay != null) Disposer.register(parent, inlay);
-                shown.put(n, new Shown(thread, null, inlay));
+                shown.put(n, new Shown(thread, claude, null, inlay));
                 return;
             }
-            ThreadView view = new ThreadView(project, id, thread, refresh);
-            int start = lines.toEditor(thread.getAsJsonObject("at").get("start").getAsInt());
+            ThreadView view = new ThreadView(project, session, thread, refresh);
+            int start = lines.toEditor(ranges.get(n)[0]);
             add(start > 0 ? start : end, end, thread.get("resolved").getAsBoolean(), view::hovered, view);
             // Only the hovered thread shows its lines: the marks of threads on the same lines would pile up.
             view.onHover(() -> editor.getComponent().repaint());
@@ -166,8 +188,29 @@ final class Threads {
                 if (old.view() != null) view.resume(old.view());
                 old.dispose();
             }
-            shown.put(n, new Shown(thread, view, null));
+            shown.put(n, new Shown(thread, claude, view, null));
         });
+    }
+
+    /**
+     * The lines `{start, end}` of the thread `n` on its side, from 1:
+     * those of `at` moved by the edits made since the server read them,
+     * which the unified diff needs as it rebuilds its document at each edit.
+     */
+    private int[] range(int n, JsonObject at) {
+        int start = at.get("start").getAsInt();
+        int end = at.get("end").getAsInt();
+        Anchor anchor = anchors.get(n);
+        if (anchor == null || !anchor.at().equals(at)) {
+            if (anchor != null) anchor.marker().dispose();
+            anchors.remove(n);
+            if (start < 1 || end > document.getLineCount()) return new int[] {start, end};
+            anchor = new Anchor(at, document.createRangeMarker(document.getLineStartOffset(start - 1), document.getLineEndOffset(end - 1)));
+            anchors.put(n, anchor);
+        }
+        RangeMarker marker = anchor.marker();
+        if (!marker.isValid()) return new int[] {start, end};
+        return new int[] {document.getLineNumber(marker.getStartOffset()) + 1, document.getLineNumber(marker.getEndOffset()) + 1};
     }
 
     /** A new thread on lines `start` to `end` of the side, from 1, with its field focused. */

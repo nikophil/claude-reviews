@@ -48,6 +48,18 @@ final class Placement {
         return counts;
     }
 
+    /** Whether a Claude session reads the session, so that a Send reaches Claude; true from a server without the field. */
+    static boolean claude(JsonObject session) {
+        JsonElement claude = session.get("claudeSession");
+        return claude == null || claude.getAsBoolean();
+    }
+
+    /** The shell command that starts a Claude session in the worktree of the session. */
+    static String startClaude(JsonObject session) {
+        String worktree = session.get("worktree").getAsString();
+        return "cd " + (worktree.matches("[\\w./-]+") ? worktree : "'" + worktree.replace("'", "'\\''") + "'") + " && claude";
+    }
+
     /** The last line of the thread's place, from 1. */
     static int end(JsonObject thread) {
         return thread.getAsJsonObject("at").get("end").getAsInt();

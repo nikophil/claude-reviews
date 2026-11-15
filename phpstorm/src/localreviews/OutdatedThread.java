@@ -23,6 +23,7 @@ final class OutdatedThread extends DialogWrapper {
     private final int id;
     private ThreadView view;
     private JsonObject shown;
+    private boolean claude;
 
     static void open(Project project, JsonObject thread) {
         new OutdatedThread(project, thread).show();
@@ -42,7 +43,7 @@ final class OutdatedThread extends DialogWrapper {
             if (state.session() == null) return;
             for (JsonElement element : state.session().getAsJsonArray("threads")) {
                 JsonObject fresh = element.getAsJsonObject();
-                if (fresh.get("id").getAsInt() == id && !fresh.equals(shown)) show(fresh);
+                if (fresh.get("id").getAsInt() == id && (!fresh.equals(shown) || Placement.claude(state.session()) != claude)) show(fresh);
             }
         }, getDisposable());
         init();
@@ -50,8 +51,9 @@ final class OutdatedThread extends DialogWrapper {
 
     private void show(JsonObject thread) {
         shown = thread;
+        claude = Placement.claude(service.state().session());
         ThreadView previous = view;
-        view = new ThreadView(project, service.state().id(), thread, service::refresh);
+        view = new ThreadView(project, service.state().session(), thread, service::refresh);
         Disposer.register(getDisposable(), view);
         if (previous != null) {
             view.resume(previous);

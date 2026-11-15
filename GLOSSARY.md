@@ -20,6 +20,7 @@ _Avoid_: round, tour, submission
 **Send**:
 La review qui livre à Claude les messages Pending et réveille sa Claude session.
 Elle peut n'en porter aucun : elle prend alors un Snapshot, et ne réveille Claude que si des threads l'attendent encore.
+Elle peut ne livrer que les messages Pending d'un thread, depuis son bouton Send dans PhpStorm : elle prend quand même son Snapshot, et les autres restent Pending.
 _Avoid_: Comment, Request changes
 
 **Approve**:

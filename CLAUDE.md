@@ -57,7 +57,7 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 | `GET /api/me` | `{ login, name }`, pour les avatars de mes messages : mon login sur github.com (`gh api --hostname github.com user --jq .login`) et `git config --global --includes user.name`, chacun `null` en échec ou au-delà de 2 s. |
 | `POST /api/shutdown` `{}` | Arrête le serveur : il cesse d'écouter avant de répondre. |
 | `GET /api/sessions` | Les sessions ouvertes, pour Reviews : `[{ id, worktree, repo, branch, awaitingYou, waitingForClaude, updatedAt }]`, Awaiting you d'abord, puis Waiting for Claude, puis le reste, la plus récemment active d'abord à égalité. |
-| `GET /api/sessions?worktree=<chemin>` | La session ouverte du worktree, sans en créer : 404 sans session ouverte. |
+| `GET /api/sessions?worktree=<chemin>[&claude]` | La session ouverte du worktree, sans en créer : 404 sans session ouverte ; `&claude` vient du mod, et dit qu'une Claude session tourne dans ce worktree, même sans session ouverte. |
 | `POST /api/sessions` `{ worktree }` | Renvoie la session ouverte du worktree, ou en crée une. |
 | `GET /api/sessions/<id>` | La session, ouverte ou approuvée. |
 | `GET /api/sessions/<id>/diff[?base=&tree=][&w=1]` | Le diff du working tree de la session contre sa base : `{ ref, base, tree, files }`, où `ref` est la base choisie, ou `HEAD` quand elle ne désigne plus rien, et `base` et `tree` les ids de la base et du tree affichés ; avec `?base=&tree=`, `{ base, tree, files }`, le diff de ces ids ; avec `w=1` (Hide whitespace), `git diff -w`. |
@@ -71,7 +71,7 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 | `POST /api/sessions/<id>/threads/<n>/resolve` `{}` | Résout le thread. |
 | `POST /api/sessions/<id>/viewed` `{ path, tree, viewed }` | Marque le fichier Viewed sur le tree affiché, ou le démarque. |
 | `POST /api/sessions/<id>/threads/<n>/unresolve` `{}` | Rouvre le thread Resolved. |
-| `POST /api/sessions/<id>/send` `{ tree }` | Send : Snapshot du tree affiché, puis publication des messages Pending. |
+| `POST /api/sessions/<id>/send` `{ tree, threads? }` | Send : Snapshot du tree affiché, puis publication des messages Pending, ceux des seuls threads de `threads` quand il est donné. |
 | `POST /api/sessions/<id>/approve` `{}` | Approve : archive la session, puis supprime ses refs. |
 | `POST /api/sessions/<id>/turn-complete` `{}` | Notifie « Claude replied in N threads », suivi de « , M still waiting » s'il en reste, par `notify-send` (Linux) ou `osascript` (macOS). |
 
@@ -79,6 +79,7 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - Un worktree n'existe plus quand son `stat` répond ENOENT, que son dossier parent existe encore, et que son `commonDir`, s'il est hors du worktree, existe encore ; toute autre erreur, ou un parent ou un `commonDir` disparu lui aussi (disque démonté), laisse la session ouverte.
 - Lire ou ouvrir la session d'un worktree clôt aussi la session à son chemin qui porte un autre `commonDir` : un autre dépôt ne reprend pas la session.
 - Une lecture n'attend la file des écritures que pour clore une session ; un fichier de session illisible est ignoré, avec une ligne dans le log du serveur, sans être supprimé ni réécrit.
+- Chaque session renvoyée porte `claudeSession`, vrai quand le mod a lu son worktree avec `&claude` dans les 10 dernières secondes, gardé en mémoire ; sans lui, le plugin PhpStorm grise ses Send, et montre, au lieu d'attendre Claude, la commande qui démarre une Claude session.
 - La notification compte les threads où Claude a écrit depuis le dernier Send, et les threads Waiting for Claude ; `start(port, notify)` reçoit la commande à lancer, que les tests enregistrent sans la lancer.
 - Hors `/diff`, `/tree`, `/lines`, `/bases` et la liste des sessions, chaque route d'une session renvoie la session entière, au format du fichier, et chaque thread y porte en plus son `status` : `resolved`, `waiting-for-claude`, `awaiting-you`, ou `null` tant qu'aucun message n'est publié.
 - Une route qui renvoie la session et reçoit `?base=<id>&tree=<id>` (le code affiché par l'UI), ou `?reanchor` (HEAD et le working tree, pour le mod), ré-ancre chaque thread sur ce code : il y porte aussi `at`, `null` s'il est Outdated, sinon `{ start, end, context }`.
@@ -116,7 +117,7 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - Le mod lit `CLAUDE_REVIEWS_PORT` comme le serveur.
 - `list_open_threads()` rend, hors Resolved et hors threads sans message publié, l'id, le statut, `outdated`, le fichier, le côté, la plage ré-ancrée sur HEAD et le working tree (celle de l'Anchor s'il est Outdated), les lignes de l'Anchor et les messages publiés.
 - Un thread Outdated y porte en plus `hunk`, l'extrait de diff d'origine en diff unifié, `null` si l'Anchor était hors du diff.
-- Il sonde `GET /api/sessions?worktree=` toutes les 2 s ; un Send qui laisse des threads Waiting for Claude le fait réveiller Claude par `$.prompt.submit`, jamais attendu dans un hook.
+- Il sonde `GET /api/sessions?worktree=<chemin>&claude` toutes les 2 s ; un Send qui laisse des threads Waiting for Claude le fait réveiller Claude par `$.prompt.submit`, jamais attendu dans un hook.
 - Seul un 404 vaut « aucune session ouverte » ; un sondage en échec laisse l'état tel quel, et le mod garde par session le dernier Send vu et la relance faite.
 - Il relance Claude une fois par Send, à la fin d'un tour fini sur une réponse, ni interrompu ni en erreur, qui laisse des threads en attente ; un `{ drop }` attend le prochain prompt ou début de tour, et ne compte pas.
 - À la fin du tour ouvert par un réveil ou une relance, s'il ne doit pas relancer, il appelle une fois `POST /api/sessions/<id>/turn-complete`, sans l'attendre.

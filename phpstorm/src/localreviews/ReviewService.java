@@ -197,7 +197,7 @@ public final class ReviewService implements Disposable {
         }
         if (review == null) return;
         if (threads == null) {
-            threads = new Threads(project, editor, review, "new", Threads.Lines.SAME, this::refresh, attached.disposable());
+            threads = new Threads(project, editor, review, "new", editor.getDocument(), Threads.Lines.SAME, this::refresh, attached.disposable());
             attached = new Attached(attached.path(), attached.disposable(), threads);
             editors.put(editor, attached);
             editor.putUserData(Threads.KEY, List.of(threads));

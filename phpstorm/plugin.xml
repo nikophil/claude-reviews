@@ -7,6 +7,8 @@
   <idea-version since-build="262"/>
   <!-- Without a dependency on a module, PhpStorm takes a plugin for one of IntelliJ IDEA only, and disables it. -->
   <depends>com.intellij.modules.platform</depends>
+  <!-- The Change of a diff of the Commit view, in a module of its own. -->
+  <depends>com.intellij.modules.vcs</depends>
   <extensions defaultExtensionNs="com.intellij">
     <toolWindow id="Claude Reviews" anchor="left" factoryClass="localreviews.ReviewToolWindow" icon="AllIcons.Toolwindows.ToolWindowMessages"/>
     <projectService serviceImplementation="localreviews.ReviewService"/>
@@ -22,6 +24,8 @@
     <action id="localreviews.OpenThread" class="localreviews.OpenThreadAction">
       <add-to-group group-id="Diff.EditorPopupMenu" anchor="first"/>
       <add-to-group group-id="EditorPopupMenu" anchor="first"/>
+      <add-to-group group-id="EditorGutterPopupMenu" anchor="first"/>
+      <add-to-group group-id="Diff.EditorGutterPopupMenu" anchor="first"/>
     </action>
   </actions>
 </idea-plugin>
