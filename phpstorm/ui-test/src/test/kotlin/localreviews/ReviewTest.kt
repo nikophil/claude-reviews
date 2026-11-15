@@ -258,7 +258,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(7)
+    @Order(8)
     fun `Group By › Directory lists the files under their directories, or flat once unchecked`() {
         Files.createDirectories(Path.of(worktree, "src"))
         Files.writeString(Path.of(worktree, "src/b.php"), "<?php\n")
