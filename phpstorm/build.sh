@@ -17,10 +17,11 @@ sed "s|<version>.*</version>|<version>$VERSION</version>|" phpstorm/plugin.xml >
 # The jbr has no jar tool, and a jar is a zip.
 (cd "$OUT/classes" && zip -qr ../local-reviews/lib/local-reviews.jar .)
 (cd "$OUT" && zip -qr local-reviews.zip local-reviews)
-# The custom plugin repository to add in Settings › Plugins › ⚙ › Manage Plugin Repositories.
+# The custom plugin repository to add in Settings › Plugins › ⚙ › Manage Plugin Repositories;
+# a release gives the URL of its zip as PLUGIN_URL.
 cat > "$OUT/updatePlugins.xml" <<XML
 <plugins>
-  <plugin id="local-reviews" url="file://$PWD/$OUT/local-reviews.zip" version="$VERSION">
+  <plugin id="local-reviews" url="${PLUGIN_URL:-file://$PWD/$OUT/local-reviews.zip}" version="$VERSION">
     <idea-version since-build="262"/>
   </plugin>
 </plugins>

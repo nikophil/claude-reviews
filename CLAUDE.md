@@ -28,7 +28,8 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
   PhpStorm, les dépendances Gradle et le Plugin Verifier se téléchargent une fois dans le volume `phpstorm-cache`, ou dans le dossier que nomme `PHPSTORM_CACHE`.
 - `npm run build:vscode` : construit `var/vscode/local-reviews.vsix` avec `zip`, à la version de `.claude-plugin/plugin.json` (celle de `vscode/package.json` ne sert pas), à installer par `code --install-extension var/vscode/local-reviews.vsix --force`.
 - Une release : monter `.claude-plugin/plugin.json`, merger, puis pousser le tag `v<version>` sur main.
-  `.github/workflows/release.yml` vérifie que le tag nomme cette version, construit le zip PhpStorm (Plugin Verifier et tests d'interface compris) et le `.vsix` à cette version, puis les attache à la release GitHub du tag.
+  `.github/workflows/release.yml` vérifie que le tag nomme cette version, construit le zip PhpStorm (Plugin Verifier et tests d'interface compris) et le `.vsix` à cette version, puis les attache à la release GitHub du tag, avec l'`updatePlugins.xml` qui pointe vers ce zip :
+  PhpStorm lit celui de la dernière release (`releases/latest/download/updatePlugins.xml`) pour proposer la mise à jour.
 - `npm run test:vscode` : tests de l'extension VS Code, `e2e/vscode.spec.ts`, dans openvscode-server 1.109.5 (`~/.cache/claude-reviews/openvscode-server-v1.109.5-linux-x64`, sinon `OPENVSCODE_SERVER`), sur un serveur lancé sur le port 7781 ;
   openvscode-server se télécharge une fois depuis les releases de `gitpod-io/openvscode-server`, comme le fait la CI.
 
