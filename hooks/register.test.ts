@@ -38,10 +38,10 @@ async function api(method: string, path: string, body?: unknown): Promise<any> {
  * records what reaches the host (prompts, commands, log lines), and fires the poll only when the test says so.
  */
 /**
- * `serverPort`, the value of CLAUDE_REVIEWS_PORT; `launcher`, the PhpStorm launcher the mod finds, none by default;
+ * `serverPort`, the value of CLAUDE_REVIEWS_PORT; `launcher` and `code`, the PhpStorm and VS Code launchers the mod finds, none by default;
  * `choice`, the answer to its question, none for a dismissed one; `down`, whether the server fails from the start.
  */
-async function mod(cwd: string, { serverPort = port as number | string, launcher = '', choice = undefined as string | undefined, down = false } = {}) {
+async function mod(cwd: string, { serverPort = port as number | string, launcher = '', code = '', choice = undefined as string | undefined, down = false } = {}) {
     const hooks: { event: string; matcher: Record<string, string>; hook: Function }[] = [];
     const on = (event: string, matcher: any, hook?: Function) => {
         hooks.push(hook ? { event, matcher, hook } : { event, matcher: {}, hook: matcher });
@@ -49,7 +49,7 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
     };
     register(on as any, {} as any);
     const seen = {
-        asked: [] as string[], fetched: [] as string[], submitted: [] as string[], appended: 0, run: [] as string[][], cwd: [] as (string | undefined)[], log: [] as string[], polls: [] as Function[],
+        asked: [] as string[], fetched: [] as string[], submitted: [] as string[], appended: 0, run: [] as string[][], cwd: [] as (string | undefined)[], log: [] as string[], polls: [] as Function[], options: [] as string[][],
         status: [] as (string | undefined)[], tools: [] as { name: string; description: string; inputSchema: any }[],
     };
     let answer: object = {};
@@ -71,6 +71,7 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
                 seen.run.push(argv);
                 seen.cwd.push(init?.cwd);
                 if (argv[3] === 'phpstorm-launcher') return { exitCode: 0, stdout: launcher && `${launcher}\n`, stderr: '' };
+                if (argv[3] === 'vscode-launcher') return { exitCode: 0, stdout: code && `${code}\n`, stderr: '' };
                 if (argv[0] !== 'git') return { exitCode: 0, stdout: '', stderr: '' };
                 const git = spawnSync(argv[0], argv.slice(1), { cwd: init?.cwd ?? cwd, encoding: 'utf8' });
                 return { exitCode: git.status, stdout: git.stdout, stderr: git.stderr };
@@ -88,8 +89,9 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
         ui: {
             log: (text: string) => seen.log.push(text),
             status: (text: string | undefined) => seen.status.push(text),
-            ask: async (question: string) => {
+            ask: async (question: string, { options }: { options: string[] }) => {
                 seen.asked.push(question);
+                seen.options.push(options);
                 if (choice === undefined) throw new Error('dismissed');
                 return choice;
             },
@@ -334,6 +336,33 @@ test('/review-local opens the browser without a question when no PhpStorm launch
     assert.ok(alone.seen.run.some(argv => argv.includes(`http://127.0.0.1:${port}/s/${id}`)));
     assert.ok(!dismissed.seen.run.some(argv => argv.includes(`http://127.0.0.1:${port}/s/${id}`) || argv.includes('/opt/bin/phpstorm')));
     assert.match(nothing.text, new RegExp(`/s/${id}`));
+});
+
+test('/review-local vscode asks the IDE to show the session, then runs code on the worktree, without a question', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir, { launcher: '/opt/bin/phpstorm', code: '/usr/bin/code' });
+
+    const command = await claude.fire('command.run', { command: 'review-local', args: 'vscode' });
+
+    assert.deepEqual(claude.seen.asked, []);
+    assert.ok((await api('GET', `/api/sessions/${id}`)).showRequestedAt);
+    assert.ok(claude.seen.run.some(argv => argv.includes('/usr/bin/code') && argv.includes(dir)), JSON.stringify(claude.seen.run));
+    assert.ok(!claude.seen.run.some(argv => argv.includes('/opt/bin/phpstorm') && argv.includes(dir)));
+    assert.match(command.text, /VS Code/);
+});
+
+test('/review-local asks between the IDEs it finds and the browser, and opens VS Code on VS Code', async () => {
+    const { dir } = await session([]);
+    const both = await mod(dir, { launcher: '/opt/bin/phpstorm', code: '/usr/bin/code', choice: 'VS Code' });
+    const code = await mod(dir, { code: '/usr/bin/code', choice: 'Browser' });
+
+    await both.fire('command.run', { command: 'review-local', args: '' });
+    await code.fire('command.run', { command: 'review-local', args: '' });
+
+    assert.deepEqual(both.seen.options, [['PhpStorm', 'VS Code', 'Browser']]);
+    assert.ok(both.seen.run.some(argv => argv.includes('/usr/bin/code') && argv.includes(dir)));
+    assert.deepEqual(code.seen.options, [['VS Code', 'Browser']]);
+    assert.ok(!code.seen.run.some(argv => argv.includes('/usr/bin/code') && argv.includes(dir)));
 });
 
 test('reply_to_thread refuses a thread id that is not a positive integer', async () => {

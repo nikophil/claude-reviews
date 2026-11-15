@@ -46,7 +46,7 @@ Le plugin démarre le serveur sur `127.0.0.1:7778` à l'ouverture d'une Claude s
 
 ## Utiliser
 
-1. Dans une Claude session, lance `/review-local` : la session de relecture du worktree s'ouvre dans le navigateur, ou dans PhpStorm, au choix, quand il est installé.
+1. Dans une Claude session, lance `/review-local` : la session de relecture du worktree s'ouvre dans le navigateur, ou dans PhpStorm ou VS Code, au choix, quand ils sont installés.
 2. Clique un numéro de ligne, écris, puis Add message ; le message reste Pending jusqu'au Send.
 3. Send : Claude se réveille, répond dans chaque thread qui l'attend, et modifie le code quand un thread le demande.
    Une ligne de statut sous son prompt compte les threads qui l'attendent.
@@ -69,6 +69,19 @@ npm run build:phpstorm
 
 La commande écrit `var/phpstorm/updatePlugins.xml` :
 ajoute-le une fois dans Settings › Plugins › ⚙ › Manage Plugin Repositories (`file://…/updatePlugins.xml`), et PhpStorm proposera chaque build en mise à jour.
+
+## Extension VS Code
+
+L'extension VS Code montre la même session dans une vue « Claude Reviews », avec les threads dans l'éditeur et dans le diff de VS Code.
+
+![La vue Claude Reviews de VS Code, avec les fichiers changés et leurs threads, et le diff d'un fichier où Claude a répondu dans un thread](docs/images/vscode.png)
+
+Elle se construit avec `zip`, sans rien télécharger :
+
+```
+npm run build:vscode
+code --install-extension var/vscode/local-reviews.vsix --force
+```
 
 ## Sécurité
 

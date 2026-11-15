@@ -15,6 +15,8 @@ writeFileSync(join(bin, 'gh'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
 
 export default defineConfig({
     testDir: 'e2e',
+    // The extension's tests need openvscode-server: playwright.vscode.config.ts runs them.
+    testIgnore: 'vscode.spec.ts',
     use: { baseURL: `http://127.0.0.1:${port}` },
     projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
     webServer: {

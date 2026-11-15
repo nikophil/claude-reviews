@@ -2,7 +2,7 @@
 
 Le serveur est le seul cœur : sessions, diff, ré-ancrage, Send et Approve.
 Le côté Claude, c'est le mod (`hooks/`) : il démarre le serveur, sonde la session et réveille Claude.
-Le côté client, c'est la page (`ui/`) dans un navigateur, et le plugin PhpStorm (`phpstorm/`), plus tard VS Code.
+Le côté client, c'est la page (`ui/`) dans un navigateur, le plugin PhpStorm (`phpstorm/`) et l'extension VS Code (`vscode/`).
 Un client ne parle qu'à l'API HTTP, n'importe rien de `server/` ni de `hooks/`, et ne démarre pas le serveur :
 sans Claude session, il dit que le serveur ne répond pas, et un Reload le recharge.
 Ainsi, un nouvel IDE ne touche ni au serveur ni au mod.
@@ -17,10 +17,16 @@ Pour son diff, il lit le texte d'un fichier à la base par `GET /api/sessions/<i
 Le plugin PhpStorm s'écrit en Java et se compile par le `javac` du PhpStorm installé, contre ses jars (`phpstorm/build.sh`) :
 ni Gradle ni Kotlin, ni l'IntelliJ Platform d'environ 1 Go à télécharger, comme le reste du dépôt, sans build ni dépendance.
 
+L'extension VS Code est un client natif elle aussi, mais VS Code fournit ce que le plugin PhpStorm dessine lui-même :
+les threads passent par son API Comments (Pending par le libellé d'un message, Resolved par l'état du thread), la session par une vue en arbre avec une case Viewed par fichier, le diff par son propre éditeur de diff.
+Elle s'écrit en JS CommonJS vérifié par `// @ts-check`, sans build, et `vscode/build.sh` en fait un `.vsix` avec `zip`, un `.vsix` n'étant qu'un zip et deux manifestes ;
+`@types/vscode` n'est qu'une dépendance de développement.
+Ses tests tournent dans openvscode-server, VS Code servi en page web, que Playwright pilote comme la page.
+
 ```
             côté Claude                    cœur                     clients
 Claude session ── mod (hooks/) ──HTTP──> serveur (server/) <──HTTP── page (ui/) ── navigateur
-                                                               <──HTTP── phpstorm/ (Swing), plus tard vscode/
+                                                               <──HTTP── phpstorm/ (Swing), vscode/ (API d'extension)
 ```
 
 ## Considered Options

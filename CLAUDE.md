@@ -9,7 +9,7 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 
 ## Commandes
 
-- `npm ci` : installe `@playwright/test`, la seule dépendance, de développement.
+- `npm ci` : installe `@playwright/test` et `@types/vscode`, les seules dépendances, de développement.
 - `npm start` (`node server/main.ts`) : lance le serveur sur `127.0.0.1:7778`, puis ouvrir `http://127.0.0.1:7778/?worktree=<chemin absolu>`, qui ouvre la session du worktree et redirige vers `/s/<id>`.
 - `CLAUDE_REVIEWS_PORT=<port>` change le port.
 - `node --test` : tests du serveur, des fonctions pures et du mod, ce dernier sous un `$` factice.
@@ -17,11 +17,15 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 - `claude --plugin-dir .` : une Claude session avec le mod de ce dossier.
 - `/plugin install local-reviews --marketplace nikophil/claude-reviews` : installe le mod ; il lance le serveur avec le `node` du `PATH`, en version 25 au moins.
 - `npx playwright install chromium` une fois, puis `npx playwright test` : tests de l'UI, sur un serveur lancé sur le port 7779, avec un `XDG_DATA_HOME` temporaire.
-- `npm run readme` : refait les images de `README.md` (`docs/images/`) par Playwright, sur des dépôts d'exemple, sauf `phpstorm.png`, prise à la main dans l'IDE ; l'animation est un PNG animé, assemblé sans outil à installer.
+- `npm run readme` : refait les images de `README.md` (`docs/images/`) par Playwright, sur des dépôts d'exemple (`e2e/readme.ts`), celle de VS Code dans openvscode-server comme `npm run test:vscode`, sauf `phpstorm.png`, prise à la main dans l'IDE ;
+  l'animation est un PNG animé, assemblé sans outil à installer.
 - `npm run build:phpstorm` : construit `var/phpstorm/local-reviews.zip` avec le `javac` et les jars du PhpStorm installé (`PHPSTORM_HOME`, sinon celui de Toolbox) et `zip`, avec une version `0.1.<epoch>` par build, et écrit `var/phpstorm/updatePlugins.xml` ;
   ce dépôt de plugins, ajouté une fois par Settings › Plugins › ⚙ › Manage Plugin Repositories (`file://…/updatePlugins.xml`), propose ensuite chaque build en mise à jour.
 - `npm run test:phpstorm` : dans le conteneur de `docker-compose.yml`, construit le plugin contre PhpStorm 2026.2.5, le passe au Plugin Verifier, puis lance ses tests d'interface ;
   PhpStorm, les dépendances Gradle et le Plugin Verifier se téléchargent une fois dans le volume `phpstorm-cache`, ou dans le dossier que nomme `PHPSTORM_CACHE`.
+- `npm run build:vscode` : construit `var/vscode/local-reviews.vsix` avec `zip`, à installer par `code --install-extension var/vscode/local-reviews.vsix --force`.
+- `npm run test:vscode` : tests de l'extension VS Code, `e2e/vscode.spec.ts`, dans openvscode-server 1.109.5 (`~/.cache/claude-reviews/openvscode-server-v1.109.5-linux-x64`, sinon `OPENVSCODE_SERVER`), sur un serveur lancé sur le port 7781 ;
+  openvscode-server se télécharge une fois depuis les releases de `gitpod-io/openvscode-server`, comme le fait la CI.
 
 ## Structure
 
@@ -42,6 +46,8 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
   et propose Suggest Change, Comment on File et Copy Threads as Markdown, au même format que l'UI web ; il ne parle qu'à l'API, comme tout client ([ADR 0004](docs/adr/0004-clients-et-mod-separes-par-l-api.md)).
 - `phpstorm/ui-test/` : les tests d'interface du plugin, en Kotlin, par Starter et Driver de JetBrains, sous Gradle dans Docker ([ADR 0005](docs/adr/0005-tests-d-interface-phpstorm-par-gradle-dans-docker.md)) ;
   `run.sh` y enchaîne `build.sh`, le Plugin Verifier, qui échoue sur un verdict autre que « Compatible », et `gradle test`.
+- `vscode/` : l'extension VS Code, en JS CommonJS vérifié par `// @ts-check`, sans build : la vue « Claude Reviews » (base, Send, Approve, fichiers changés avec leur case Viewed et leurs threads), les threads par l'API Comments dans l'éditeur et dans le diff de VS Code ;
+  un clic sur un fichier ouvre son diff, la case Viewed est aussi dans la barre du diff, et un thread Outdated s'ouvre sur son extrait de diff ; `vscode/review.js` garde les fonctions pures, testées par `node --test`.
 - Aucune dépendance npm au runtime : ce qui manque s'écrit, ou se vendorise en un fichier dans `ui/vendor/`.
 
 ## Contrat HTTP
@@ -95,7 +101,7 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - Un worktree n'existe plus quand son `stat` répond ENOENT, que son dossier parent existe encore, et que son `commonDir`, s'il est hors du worktree, existe encore ; toute autre erreur, ou un parent ou un `commonDir` disparu lui aussi (disque démonté), laisse la session ouverte.
 - Lire ou ouvrir la session d'un worktree clôt aussi la session à son chemin qui porte un autre `commonDir` : un autre dépôt ne reprend pas la session.
 - Une lecture n'attend la file des écritures que pour clore une session ; un fichier de session illisible est ignoré, avec une ligne dans le log du serveur, sans être supprimé ni réécrit.
-- Chaque session renvoyée porte `claudeSession`, vrai quand le mod a lu son worktree avec `&claude` dans les 10 dernières secondes, gardé en mémoire ; sans lui, le plugin PhpStorm grise ses Send, et montre, au lieu d'attendre Claude, la commande qui démarre une Claude session.
+- Chaque session renvoyée porte `claudeSession`, vrai quand le mod a lu son worktree avec `&claude` dans les 10 dernières secondes, gardé en mémoire ; sans lui, le plugin PhpStorm grise ses Send, l'extension VS Code les refuse, et tous deux montrent, au lieu d'attendre Claude, la commande qui démarre une Claude session.
 - La notification compte les threads où Claude a écrit depuis le dernier Send, et les threads Waiting for Claude ; `start(port, notify)` reçoit la commande à lancer, que les tests enregistrent sans la lancer.
 - Hors `/diff`, `/tree`, `/lines`, `/bases` et la liste des sessions, chaque route d'une session renvoie la session entière, au format du fichier, et chaque thread y porte en plus son `status` : `resolved`, `waiting-for-claude` quand mon message est le dernier publié, `open` quand c'est celui de Claude, ou `null` tant qu'aucun message n'est publié ; les clients n'affichent pas `open`.
 - Une route qui renvoie la session et reçoit `?base=<id>&tree=<id>` (le code affiché par l'UI), ou `?reanchor` (la base de la session et le working tree, pour le mod), ré-ancre chaque thread sur ce code : il y porte aussi `at`, `null` s'il est Outdated, sinon `{ start, end, context }`.
@@ -149,9 +155,10 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - À la fin du tour ouvert par un réveil ou une relance, s'il ne doit pas relancer, il appelle une fois `POST /api/sessions/<id>/turn-complete`, sans l'attendre, seulement si ce tour a fini sur une réponse : après un Esc ou une erreur, rien.
 - Le premier prompt d'une Claude session porte, dans le `context` de `prompt.submit`, le nombre de threads qui l'attendent : `prompt.context` atteindrait aussi les subagents, et `cc-plugin-sec-default` le court-circuite sur les comptes Team ou Enterprise.
 - Après un Approve, `open_thread` refait `POST /api/sessions` et ouvre une nouvelle session ; `reply_to_thread` répond « session approved ».
-- `/review-local phpstorm` ou `/review-local browser` ouvre la session dans PhpStorm ou le navigateur ; sans argument, il demande où par `$.ui.ask` quand il trouve le lanceur de PhpStorm (`phpstorm` du `PATH`, sinon le script de JetBrains Toolbox), le navigateur sinon ;
-  `phpstorm` sans lanceur ouvre le navigateur et le dit. Le lanceur et le navigateur partent de la racine du plugin, détachés par `nohup`.
-- Pour PhpStorm, il fait `POST /show`, puis lance le lanceur sur le worktree ; le plugin active sa tool window quand `showRequestedAt` change et date de moins de 30 s.
+- `/review-local phpstorm`, `/review-local vscode` ou `/review-local browser` ouvre la session dans PhpStorm, VS Code ou le navigateur ;
+  sans argument, il demande où par `$.ui.ask` parmi les IDE dont il trouve le lanceur (`phpstorm` du `PATH`, sinon le script de JetBrains Toolbox ; `code` du `PATH`) et le navigateur, le navigateur sans question s'il n'en trouve aucun ;
+  un IDE sans lanceur ouvre le navigateur et le dit. Les lanceurs et le navigateur partent de la racine du plugin, détachés par `nohup`.
+- Pour un IDE, il fait `POST /show`, puis lance son lanceur sur le worktree ; le plugin PhpStorm active sa tool window, et l'extension VS Code sa vue, quand `showRequestedAt` change et date de moins de 30 s.
 - Tout appel au serveur abandonne au bout de 2 s : sans réponse, ou sur un 200 sans `threads`, les outils répondent `{ deny }` « does not answer », `/review-local` le dit, et un sondage laisse l'état tel quel ;
   une erreur du serveur arrive aux outils avec son message.
 
@@ -237,7 +244,8 @@ La coloration syntaxique passe par les variables `--color-prettylights-syntax-*`
 - `node --test` couvre le serveur et les fonctions pures, dans des fichiers `*.test.ts` à côté du code.
 - Les dépôts de test se créent avec `repo()` et `write()` de `server/fixture.ts`, dans un dossier temporaire, à l'abri de la config git globale ; `removeRepos()` les supprime en fin de fichier de test.
 - Playwright (Chromium) couvre l'UI, dans `e2e/*.spec.ts`, sur les mêmes fixtures ; chaque test ouvre `/?worktree=<fixture>`.
+- `e2e/vscode.spec.ts` couvre l'extension VS Code dans openvscode-server, par `playwright.vscode.config.ts` ; `playwright.config.ts` l'ignore.
 - Le serveur de Playwright, comme celui de `server/sessions.test.ts`, a un `gh` qui échoue en tête du `PATH`, pour que mon vrai login n'atteigne pas les tests ; un test qui en a besoin répond lui-même à `/api/me`, ou met son propre `gh` devant.
 - Starter et Driver couvrent le plugin PhpStorm, dans `phpstorm/ui-test/`, sur les mêmes fixtures (`fixture.ts`) : un seul PhpStorm pour les étapes d'une review, dans l'ordre, face à un serveur sur le port 7780, avec un `XDG_DATA_HOME` temporaire, le même faux `gh`, et un sondage `&claude` qui tient lieu de Claude session.
-- La CI (`.github/workflows/ci.yml`) lance les deux suites sur chaque PR, sous Node 25, et les tests du plugin PhpStorm dans le job `phpstorm`, avec le dossier `PHPSTORM_CACHE` gardé par `actions/cache` et les logs de l'IDE en artefact sur un échec.
+- La CI (`.github/workflows/ci.yml`) lance les deux suites sur chaque PR, sous Node 25, celle de l'extension VS Code dans le job `vscode`, openvscode-server en cache, et les tests du plugin PhpStorm dans le job `phpstorm`, avec le dossier `PHPSTORM_CACHE` gardé par `actions/cache` et les logs de l'IDE en artefact sur un échec.
 - Une PR ajoute au plus 1000 lignes, hors lockfile et fichiers vendorisés.

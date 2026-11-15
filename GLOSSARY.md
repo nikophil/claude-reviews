@@ -20,7 +20,7 @@ _Avoid_: round, tour, submission
 **Send**:
 La review qui livre à Claude les messages Pending et réveille sa Claude session.
 Elle peut n'en porter aucun : elle prend alors un Snapshot, et ne réveille Claude que si des threads l'attendent encore.
-Elle peut ne livrer que les messages Pending d'un thread, depuis son bouton Send dans PhpStorm : elle prend quand même son Snapshot, et les autres restent Pending.
+Elle peut ne livrer que les messages Pending d'un thread, depuis son bouton Send dans PhpStorm ou VS Code : elle prend quand même son Snapshot, et les autres restent Pending.
 _Avoid_: Comment, Request changes
 
 **Approve**:
@@ -46,7 +46,7 @@ Une conversation Claude Code qui tourne dans un worktree.
 _Avoid_: session (seul, qui désigne la Session de relecture)
 
 **Client**:
-Ce qui m'affiche une session et y écrit pour moi : la page dans un navigateur, ou embarquée par un IDE (PhpStorm, plus tard VS Code).
+Ce qui m'affiche une session et y écrit pour moi : la page dans un navigateur, ou un IDE (PhpStorm, VS Code).
 Un client ne parle qu'à l'API HTTP du serveur ; le côté Claude, lui, passe par le mod.
 _Avoid_: front, outil
 

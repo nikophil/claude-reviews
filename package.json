@@ -9,8 +9,9 @@
     "start": "node server/main.ts",
     "test": "node --test",
     "test:e2e": "playwright test",
+    "test:vscode": "playwright test -c playwright.vscode.config.ts",
     "build:phpstorm": "sh phpstorm/build.sh",
-    "readme": "README=1 playwright test e2e/readme.spec.ts",
+    "readme": "README=1 playwright test e2e/readme.spec.ts && README=1 playwright test -c playwright.vscode.config.ts -g 'image of the README'",
     "build:vscode": "sh vscode/build.sh",
     "test:mod": "mkdir -p var/mod/.claude-plugin var/mod/hooks && cp .claude-plugin/plugin.json var/mod/.claude-plugin/ && cp hooks/hooks.json hooks/register.ts hooks/watch.ts hooks/register.test.tsx var/mod/hooks/ && claude plugin test var/mod",
     "test:phpstorm": "HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose run --rm --build phpstorm"

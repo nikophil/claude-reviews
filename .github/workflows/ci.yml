@@ -42,3 +42,23 @@ jobs:
             phpstorm/ui-test/out/ide-tests/tests/*/*/log
             phpstorm/ui-test/build/reports
             var/phpstorm/verifier
+
+  vscode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 25
+          cache: npm
+      - run: npm ci
+      # The version and the path that playwright.vscode.config.ts expects.
+      - uses: actions/cache@v6
+        id: openvscode-server
+        with:
+          path: ~/.cache/claude-reviews/openvscode-server-v1.109.5-linux-x64
+          key: openvscode-server-v1.109.5-linux-x64
+      - if: steps.openvscode-server.outputs.cache-hit != 'true'
+        run: mkdir -p ~/.cache/claude-reviews && curl -sSfL https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-v1.109.5/openvscode-server-v1.109.5-linux-x64.tar.gz | tar xz -C ~/.cache/claude-reviews
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:vscode

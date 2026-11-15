@@ -51,7 +51,7 @@ Décisions structurantes : [docs/adr/](docs/adr/).
 4. **Le mod Claude Code**, livré en plugin (`hooks/hooks.json` → `"modules"`) :
    - il enregistre les outils `list_open_threads()`, qui renvoie en entier les threads non Resolved, Waiting for Claude ou où Claude a parlé en dernier,
      `reply_to_thread(id, body)` et `open_thread(file, side, lines, body)`, ainsi que la commande `/review-local`,
-     qui ouvre la session du worktree dans PhpStorm ou le navigateur, et demande lequel quand PhpStorm est installé ;
+     qui ouvre la session du worktree dans PhpStorm, VS Code ou le navigateur, et demande lequel quand un de ces IDE est installé ;
    - il relie la Claude session à sa session de relecture par le chemin du worktree (`git rev-parse --show-toplevel` sur le `cwd`) ;
    - sans session ouverte, `open_thread` en ouvre une ; une session close refuse les messages de Claude, et le mod cesse alors de le relancer ;
    - il interroge le serveur, et sur un Send injecte « N threads t'attendent » avec `$.prompt.submit` ;

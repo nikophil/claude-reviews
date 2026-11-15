@@ -68,11 +68,17 @@ async function api($: EngineInterface, method: string, path: string, body?: obje
     }
 }
 
-// Both run from the plugin's root, not the worktree under review: a relative entry of the PATH must not run one of its scripts.
+// These run from the plugin's root, not the worktree under review: a relative entry of the PATH must not run one of its scripts.
 
 /** The PhpStorm launcher: `phpstorm` on the PATH, else the script of JetBrains Toolbox, on Linux or macOS; '' without one. */
 async function phpstorm($: EngineInterface): Promise<string> {
     const found = await $.process.run(['/bin/sh', '-c', 'for l in "$(command -v phpstorm)" "$HOME/.local/share/JetBrains/Toolbox/scripts/phpstorm" "$HOME/Library/Application Support/JetBrains/Toolbox/scripts/phpstorm"; do [ -x "$l" ] && echo "$l" && break; done', 'phpstorm-launcher'], { cwd: $.plugin.root });
+    return found.stdout.trim();
+}
+
+/** The VS Code launcher: `code` on the PATH; '' without one. */
+async function vscode($: EngineInterface): Promise<string> {
+    const found = await $.process.run(['/bin/sh', '-c', 'command -v code', 'vscode-launcher'], { cwd: $.plugin.root });
     return found.stdout.trim();
 }
 
@@ -208,7 +214,7 @@ export const register: Register = on => {
         // An empty variable is no port.
         base = `http://127.0.0.1:${await $.env.get('CLAUDE_REVIEWS_PORT') || 7778}`;
         for (const tool of TOOLS) await $.tool.register({ ...tool, isDeferred: false });
-        await $.command.register({ name: 'review-local', description: 'Opens the claude-reviews session of this worktree in PhpStorm or the browser: phpstorm, browser, or a question', immediate: true });
+        await $.command.register({ name: 'review-local', description: 'Opens the claude-reviews session of this worktree in PhpStorm, VS Code or the browser: phpstorm, vscode, browser, or a question', immediate: true });
         // Not awaited: a poll before the server is ready fails, and leaves the watch as it is.
         serve($).catch(error => $.ui.log(`claude-reviews: ${(error as Error).message}`));
         // ponytail: an interval the engine ends (a refused period) is not armed again; re-arm at turn.complete if wakes go missing.
@@ -309,20 +315,21 @@ export const register: Register = on => {
         session = opened.body.id as string;
         const url = `${base}/s/${session}`;
         const arg = e.args.trim().toLowerCase();
-        const launcher = arg === 'browser' ? '' : await phpstorm($);
-        let where = arg === 'phpstorm' && launcher ? 'phpstorm' : 'browser';
-        if (!arg && launcher) {
-            // A label, or the text typed under Other, in any case.
-            where = (await $.ui.ask('Where to open the review?', { options: ['PhpStorm', 'Browser'], header: 'Review' }).catch(() => '')).trim().toLowerCase();
-        }
-        if (where === 'phpstorm') {
-            // The request first: the plugin shows the review at its first poll, even in a project the launcher is opening.
+        const ides = arg === 'browser' ? [] : [{ name: 'PhpStorm', arg: 'phpstorm', launcher: await phpstorm($) }, { name: 'VS Code', arg: 'vscode', launcher: await vscode($) }];
+        const found = ides.filter(ide => ide.launcher);
+        const asked = !arg && found.length > 0;
+        // A label, or the text typed under Other, in any case.
+        const where = asked ? (await $.ui.ask('Where to open the review?', { options: [...found.map(ide => ide.name), 'Browser'], header: 'Review' }).catch(() => '')).trim().toLowerCase() : arg;
+        const ide = ides.find(ide => where === ide.arg || where === ide.name.toLowerCase());
+        if (ide?.launcher) {
+            // The request first: the IDE shows the review at its first poll, even in a project the launcher is opening.
             const shown = await api($, 'POST', `/api/sessions/${session}/show`, {});
             if (shown.status !== 200) return { text: `claude-reviews: ${shown.body.error}` };
-            await detach($, [launcher, worktree!]);
-            return { text: `claude-reviews: opened in PhpStorm, ${url}` };
+            await detach($, [ide.launcher, worktree!]);
+            return { text: `claude-reviews: opened in ${ide.name}, ${url}` };
         }
-        if (where === 'browser') await detach($, ['/bin/sh', '-c', 'if command -v xdg-open >/dev/null 2>&1; then xdg-open "$1"; else open "$1"; fi', 'claude-reviews', url]);
-        return { text: arg === 'phpstorm' && !launcher ? `claude-reviews: PhpStorm launcher not found, opened in the browser, ${url}` : `claude-reviews: ${url}` };
+        // Without a question, the browser, also for an IDE without its launcher; a dismissed question opens nothing.
+        if (!asked || where === 'browser' || ide) await detach($, ['/bin/sh', '-c', 'if command -v xdg-open >/dev/null 2>&1; then xdg-open "$1"; else open "$1"; fi', 'claude-reviews', url]);
+        return { text: ide ? `claude-reviews: ${ide.name} launcher not found, opened in the browser, ${url}` : `claude-reviews: ${url}` };
     });
 };
