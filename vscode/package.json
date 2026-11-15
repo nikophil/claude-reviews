@@ -1,0 +1,97 @@
+{
+  "name": "local-reviews",
+  "displayName": "Local Reviews",
+  "description": "Reviews with Claude the changes of the worktree: its files and their threads in a view, the threads in the editor and in the diff.",
+  "version": "0.1.0",
+  "publisher": "nikophil",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "localReviews", "title": "Claude Reviews", "icon": "media/reviews.svg" }
+      ]
+    },
+    "views": {
+      "localReviews": [
+        { "id": "localReviews.files", "name": "Review" }
+      ]
+    },
+    "viewsWelcome": [
+      { "view": "localReviews.files", "contents": "No review of this worktree yet.\n[Start Review](command:localReviews.start)", "when": "localReviews.state == none" },
+      { "view": "localReviews.files", "contents": "[Retry](command:localReviews.refresh)", "when": "localReviews.state == error" },
+      { "view": "localReviews.files", "contents": "No changes against the base.\n[Choose Base](command:localReviews.chooseBase)", "when": "localReviews.state == session" }
+    ],
+    "commands": [
+      { "command": "localReviews.start", "title": "Start Review", "category": "Claude Reviews" },
+      { "command": "localReviews.refresh", "title": "Refresh", "category": "Claude Reviews", "icon": "$(refresh)" },
+      { "command": "localReviews.send", "title": "Send", "category": "Claude Reviews", "icon": "$(send)", "enablement": "localReviews.pending" },
+      { "command": "localReviews.approve", "title": "Approve", "category": "Claude Reviews", "icon": "$(check-all)", "enablement": "!localReviews.pending" },
+      { "command": "localReviews.chooseBase", "title": "Choose Base", "category": "Claude Reviews", "icon": "$(git-compare)" },
+      { "command": "localReviews.openFile", "title": "Open File", "icon": "$(go-to-file)" },
+      { "command": "localReviews.openDiff", "title": "Open Changes", "icon": "$(diff)" },
+      { "command": "localReviews.openThread", "title": "Open Thread" },
+      { "command": "localReviews.markViewed", "title": "Mark as Viewed", "icon": "$(circle-large-outline)" },
+      { "command": "localReviews.unmarkViewed", "title": "Viewed", "icon": "$(pass-filled)" },
+      { "command": "localReviews.createThread", "title": "Add Pending" },
+      { "command": "localReviews.cancelThread", "title": "Cancel" },
+      { "command": "localReviews.reply", "title": "Add Pending" },
+      { "command": "localReviews.resolve", "title": "Resolve", "icon": "$(check)" },
+      { "command": "localReviews.unresolve", "title": "Unresolve", "icon": "$(discard)" },
+      { "command": "localReviews.sendThread", "title": "Send Thread", "icon": "$(send)" },
+      { "command": "localReviews.copyStartClaude", "title": "Copy the Command That Starts Claude", "category": "Claude Reviews" }
+    ],
+    "menus": {
+      "commandPalette": [
+        { "command": "localReviews.openFile", "when": "false" },
+        { "command": "localReviews.openDiff", "when": "false" },
+        { "command": "localReviews.openThread", "when": "false" },
+        { "command": "localReviews.markViewed", "when": "false" },
+        { "command": "localReviews.unmarkViewed", "when": "false" },
+        { "command": "localReviews.createThread", "when": "false" },
+        { "command": "localReviews.cancelThread", "when": "false" },
+        { "command": "localReviews.reply", "when": "false" },
+        { "command": "localReviews.resolve", "when": "false" },
+        { "command": "localReviews.unresolve", "when": "false" },
+        { "command": "localReviews.sendThread", "when": "false" }
+      ],
+      "view/title": [
+        { "command": "localReviews.send", "when": "view == localReviews.files && localReviews.state == session", "group": "navigation@1" },
+        { "command": "localReviews.approve", "when": "view == localReviews.files && localReviews.state == session", "group": "navigation@2" },
+        { "command": "localReviews.chooseBase", "when": "view == localReviews.files && localReviews.state == session", "group": "navigation@3" },
+        { "command": "localReviews.refresh", "when": "view == localReviews.files", "group": "navigation@4" }
+      ],
+      "view/item/context": [
+        { "command": "localReviews.openFile", "when": "view == localReviews.files && viewItem == file", "group": "inline" },
+        { "command": "localReviews.openFile", "when": "view == localReviews.files && viewItem == file", "group": "navigation@1" },
+        { "command": "localReviews.openDiff", "when": "view == localReviews.files && viewItem =~ /^file/", "group": "navigation@2" }
+      ],
+      "editor/title": [
+        { "command": "localReviews.markViewed", "when": "isInDiffEditor && resourcePath in localReviews.unviewed", "group": "navigation@1" },
+        { "command": "localReviews.unmarkViewed", "when": "isInDiffEditor && resourcePath in localReviews.viewed", "group": "navigation@1" },
+        { "command": "localReviews.send", "when": "isInDiffEditor && resourcePath in localReviews.changed", "group": "navigation@2" }
+      ],
+      "comments/commentThread/title": [
+        { "command": "localReviews.sendThread", "when": "commentController == local-reviews && commentThread =~ /pending/", "group": "inline@1" },
+        { "command": "localReviews.resolve", "when": "commentController == local-reviews && commentThread =~ /^unresolved/", "group": "inline@2" },
+        { "command": "localReviews.unresolve", "when": "commentController == local-reviews && commentThread =~ /^resolved/", "group": "inline@2" }
+      ],
+      "comments/commentThread/context": [
+        { "command": "localReviews.createThread", "when": "commentController == local-reviews && commentThreadIsEmpty", "group": "inline@1" },
+        { "command": "localReviews.cancelThread", "when": "commentController == local-reviews && commentThreadIsEmpty", "group": "inline@2" },
+        { "command": "localReviews.reply", "when": "commentController == local-reviews && !commentThreadIsEmpty", "group": "inline@1" }
+      ]
+    }
+  }
+}
