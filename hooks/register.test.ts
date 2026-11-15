@@ -792,6 +792,24 @@ test('the mod neither adopts nor calls the server its endpoint names once anothe
     assert.match(listed.deny, /does not answer/);
 });
 
+test('a server that stopped answering since the mod adopted it, as one a newer mod restarts on another port, is found again in the endpoint file', async () => {
+    const { dir } = await session();
+    const { version } = JSON.parse(await readFile(join(ROOT, '.claude-plugin/plugin.json'), 'utf8'));
+    const first = createServer((_, res) => res.end(JSON.stringify({ app: 'claude-reviews', version })));
+    await new Promise<void>(resolve => first.listen(0, '127.0.0.1', resolve));
+    const claude = await mod(dir, { serverPort: (first.address() as AddressInfo).port });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    // Another Claude session's mod stops that server, and writes the port of the one it starts.
+    first.closeAllConnections();
+    await new Promise(resolve => first.close(resolve));
+    writeFileSync(join(DATA, 'endpoint'), JSON.stringify({ port, token: (server as unknown as { token: string }).token }));
+
+    const listed = await claude.tool('list_open_threads');
+
+    assert.equal(listed.deny, undefined);
+    assert.equal(JSON.parse(listed.result).threads.length, 1);
+});
+
 test('a server whose port another account took since the mod adopted it is no longer called: the tools say so', async () => {
     const { dir } = await session();
     const claude = await mod(dir, { uid: '1000' });
