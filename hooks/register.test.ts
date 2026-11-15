@@ -163,7 +163,7 @@ test('a Send seen during a turn calls $.prompt.submit with the text of #12, with
     await claude.poll();
 
     assert.deepEqual(claude.seen.submitted, [prompt(1)]);
-    assert.equal(prompt(1), "claude-reviews : 1 thread t'attend. Lis-les avec list_open_threads, réponds dans chacun avec reply_to_thread, et modifie le code quand un thread le demande.");
+    assert.equal(prompt(1), 'claude-reviews: 1 thread is waiting for you. Read them with list_open_threads, reply in each with reply_to_thread, and change the code when a thread asks for it.');
     assert.equal(claude.seen.appended, 0);
 });
 
@@ -257,7 +257,7 @@ test('open_thread opens the session of a worktree that has none, with a thread o
     assert.deepEqual([session.threads[0].status, session.threads[0].anchor.lines], ['open', ['one', 'two']]);
 });
 
-test('a Claude session starting in a worktree where threads wait adds "N threads t\'attendent" to its first prompt, and to no subagent\'s first message', async () => {
+test('a Claude session starting in a worktree where threads wait adds "N threads are waiting for you" to its first prompt, and to no subagent\'s first message', async () => {
     const { dir } = await session(['One', 'Two']);
     const claude = await mod(dir);
     const typed = (text: string) => claude.fire('prompt.submit', { text, wait: false, origin: { kind: 'composer' } });

@@ -264,11 +264,11 @@ test('the image of the README', async ({ page }) => {
     const { id } = await (await page.request.post('/api/sessions', { data: { worktree: dir } })).json();
     const route = `/api/sessions/${id}`;
     const { base, tree } = await (await page.request.get(`${route}/tree`)).json();
-    await page.request.post(`${route}/threads`, { data: { author: 'me', base, tree, path: 'src/cart.ts', side: 'new', start: 3, end: 3, body: 'Pourquoi arrondir à chaque total, plutôt qu’à l’affichage ?' } });
-    await page.request.post(`${route}/threads`, { data: { author: 'claude', path: 'src/cart.ts', side: 'new', start: 9, end: 11, body: 'J’ai mis le taux de TVA sur chaque ligne : une facture peut mêler 5,5 % et 20 %.' } });
+    await page.request.post(`${route}/threads`, { data: { author: 'me', base, tree, path: 'src/cart.ts', side: 'new', start: 3, end: 3, body: 'Why round every total, rather than on display?' } });
+    await page.request.post(`${route}/threads`, { data: { author: 'claude', path: 'src/cart.ts', side: 'new', start: 9, end: 11, body: 'I put the VAT rate on each line: an invoice can mix 5.5% and 20%.' } });
     await page.request.post(`${route}/send`, { data: { tree } });
     await page.request.post(`${route}/threads/1/messages`, {
-        data: { author: 'claude', body: 'Pour que `total` et `totalWithVat` rendent des montants au centime : la facture les additionne ensuite, et `format` arrondit trop tard pour cette somme.' },
+        data: { author: 'claude', body: 'So that `total` and `totalWithVat` return amounts to the cent: the invoice adds them up afterwards, and `format` rounds too late for that sum.' },
     });
     // As the mod does every 2 s: the view then shows no warning about a missing Claude session.
     const listen = () => page.request.get(`/api/sessions?worktree=${encodeURIComponent(dir)}&claude`).catch(() => {});
@@ -278,7 +278,7 @@ test('the image of the README', async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 900 });
     const view = await open(page, dir);
     await view.getByRole('treeitem', { name: /^src\/cart\.ts/ }).click();
-    await expect(page.locator('.review-widget').getByText('rendent des montants au centime')).toBeVisible();
+    await expect(page.locator('.review-widget').getByText('return amounts to the cent')).toBeVisible();
     // The diff alone, without the chat and the panel of openvscode-server.
     for (const [part, toggle] of [['.part.auxiliarybar', 'Toggle Secondary Side Bar'], ['.part.panel', 'Toggle Panel']]) {
         if (await page.locator(part).isVisible()) await page.locator(`.titlebar .action-label[aria-label^="${toggle}"]`).click();

@@ -36,19 +36,19 @@ test('the images of the README', async ({ page, request }) => {
     project('acme-admin', 'export-csv');
     const { id, base, tree } = await session(request, shop);
     const mine = { author: 'me', base, tree, path: 'src/cart.ts', side: 'new' };
-    await post(request, `/api/sessions/${id}/threads`, { ...mine, start: 3, end: 3, body: 'Pourquoi arrondir à chaque total, plutôt qu’à l’affichage ?' });
-    await post(request, `/api/sessions/${id}/threads`, { author: 'claude', path: 'src/cart.ts', side: 'new', start: 9, end: 11, body: 'J’ai mis le taux de TVA sur chaque ligne : une facture peut mêler 5,5 % et 20 %.' });
+    await post(request, `/api/sessions/${id}/threads`, { ...mine, start: 3, end: 3, body: 'Why round every total, rather than on display?' });
+    await post(request, `/api/sessions/${id}/threads`, { author: 'claude', path: 'src/cart.ts', side: 'new', start: 9, end: 11, body: 'I put the VAT rate on each line: an invoice can mix 5.5% and 20%.' });
     await post(request, `/api/sessions/${id}/send`, { tree });
     await post(request, `/api/sessions/${id}/threads/1/messages`, {
         author: 'claude',
-        body: 'Pour que `total` et `totalWithVat` rendent des montants au centime : la facture les additionne ensuite, et `format` arrondit trop tard pour cette somme.',
+        body: 'So that `total` and `totalWithVat` return amounts to the cent: the invoice adds them up afterwards, and `format` rounds too late for that sum.',
     });
-    await post(request, `/api/sessions/${id}/threads/2/messages`, { author: 'me', body: 'OK, merci.' });
+    await post(request, `/api/sessions/${id}/threads/2/messages`, { author: 'me', body: 'OK, thanks.' });
     await post(request, `/api/sessions/${id}/threads/2/resolve`, {});
     for (const other of [api, join(ROOT, 'acme-admin')]) {
         const { id: otherId, tree: otherTree } = await session(request, other);
-        await post(request, `/api/sessions/${otherId}/threads`, { author: 'claude', path: 'src/cart.ts', side: 'new', start: 1, end: 1, body: 'Ici ?' });
-        await post(request, `/api/sessions/${otherId}/threads/1/messages`, { author: 'me', body: 'Oui.' });
+        await post(request, `/api/sessions/${otherId}/threads`, { author: 'claude', path: 'src/cart.ts', side: 'new', start: 1, end: 1, body: 'Here?' });
+        await post(request, `/api/sessions/${otherId}/threads/1/messages`, { author: 'me', body: 'Yes.' });
         await post(request, `/api/sessions/${otherId}/send`, { tree: otherTree });
     }
     const listening = await stage(page, request, shop);
@@ -70,9 +70,9 @@ test('the images of the README', async ({ page, request }) => {
     const composer = page.locator('form', { has: page.getByRole('button', { name: 'Cancel' }) });
     await composer.getByRole('button', { name: 'Suggest change' }).click();
     const box = composer.getByRole('textbox');
-    const suggested = 'Gardons deux décimales, même pour un montant rond.\n\n```suggestion\n'
+    const suggested = 'Let’s keep two decimals, even for a round amount.\n\n```suggestion\n'
         + "    return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 }).format(amount);\n```\n";
-    await box.fill(suggested.slice(0, 51));
+    await box.fill(suggested.slice(0, 50));
     await frame(900);
     await box.fill(suggested);
     await frame(1600);
@@ -85,8 +85,8 @@ test('the images of the README', async ({ page, request }) => {
     // The click scrolled up to Send: back to the thread.
     await thread.evaluate(element => element.scrollIntoView({ block: 'center' }));
     await frame(1600);
-    await post(request, `/api/sessions/${id}/threads/3/messages`, { author: 'claude', body: 'Fait : `format(10)` rend maintenant « 10,00 € ».' });
-    await expect(thread).toContainText('Fait :', { timeout: 5000 });
+    await post(request, `/api/sessions/${id}/threads/3/messages`, { author: 'claude', body: 'Done: `format(10)` now returns "10,00 €".' });
+    await expect(thread).toContainText('Done:', { timeout: 5000 });
     await frame(2400);
     await thread.getByRole('button', { name: 'Resolve' }).click();
     await expect(thread).toContainText('Resolved');

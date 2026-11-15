@@ -23,8 +23,8 @@ export const start: Watch = { sessions: {}, waiting: 0, owed: null, submitting: 
 
 /** The text of a wake, a relaunch and the first message alike. */
 export function prompt(waiting: number): string {
-    const threads = waiting > 1 ? `${waiting} threads t'attendent` : `${waiting} thread t'attend`;
-    return `claude-reviews : ${threads}. Lis-les avec list_open_threads, réponds dans chacun avec reply_to_thread, et modifie le code quand un thread le demande.`;
+    const threads = waiting > 1 ? `${waiting} threads are waiting for you` : `${waiting} thread is waiting for you`;
+    return `claude-reviews: ${threads}. Read them with list_open_threads, reply in each with reply_to_thread, and change the code when a thread asks for it.`;
 }
 
 /** The status line: the threads waiting for Claude, and a wake a drop holds; undefined when none waits. */
