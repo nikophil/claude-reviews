@@ -90,7 +90,7 @@ The server serves the UI and a JSON API, for the UI and the mod.
 | `GET /api/me` | `{ login, name }`, for the avatars of my messages: my login on github.com (`gh api --hostname github.com user --jq .login`) and `git config --global --includes user.name`, each `null` on failure or beyond 2 s. |
 | `POST /api/shutdown` `{}` | Stops the server: it stops listening before answering. |
 | `GET /api/sessions` | The open sessions, for Reviews: `[{ id, worktree, repo, branch, waitingForClaude, updatedAt }]`, Waiting for Claude first, then the rest, the most recently active first on a tie. |
-| `GET /api/sessions?worktree=<path>[&claude]` | The open session of the worktree, without creating one: 404 without an open session; `&claude` comes from the mod, and says that a Claude session runs in this worktree, even without an open session. |
+| `GET /api/sessions?worktree=<path>[&claude[&blocked]]` | The open session of the worktree, without creating one: 404 without an open session; `&claude` comes from the mod, and says that a Claude session runs in this worktree, even without an open session; `&blocked`, that this Claude session is Blocked. |
 | `GET /api/sessions?closed` | The closed sessions, for the Closed tab of Reviews: `[{ id, worktree, repo, approvedAt, closedBecause }]`, the most recently closed first. |
 | `GET /api/inbox` | One entry per open session, for the local sources of gh-notif: `[{ repo, branch, title, url, openThreads, awaitingMe, lastActor, updatedAt }]`, where `awaitingMe` counts the threads where Claude spoke last; gh-notif calls it with the port and the token of the `endpoint` file, like any client. |
 | `POST /api/sessions` `{ worktree }` | Returns the open session of the worktree, or creates one. |
@@ -118,6 +118,8 @@ The server serves the UI and a JSON API, for the UI and the mod.
 - Reading or opening the session of a worktree also closes the session at its path that carries another `commonDir`: another repository does not take over the session.
 - A read only waits for the write queue to close a session; an unreadable session file is ignored, with a line in the server log, without being deleted or rewritten.
 - Each returned session carries `claudeSession`, true when the mod read its worktree with `&claude` in the last 10 seconds, kept in memory; without it, the PhpStorm plugin grays out its Sends, the VS Code extension refuses them, and both show, instead of waiting for Claude, the command that starts a Claude session.
+- It also carries `claudeBlocked`, true when that last read also carried `&blocked` and a thread is Waiting for Claude;
+  the page, the PhpStorm tool window and the VS Code view then warn that Claude is waiting for my answer in its session.
 - The notification counts the threads where Claude wrote since the last Send, and the Waiting for Claude threads; `start(port, notify)` receives the command to run, which the tests record without running it.
 - Except for `/diff`, `/tree`, `/lines`, `/bases` and the list of sessions, each route of a session returns the whole session, in the file format, and each thread there also carries its `status`: `resolved`, `waiting-for-claude` when my message is the last published one, `open` when it is Claude's, or `null` as long as no message is published; the clients do not display `open`.
 - A route that returns the session and receives `?base=<id>&tree=<id>` (the code displayed by the UI), or `?reanchor` (the base of the session and the working tree, for the mod), re-anchors each thread on this code: each thread then also carries `at`, `null` if it is Outdated, otherwise `{ start, end, context }`.
@@ -170,6 +172,9 @@ The server serves the UI and a JSON API, for the UI and the mod.
 - A ```` ```suggestion ```` block in one of my messages is the code I propose in place of the lines of the thread, on the `new` side: the descriptions of the tools ask Claude to apply it to the working tree unless it disagrees, then to reply.
 - The poll keeps a status line through `$.ui.status`: "claude-reviews · N threads waiting for Claude", followed by "· wake held until the next prompt" when a wake waits after a `{ drop }`, and nothing without a thread waiting for Claude.
 - It polls `GET /api/sessions?worktree=<path>&claude` every 2 s; a Send that leaves Waiting for Claude threads makes it wake Claude through `$.prompt.submit`, never awaited in a hook.
+- Each of its reads adds `&blocked` while a loop of its Claude session, the main one or a subagent's, is Blocked:
+  from a `classic.PermissionRequest` that no settings hook answers, or a `tool.call` of `AskUserQuestion`, until a tool call of that loop ends.
+  The `next` of `classic.PermissionRequest` resolves once the settings hooks answered, not the person, hence the end of the tool call, run or refused, as the end of the wait.
 - Only a 404 means "no open session"; a failed poll leaves the state as is, and the mod keeps per session the last Send seen and the relaunch made.
 - It relaunches Claude once per Send, at the end of a turn that ended on an answer, neither interrupted nor in error, that leaves threads waiting; a `{ drop }` waits for the next prompt or turn start, and does not count.
 - At the end of the turn opened by a wake or a relaunch, if it must not relaunch, it calls `POST /api/sessions/<id>/turn-complete` once, without awaiting it, only if this turn ended on an answer: after an Esc or an error, nothing.

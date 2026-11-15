@@ -60,6 +60,8 @@ let shown: string | undefined;
 let uid: string | undefined;
 /** How many times the module registered: a launch from an earlier registration stops its probes. */
 let registered = 0;
+/** The loops of the Claude session, '' the main one, else a subagent's id, that wait for my answer: a permission dialog, or a question. */
+let blocked = new Set<string>();
 
 const silent = () => `claude-reviews does not answer${base ? ` on ${base}` : ''}`;
 
@@ -141,8 +143,8 @@ async function follow($: EngineInterface): Promise<void> {
 async function find($: EngineInterface, query = ''): Promise<{ open: Session | null } | { error: string }> {
     if (!worktree) return { open: null };
     // ponytail: each look makes the server run git rev-parse, every 2 s per Claude session; cache the top of a worktree if it shows.
-    // `claude` tells the server a Claude session runs in the worktree, which the clients show instead of waiting for it.
-    const res = await api($, 'GET', `/api/sessions?worktree=${encodeURIComponent(worktree)}&claude${query}`);
+    // `claude` tells the server a Claude session runs in the worktree, which the clients show instead of waiting for it; `blocked`, that it waits for my answer.
+    const res = await api($, 'GET', `/api/sessions?worktree=${encodeURIComponent(worktree)}&claude${blocked.size ? '&blocked' : ''}${query}`);
     if (res.status === 404) return { open: null };
     if (res.status === 200 && Array.isArray(res.body?.threads)) return { open: res.body };
     // A 200 without threads is not claude-reviews answering: it reads as no answer.
@@ -268,8 +270,30 @@ function excerpt(hunk: { header: string; lines: { type: 'context' | 'add' | 'del
 // ponytail: the matchers spell the plugin's name, local-reviews; renaming the plugin means renaming them.
 export const register: Register = on => {
     // Each register starts afresh, as a reloaded module does: the node tests register it several times.
-    [base, token, root, worktree, session, watch, greeted, shown, uid] = ['', '', undefined, undefined, undefined, start, false, undefined, undefined];
+    [base, token, root, worktree, session, watch, greeted, shown, uid, blocked] = ['', '', undefined, undefined, undefined, start, false, undefined, undefined, new Set()];
     registered++;
+
+    // Registered first, so that it holds every tool call, this mod's own included: a call that waited for my answer ends with it, run or refused.
+    // ponytail: any call ending in a loop ends that loop's wait, even one that ran beside the call still asking; key the wait by call if parallel asks show.
+    on('tool.call', async ($, e, next) => {
+        const loop = e.agentId ?? '';
+        if (e.tool === 'AskUserQuestion') blocked.add(loop);
+        try {
+            return await next(e);
+        } finally {
+            blocked.delete(loop);
+        }
+    });
+
+    // Fires as the dialog opens; its next resolves once the settings hooks beneath answered, not the person.
+    on('classic.PermissionRequest', async ($, e, next) => {
+        const loop = e.agent_id ?? '';
+        blocked.add(loop);
+        const result = await next(e);
+        // A settings hook that answers opens no dialog.
+        if (result.decision) blocked.delete(loop);
+        return result;
+    });
 
     // ponytail: a Claude session that starts out of a worktree leaves the mod off, even once /cd takes it into one.
     on('session.start', async ($, e, next) => {

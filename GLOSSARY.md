@@ -45,6 +45,11 @@ _Avoid_: read, reviewed
 A Claude Code conversation running in a worktree.
 _Avoid_: session (on its own, which names the Session)
 
+**Blocked**:
+Said of a Claude session that waits for my answer in its own window: a permission dialog, or a question Claude asked me.
+The threads Waiting for Claude wait as long as it is Blocked; the clients say so only while a thread waits for Claude.
+_Avoid_: stuck, waiting for me
+
 **Client**:
 What shows me a session and writes to it for me: the page in a browser, or an IDE (PhpStorm, VS Code).
 A client talks only to the server's HTTP API; the Claude side, for its part, goes through the mod.

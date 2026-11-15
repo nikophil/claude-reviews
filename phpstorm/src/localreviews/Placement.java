@@ -56,6 +56,12 @@ final class Placement {
         return claude == null || claude.getAsBoolean();
     }
 
+    /** Whether the Claude session waits for my answer, to a permission or a question, while a thread waits for Claude; false from a server without the field. */
+    static boolean blocked(JsonObject session) {
+        JsonElement blocked = session.get("claudeBlocked");
+        return blocked != null && blocked.getAsBoolean();
+    }
+
     static boolean approved(JsonObject session) {
         return session.get("approvedAt") instanceof JsonPrimitive;
     }

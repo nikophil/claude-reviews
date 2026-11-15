@@ -252,6 +252,22 @@ test('a session says whether a Claude session read it, with ?claude, in the last
     assert.equal(later.claudeSession, false);
 });
 
+test('a session says the Claude session is Blocked, with ?claude&blocked, only while a thread waits for Claude, and for 10 s', async t => {
+    const { dir, id, path } = await sessionWithThread();
+    const read = async (query: string) => (await api('GET', `/api/sessions?worktree=${encodeURIComponent(dir)}${query}`)).body.claudeBlocked;
+    const claudeSpokeLast = await read('&claude&blocked');
+    await api('POST', `${path}/messages`, { author: 'me', body: 'Why?' });
+    await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id) });
+    const waiting = await read('&claude&blocked');
+    const answered = await read('&claude');
+    await read('&claude&blocked');
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 10_001 });
+
+    const later = (await api('GET', `/api/sessions/${id}`)).body.claudeBlocked;
+
+    assert.deepEqual([claudeSpokeLast, waiting, answered, later], [false, true, false, false]);
+});
+
 test('/show asks the IDE clients to show the session: the session carries the date of the request, null before', async () => {
     const { id } = await sessionWithThread();
     const before = (await api('GET', `/api/sessions/${id}`)).body;

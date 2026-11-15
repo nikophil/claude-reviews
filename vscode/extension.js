@@ -332,6 +332,7 @@ function activate(/** @type {vscode.ExtensionContext} */ context) {
         view.badge = counts.pending ? { value: counts.pending, tooltip: `${counts.pending} pending` } : undefined;
         view.message = state.error ?? (!session ? undefined : !review.claude(session)
             ? `Start a Claude session in this worktree to send to Claude: ${review.startClaude(session)}`
+            : session.claudeBlocked ? '⚠ Claude is waiting for your answer in its session, to a permission or a question, before it replies in the threads.'
             : `${state.files.length} files · ${viewed.length} viewed · ${counts.waiting} waiting for Claude`);
         files.emitter.fire(undefined);
         decorations.fire(undefined);

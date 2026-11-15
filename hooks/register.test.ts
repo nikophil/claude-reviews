@@ -110,11 +110,14 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
         'prompt.submit': e => ({ text: e.text, context: e.context }),
         'turn.start': e => ({ turnId: e.turnId }),
         'turn.complete': () => ({ text: '' }),
+        'tool.call': () => ({ result: '' }),
+        'classic.PermissionRequest': () => ({}),
     };
+    /** Runs the matching hooks in their order of registration, each `next` the hooks beneath it, then the engine. */
     async function fire(event: string, e: any): Promise<any> {
-        const found = hooks.find(h => h.event === event && Object.entries(h.matcher).every(([key, value]) => e[key] === value));
-        const next = async (input: any) => engine[event](input);
-        return found ? found.hook($, e, next) : next(e);
+        const found = hooks.filter(h => h.event === event && Object.entries(h.matcher).every(([key, value]) => e[key] === value));
+        const run = async (i: number, input: any): Promise<any> => i < found.length ? found[i].hook($, input, (next: any) => run(i + 1, next)) : engine[event](input);
+        return run(0, e);
     }
     const settle = () => new Promise(resolve => setTimeout(resolve, 20));
     // The server writes this file; here the harness stands in for it, pointing the mod at the test server (or the port under test).
@@ -123,6 +126,8 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
     await fire('session.start', { cwd, surface: null, isInteractive: false });
     return {
         seen, fire, settle,
+        /** What the engine answers beneath the hooks, by event: a test makes a tool call wait for the person. */
+        engine,
         /** How the engine answers the next prompts: entered, or `{ drop }`, or once a promise settles. */
         answer: (value: object) => { answer = value; },
         /** Whether every request to the server fails with a 500. */
@@ -174,6 +179,59 @@ test('the poll of the mod tells the server that a Claude session runs in the wor
     await claude.poll();
 
     assert.equal((await api('GET', `/api/sessions/${id}`)).claudeSession, true);
+});
+
+/** A tool call the engine holds until `end()`, as it holds one on a dialog the person answers. */
+function held(claude: Awaited<ReturnType<typeof mod>>, e: object): { end: () => Promise<unknown> } {
+    let resolve!: (value: object) => void;
+    claude.engine['tool.call'] = () => new Promise(r => { resolve = r; });
+    const call = claude.fire('tool.call', e);
+    claude.engine['tool.call'] = () => ({ result: '' });
+    return { end: () => (resolve({ result: '' }), call) };
+}
+
+const blocked = async (id: string) => (await api('GET', `/api/sessions/${id}`)).claudeBlocked;
+
+test('while a permission dialog waits for me, the poll tells the server the Claude session is Blocked, until the call that asked ends, whatever a subagent\'s calls do', async () => {
+    const { dir, id } = await session();
+    const claude = await mod(dir);
+    const asking = held(claude, { tool: 'Bash', command: 'rm -r var' });
+    await claude.fire('classic.PermissionRequest', { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'rm -r var' } });
+    await claude.fire('tool.call', { tool: 'Read', file_path: 'a.txt', agentId: 'a1' });
+    await claude.poll();
+    const during = await blocked(id);
+
+    await asking.end();
+    await claude.poll();
+
+    assert.equal(during, true);
+    assert.equal(await blocked(id), false);
+});
+
+test('a permission request a settings hook answers opens no dialog: the Claude session is not Blocked', async () => {
+    const { dir, id } = await session();
+    const claude = await mod(dir);
+    held(claude, { tool: 'Bash', command: 'ls' });
+    claude.engine['classic.PermissionRequest'] = () => ({ decision: { behavior: 'allow' } });
+
+    await claude.fire('classic.PermissionRequest', { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } });
+    await claude.poll();
+
+    assert.equal(await blocked(id), false);
+});
+
+test('while Claude asks me a question (AskUserQuestion), the poll tells the server the Claude session is Blocked, until I answer', async () => {
+    const { dir, id } = await session();
+    const claude = await mod(dir);
+    const asking = held(claude, { tool: 'AskUserQuestion', questions: [] });
+    await claude.poll();
+    const during = await blocked(id);
+
+    await asking.end();
+    await claude.poll();
+
+    assert.equal(during, true);
+    assert.equal(await blocked(id), false);
 });
 
 test('list_open_threads gives, but for Resolved threads and threads without published message, the id, file, side, range, lines and published messages', async () => {

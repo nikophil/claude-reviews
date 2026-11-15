@@ -22,6 +22,7 @@ The project's context and decisions are in [BRIEF.md](BRIEF.md), its vocabulary 
 - Propose a change with a `suggestion` block: Claude applies it when it reads the thread.
 - Send my messages with Send, which wakes the Claude session of the worktree, even an idle one;
   edit or delete a message as long as it is not sent.
+  When that Claude session waits for your answer to a permission or a question, the review says so.
 - Follow the threads: they stay on their line when the code moves, and become Outdated when their lines disappear.
 - Mark a file Viewed, until its content changes;
   go from one thread to another with `j` and `k`, or through the conversations menu.

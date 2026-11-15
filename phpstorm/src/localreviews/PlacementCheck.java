@@ -32,6 +32,7 @@ final class PlacementCheck {
         check(Placement.startClaude(JsonParser.parseString("{ \"worktree\": \"/home/me/my app's\" }").getAsJsonObject()).equals("cd '/home/me/my app'\\''s' && claude"), "the command quotes a worktree with a space or a quote");
         check(!Placement.claude(JsonParser.parseString("{ \"claudeSession\": false }").getAsJsonObject()), "no Claude session reads the session");
         check(Placement.claude(new JsonObject()), "a server without the field takes a Claude session for granted");
+        check(Placement.blocked(JsonParser.parseString("{ \"claudeBlocked\": true }").getAsJsonObject()) && !Placement.blocked(new JsonObject()), "Blocked as the server says, never from a server without the field");
         JsonObject statuses = JsonParser.parseString("""
             { "threads": [
               { "id": 1, "resolved": false, "status": "open", "anchor": { "path": "a.php", "side": "new" }, "messages": [{ "date": "x" }, { "date": null }] },
