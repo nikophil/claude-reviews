@@ -40,9 +40,9 @@ Décisions structurantes : [docs/adr/](docs/adr/).
 
 ## Architecture
 
-1. **Un serveur local par compte**, pour tous ses worktrees : il sert l'UI et une API JSON, sur un port éphémère, derrière un token ([ADR 0005](docs/adr/0005-un-serveur-et-un-token-par-compte.md)).
+1. **Un serveur local par compte**, pour tous ses worktrees : il sert l'UI et une API JSON, sur un port éphémère, derrière un token ([ADR 0006](docs/adr/0006-un-serveur-et-un-token-par-compte.md)).
    Le mod le démarre à la demande quand le fichier `endpoint` ne nomme aucun serveur, sans service systemd.
-2. **Stockage** : un fichier JSON par session ouverte sous `~/.local/share/claude-reviews/sessions/`, avec le chemin du worktree comme clé ;
+2. **Stockage** : un fichier JSON par session ouverte sous `~/.local/share/claude-reviews/sessions/`, rangé sous son id et retrouvé par le chemin de son worktree ;
    une session close part sous `~/.local/share/claude-reviews/archive/`, rangée sous son id ;
    seul le serveur écrit ces fichiers, par remplacement atomique ([ADR 0003](docs/adr/0003-stockage-hors-du-depot.md)).
 3. **Snapshots** : à chaque calcul du diff, le serveur écrit un tree du working tree (suivis et non suivis, hors ignorés) avec un index temporaire ;
@@ -126,7 +126,7 @@ Son `CLAUDE.md` impose de lire `docs/ARCHITECTURE.md` avant toute modification, 
 L'intérêt : une seule boîte de réception « où est-ce qu'on m'attend », de la review locale jusqu'à la PR mergeable.
 Ça vaut surtout avec plusieurs Claude sessions en parallèle ; avec une seule, le `notify-send` du MVP suffit.
 
-Contrat proposé, après le MVP : claude-reviews expose une entrée par session ouverte, sur le port et avec le token du fichier `endpoint` (plus de port fixe depuis l'ADR 0005)
+Contrat proposé, après le MVP : claude-reviews expose une entrée par session ouverte, sur le port et avec le token du fichier `endpoint` (plus de port fixe depuis l'ADR 0006)
 
 ```
 GET http://127.0.0.1:<port>/api/inbox
@@ -162,10 +162,9 @@ Fait le 14 novembre 2026 sur Claude Code 2.1.325, avec un mod jetable (`wake-pro
 ## Questions ouvertes
 
 - **Deux Claude sessions dans le même worktree** répondraient toutes deux aux mêmes threads ; le MVP l'accepte, c'est rare avec Orca.
-- Vue côte à côte, threads de fichier entier et blocs `suggestion` : faits ; Claude applique une suggestion, le serveur n'écrit jamais dans le worktree.
+- Vue côte à côte, threads de fichier entier et blocs `suggestion` : faits ; Claude applique une suggestion, le serveur n'écrit jamais dans le worktree ([ADR 0007](docs/adr/0007-claude-applique-les-suggestions.md)).
 
 ## Prochaines étapes
 
-1. Écrire le MVP : serveur, diff avec sélecteur de base et snapshots, threads, stockage JSON et ré-ancrage ;
-   puis le mod (outils, réveil, relance, premier message) ; puis `notify-send`.
-2. Ensuite seulement : vue côte à côte et `/api/inbox` (faits), puis la PR gh-notif.
+Le MVP, la vue côte à côte, les clients PhpStorm et VS Code, `/api/inbox` et un serveur par compte sont faits.
+Reste la PR gh-notif, qui lira `/api/inbox` comme une source locale.

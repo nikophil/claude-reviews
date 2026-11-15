@@ -1,6 +1,6 @@
 # Stocker les sessions hors du dépôt, en JSON
 
-Chaque session, avec ses threads, vit dans un fichier JSON sous `~/.local/share/claude-reviews/sessions/`, avec le chemin du worktree comme clé ;
+Chaque session, avec ses threads, vit dans un fichier JSON sous `~/.local/share/claude-reviews/sessions/`, rangé sous son id et retrouvé par le chemin de son worktree ;
 seul le serveur l'écrit, par remplacement atomique.
 Une session close, approuvée ou dont le worktree a disparu, part sous `~/.local/share/claude-reviews/archive/`, rangée sous son id :
 elle reste consultable, et un nouveau worktree au même chemin ouvre une nouvelle session.

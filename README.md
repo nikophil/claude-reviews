@@ -86,9 +86,10 @@ code --install-extension var/vscode/local-reviews.vsix --force
 
 ## Sécurité
 
-Le serveur n'écoute que sur `127.0.0.1`, refuse les autres sites (en-têtes `Host`, `Origin` et `Sec-Fetch-Site`, Content-Security-Policy) et n'a pas d'authentification.
-Il est fait pour un poste où l'on est seul :
-sur une machine partagée entre plusieurs comptes, en SSH par exemple, les autres comptes pourraient lire les dépôts relus et écrire dans les threads.
+Le serveur n'écoute que sur `127.0.0.1` et refuse les autres sites (en-têtes `Host`, `Origin` et `Sec-Fetch-Site`, Content-Security-Policy).
+Chaque compte a son serveur et son token, que seul ce compte lit ([ADR 0006](docs/adr/0006-un-serveur-et-un-token-par-compte.md)) :
+sur une machine partagée en SSH, un autre compte atteint le port, mais n'obtient rien sans le token.
+Le serveur n'écrit jamais un fichier du worktree relu : une suggestion, c'est Claude qui l'applique ([ADR 0007](docs/adr/0007-claude-applique-les-suggestions.md)).
 
 ## Développer
 

@@ -260,7 +260,9 @@ La coloration syntaxique passe par les variables `--color-prettylights-syntax-*`
 ## Tests
 
 - Chaque critère d'acceptation d'une issue a son test, écrit avant le code (rouge, puis vert).
-- `node --test` couvre le serveur et les fonctions pures, dans des fichiers `*.test.ts` à côté du code.
+- `node --test` couvre le serveur et les fonctions pures, dans des fichiers `*.test.ts` à côté du code ; sous Node 25, `node --test <dossier>` échoue (« Cannot find module ») : lancer `node --test` seul, ou nommer les fichiers.
+- Les tests du mod enregistrent plusieurs fois le même module : son état (le serveur visé, une boucle de `serve()` encore en cours) passe d'un test au suivant, ce qu'un CI plus lent révèle ; tout ce qu'une boucle lit se fige à son lancement.
+- Un serveur de test s'arrête par son PID : `pkill -f server/main.ts` arrête aussi le vrai serveur de la machine.
 - Les dépôts de test se créent avec `repo()` et `write()` de `server/fixture.ts`, dans un dossier temporaire, à l'abri de la config git globale ; `removeRepos()` les supprime en fin de fichier de test.
 - Playwright (Chromium) couvre l'UI, dans `e2e/*.spec.ts`, sur les mêmes fixtures ; chaque test ouvre `/?worktree=<fixture>`.
 - `e2e/vscode.spec.ts` couvre l'extension VS Code dans openvscode-server, par `playwright.vscode.config.ts` ; `playwright.config.ts` l'ignore.

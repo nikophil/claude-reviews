@@ -53,11 +53,12 @@ _Avoid_: front, outil
 ### Fils
 
 **Thread**:
-Une discussion entre moi et Claude, ancrée sur une ligne du diff d'une session.
+Une discussion entre moi et Claude, ancrée sur des lignes du diff d'une session, ou sur un fichier entier.
 _Avoid_: fil (en code et dans l'UI), annotation, commentaire (pour le fil entier)
 
 **Anchor**:
-L'endroit d'un thread : un fichier, un côté du diff (ancien ou nouveau), une plage de lignes et leur contenu.
+L'endroit d'un thread : un fichier, un côté du diff (ancien ou nouveau), une plage de lignes et leur contenu ; sans plage pour un thread sur le fichier entier.
+Pour moi comme pour Claude, le côté ancien est la base de la session, et le nouveau le working tree.
 
 **Message**:
 Une prise de parole dans un thread, de moi ou de Claude.
@@ -66,11 +67,22 @@ _Avoid_: comment, reply
 
 **Pending**:
 Se dit d'un message que j'ai écrit mais pas encore envoyé ; la prochaine review le publie.
+Tant qu'il l'est, je peux le modifier ou le supprimer, et un thread qui n'a plus de message disparaît avec lui.
 _Avoid_: draft, brouillon
+
+**Suggestion**:
+Un bloc de code d'un de mes messages, qui propose le code à mettre à la place des lignes du thread, côté nouveau.
+Claude l'applique au working tree, sauf désaccord, puis répond dans le thread ; aucun client ne l'applique lui-même.
+_Avoid_: patch, commit suggestion
 
 **Waiting for Claude**:
 Un thread non Resolved dont le dernier message envoyé est le mien.
 _Avoid_: unread, watermark
+
+**Replied**:
+Se dit d'un thread où Claude a écrit depuis mon dernier Send ; avant mon premier Send, aucun ne l'est.
+C'est une marque pour retrouver ses réponses, pas un statut du thread.
+_Avoid_: Awaiting you, unread
 
 Un thread non Resolved où Claude a parlé en dernier n'a pas de nom ni de statut affiché : la notification « Claude replied in every thread » et le message de Claude suffisent.
 _Avoid_: Awaiting you
@@ -85,4 +97,5 @@ Rouvrir un thread Resolved : je peux de nouveau y écrire, et le Send suivant pu
 _Avoid_: reopen, réouverture
 
 **Outdated**:
-Un thread dont la ligne d'ancrage ne se retrouve plus dans le code qu'on regarde : le code affiché pour moi, le working tree pour Claude.
+Un thread dont les lignes d'ancrage ne se retrouvent plus dans le code qu'on regarde : le code affiché pour moi, la base de la session et le working tree pour Claude.
+Un thread sur un fichier entier l'est quand son fichier a disparu de ce code.
