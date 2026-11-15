@@ -33,6 +33,7 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.HashMap;
@@ -204,6 +205,7 @@ final class Threads {
         if (anchor == null || !anchor.at().equals(at)) {
             if (anchor != null) anchor.marker().dispose();
             anchors.remove(n);
+            // ponytail: the server reads the lines of the file on disk; on a document not saved, they land on the lines of the same numbers, until it is saved.
             if (start < 1 || end > document.getLineCount()) return new int[] {start, end};
             anchor = new Anchor(at, document.createRangeMarker(document.getLineStartOffset(start - 1), document.getLineEndOffset(end - 1)));
             anchors.put(n, anchor);
@@ -213,18 +215,26 @@ final class Threads {
         return new int[] {document.getLineNumber(marker.getStartOffset()) + 1, document.getLineNumber(marker.getEndOffset()) + 1};
     }
 
-    /** A new thread on lines `start` to `end` of the side, from 1, with its field focused. */
+    /** A new thread on lines `start` to `end` of the side, from 1, with its field focused; its lines follow the edits of the document until it is sent. */
     void draft(int start, int end) {
         closeDraft();
         ModalityState modality = ModalityState.stateForComponent(editor.getComponent());
+        RangeMarker marked = document.createRangeMarker(document.getLineStartOffset(start - 1), document.getLineEndOffset(end - 1));
         ThreadView view = new ThreadView(project, body -> {
-            ApplicationManager.getApplication().invokeAndWait(() -> FileDocumentManager.getInstance().saveAllDocuments(), modality);
+            int[] range = new int[2];
+            ApplicationManager.getApplication().invokeAndWait(() -> {
+                FileDocumentManager.getInstance().saveAllDocuments();
+                if (!marked.isValid()) return;
+                range[0] = document.getLineNumber(marked.getStartOffset()) + 1;
+                range[1] = document.getLineNumber(marked.getEndOffset()) + 1;
+            }, modality);
+            if (range[0] == 0) throw new IOException("The lines of the thread are gone");
             JsonObject thread = new JsonObject();
             thread.addProperty("author", "me");
             thread.addProperty("path", review.path());
             thread.addProperty("side", side);
-            thread.addProperty("start", start);
-            thread.addProperty("end", end);
+            thread.addProperty("start", range[0]);
+            thread.addProperty("end", range[1]);
             thread.addProperty("body", body);
             thread.addProperty("base", review.base());
             thread.add("tree", Server.get("/api/sessions/" + review.session() + "/tree").get("tree"));
@@ -233,6 +243,7 @@ final class Threads {
             closeDraft();
             refresh.run();
         });
+        Disposer.register(view, marked::dispose);
         add(lines.toEditor(start), lines.toEditor(end), false, () -> true, view);
         draft = view;
         view.focus();

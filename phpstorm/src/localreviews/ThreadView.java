@@ -42,6 +42,9 @@ import com.intellij.util.ui.ImageUtil;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.WrapLayout;
 
+import kotlin.text.CharsKt;
+import kotlin.text.StringsKt;
+
 import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
 import javax.swing.Icon;
@@ -77,7 +80,10 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -148,7 +154,12 @@ final class ThreadView extends JPanel implements Disposable {
             button.addActionListener(e -> {
                 button.setEnabled(false);
                 spin(button, true, AllIcons.Actions.Upload);
-                WriteIntentReadAction.run(() -> ReviewDiffAction.send(project, sessionId, id, null, written));
+                // Enabled again once the Send ends: a Send that fails leaves the thread as it was, and its view too.
+                WriteIntentReadAction.run(() -> ReviewDiffAction.send(project, sessionId, id, null, () -> {
+                    button.setEnabled(true);
+                    spin(button, false, AllIcons.Actions.Upload);
+                    written.run();
+                }));
             });
         }
         finish(body -> Server.post(route + "/messages", reply(body)), written);
@@ -264,7 +275,7 @@ final class ThreadView extends JPanel implements Disposable {
             boolean unsent = unsent(turn.get(0));
             JPanel column = new JPanel(new VerticalLayout(JBUI.scale(4)));
             column.setOpaque(false);
-            JBLabel name = new JBLabel(author);
+            JBLabel name = new JBLabel(name(author));
             name.setFont(JBUI.Fonts.label().asBold());
             // In a row of its own: the vertical layout would stretch the badge over the width.
             JPanel nameRow = new JPanel(new FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0));
@@ -326,6 +337,9 @@ final class ThreadView extends JPanel implements Disposable {
                 action.consume(body);
             } catch (IOException e) {
                 failure = e.getMessage() != null ? e.getMessage() : "The claude-reviews server does not answer on " + Server.URL;
+            } catch (RuntimeException e) {
+                // An answer that is not JSON, say: the buttons come back, with why.
+                failure = "Unexpected answer of the claude-reviews server: " + e;
             }
             String shown = failure;
             ApplicationManager.getApplication().invokeLater(() -> {
@@ -405,6 +419,11 @@ final class ThreadView extends JPanel implements Disposable {
         };
     }
 
+    /** The name of an author, as in the web page. */
+    static String name(String author) {
+        return author.equals("me") ? "You" : "Claude";
+    }
+
     private static String author(JsonObject message) {
         return message.get("author").getAsString();
     }
@@ -480,7 +499,8 @@ final class ThreadView extends JPanel implements Disposable {
         JBHtmlPane body = new JBHtmlPane();
         Disposer.register(this, body);
         // As in the web page: an image shows nothing, rather than loading its URL.
-        body.setText(IMAGE.matcher(html).replaceAll(""));
+        // ponytail: when its parser fails, the converter shows the markdown itself as HTML, code included; withoutLoads still keeps Swing from loading anything.
+        body.setText(withoutLoads(IMAGE.matcher(html).replaceAll("")));
         body.setEditable(false);
         body.setFocusable(false);
         body.setOpaque(false);
@@ -505,22 +525,127 @@ final class ThreadView extends JPanel implements Disposable {
         return body;
     }
 
-    /** Raw HTML shows as text, as in the web page: `<` is escaped outside code blocks and code spans, whose text shows as written. */
+    /**
+     * Raw HTML shows as text, as in the web page: `<` is escaped but in the code DocMarkdownToHtmlConverter shows as code too, erring on the side of escaping.
+     * The lines are read as it reads them: split as by Kotlin, without their common indentation nor their trailing whitespace, a ``` line indented moved to the start.
+     */
     static String escapeHtml(String markdown) {
-        StringBuilder escaped = new StringBuilder();
-        boolean fence = false;
-        for (String line : markdown.split("\n", -1)) {
-            if (line.strip().startsWith("```")) {
-                fence = !fence;
-            } else if (!fence) {
-                String[] parts = line.split("`", -1);
-                for (int i = 0; i < parts.length; i += 2) parts[i] = parts[i].replace("<", "&lt;");
-                line = String.join("`", parts);
-            }
-            escaped.append(line).append('\n');
+        List<String> lines = StringsKt.lines(markdown);
+        int indent = Integer.MAX_VALUE;
+        for (String line : lines) {
+            if (!StringsKt.isBlank(line)) indent = Math.min(indent, indent(line));
         }
-        return escaped.toString();
+        List<String> escaped = new ArrayList<>();
+        String fence = null; // the run that closes the open code block
+        boolean shown = false; // whether the open code block shows its text as written: not one opened by an indented line
+        boolean span = false; // whether a code span may go on from a line above, until a blank line
+        boolean all = false; // everything escaped from here on
+        for (int n = 0; n < lines.size(); n++) {
+            String line = lines.get(n);
+            String read = StringsKt.trimEnd((CharSequence) (line.length() <= indent ? "" : line.substring(indent))).toString();
+            boolean indented = INDENTED_TICKS.matcher(read).matches();
+            if (indented) read = read.substring(indent(read));
+            // A table, which the converter turns into HTML lines; a fence after a marker, which the converter may take for one or not;
+            // a link reference definition, which may take the lines below for its destination or title.
+            all = all || line.contains("|") && n + 1 < lines.size() && delimiterRow(lines.get(n + 1))
+                || !read.startsWith("```") && !read.startsWith("~~~") && (read.contains("```") || read.contains("~~~"))
+                || fence == null && (line.contains("]:") || line.lastIndexOf('[') > line.lastIndexOf(']'));
+            Matcher opening = FENCE.matcher(read);
+            if (all) {
+                escaped.add(escape(line));
+            } else if (fence != null) {
+                escaped.add(shown ? line : escape(line));
+                if (closes(read, fence)) fence = null;
+            } else if (opening.matches()) {
+                fence = opening.group(1);
+                shown = !indented;
+                escaped.add(escape(line));
+            } else {
+                if (read.isEmpty()) span = false;
+                StringBuilder out = new StringBuilder();
+                if (span) out.append(escape(line));
+                else span = inline(line, out);
+                escaped.add(out.toString());
+            }
+        }
+        return String.join("\n", escaped);
     }
+
+    private static final Pattern INDENTED_TICKS = Pattern.compile("\\s+```.*");
+    // A backtick in the info string makes it no fence, of backticks or of tildes alike.
+    private static final Pattern FENCE = Pattern.compile("(`{3,}|~{3,})[^`]*");
+
+    /** Escapes a line outside code blocks: a code span shows as written; true when a run of backticks stays open, maybe closed on a line below. */
+    private static boolean inline(String line, StringBuilder out) {
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '\\' && i + 1 < line.length() && (line.charAt(i + 1) == '`' || line.charAt(i + 1) == '\\')) {
+                out.append(c).append(line.charAt(++i));
+            } else if (c == '`') {
+                int run = i;
+                while (run < line.length() && line.charAt(run) == '`') run++;
+                int end = closing(line, run, run - i);
+                if (end < 0) {
+                    out.append(escape(line.substring(i)));
+                    return true;
+                }
+                out.append(line, i, end);
+                i = end - 1;
+            } else {
+                out.append(c == '<' ? "&lt;" : String.valueOf(c));
+            }
+        }
+        return false;
+    }
+
+    /** The end of the next run of exactly `length` backticks from `from`, -1 without one: a backslash escapes nothing in a code span. */
+    private static int closing(String line, int from, int length) {
+        for (int i = from; i < line.length(); i++) {
+            int run = i;
+            while (run < line.length() && line.charAt(run) == '`') run++;
+            if (run - i == length) return run;
+            i = run;
+        }
+        return -1;
+    }
+
+    private static boolean closes(String read, String fence) {
+        String body = read.replaceFirst("^ {0,3}", "");
+        return body.startsWith(fence) && body.chars().allMatch(c -> c == fence.charAt(0));
+    }
+
+    /** A line the converter may take for the delimiter row of a table: only pipes, dashes, colons and whitespace. */
+    private static boolean delimiterRow(String line) {
+        return line.chars().allMatch(c -> c == '|' || c == '-' || c == ':' || CharsKt.isWhitespace((char) c)) && (line.contains("-") || line.contains(":"));
+    }
+
+    private static int indent(String line) {
+        int i = 0;
+        while (i < line.length() && CharsKt.isWhitespace(line.charAt(i))) i++;
+        return i;
+    }
+
+    private static String escape(String text) {
+        return text.replace("<", "&lt;");
+    }
+
+    private static final Pattern LOADING_ATTRIBUTE = Pattern.compile("(?i)\\s*(?<![\\w-])(background|style)\\s*=\\s*(\"[^\"]*(?:\"|$)|'[^']*(?:'|$)|[^\\s>\"']+)");
+    private static final Pattern LOADING_STYLE = Pattern.compile("(?i)url|image|[&\\\\]");
+
+    /**
+     * A second barrier, should raw HTML get through: no background attribute, and no style with an image, a url( or an escape that could hide one,
+     * which Swing would load as it shows the message; the colors of the code stay.
+     */
+    static String withoutLoads(String html) {
+        String known = TAG.matcher(html).replaceAll(tag -> Matcher.quoteReplacement(TAGS.contains(tag.group(1).toLowerCase(Locale.ROOT)) ? tag.group() : "&lt;" + tag.group().substring(1)));
+        return LOADING_ATTRIBUTE.matcher(known).replaceAll(attribute -> attribute.group(1).equalsIgnoreCase("style") && !LOADING_STYLE.matcher(attribute.group(2)).find()
+            ? Matcher.quoteReplacement(attribute.group()) : "");
+    }
+
+    private static final Pattern TAG = Pattern.compile("</?([a-zA-Z][a-zA-Z0-9]*)");
+    // The tags DocMarkdownToHtmlConverter writes: any other (object, link, frame, input…) could load a URL or build a component, and shows as text.
+    private static final Set<String> TAGS = Set.of("a", "b", "blockquote", "br", "code", "del", "div", "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "li", "ol", "p",
+        "pre", "s", "span", "strong", "sub", "sup", "table", "tbody", "td", "th", "thead", "tr", "u", "ul");
 
     private static EditorTextField field(Project project, String placeholder) {
         EditorTextField field = new EditorTextField("", project, FileTypes.PLAIN_TEXT);

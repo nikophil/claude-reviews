@@ -16,6 +16,7 @@ import com.intellij.diff.tools.fragmented.UnifiedDiffViewer;
 import com.intellij.diff.tools.util.side.TwosideTextDiffViewer;
 import com.intellij.openapi.fileEditor.FileEditor;
 import com.intellij.openapi.fileEditor.FileEditorManager;
+import com.intellij.openapi.fileEditor.OpenFileDescriptor;
 import com.intellij.openapi.util.Key;
 import com.intellij.diff.chains.DiffRequestProducer;
 import com.intellij.diff.chains.DiffRequestProducerException;
@@ -62,6 +63,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /** Opens the diff of the project's session in the diff viewer of the IDE: the base on the left, the files of the worktree on the right. */
@@ -88,8 +90,8 @@ public final class ReviewDiffAction extends DumbAwareAction {
         if (project != null) open(project, null);
     }
 
-    /** The diff of the review opened last: its tab is reused while it is open and shows the same files against the same base. */
-    private record Opened(ChainDiffVirtualFile file, String base, List<String> paths, List<Target> targets) {}
+    /** The diff of the review opened last: its tab is reused while it is open and shows the same files of the same session against the same base. */
+    private record Opened(ChainDiffVirtualFile file, String session, String base, List<String> paths, List<Target> targets) {}
 
     private static final Key<Opened> OPENED = Key.create("localreviews.Opened");
 
@@ -99,7 +101,7 @@ public final class ReviewDiffAction extends DumbAwareAction {
         volatile DiffRequest made;
     }
 
-    /** Opens the diff of the session, at the file `path` when it is one of the diff, focused. */
+    /** Opens the diff of the session, at the file `path` when it is one of the diff, else the file in the editor, focused. */
     static void open(Project project, String path) {
         open(project, path, Side.RIGHT, -1, true);
     }
@@ -107,6 +109,7 @@ public final class ReviewDiffAction extends DumbAwareAction {
     /**
      * Opens the diff of the session at the file `path`, scrolled to `line`, from 1, of its side `side` when above 0, focused when `focus`.
      * The tab of the review opened last shows the file instead, if it is still open: a click on each file of the tool window does not open a tab each.
+     * A file out of the diff, unchanged, binary, or that only threads name, opens in the editor at `line`, as in the Editor view.
      */
     static void open(Project project, String path, Side side, int line, boolean focus) {
         background(project, () -> {
@@ -120,7 +123,7 @@ public final class ReviewDiffAction extends DumbAwareAction {
             List<DiffRequestProducer> files = new ArrayList<>();
             List<String> paths = new ArrayList<>();
             List<Target> targets = new ArrayList<>();
-            int at = 0;
+            int at = path == null ? 0 : -1;
             for (JsonElement file : diff.getAsJsonArray("files")) {
                 // The diff viewer shows no text of a binary file.
                 if (file.getAsJsonObject().get("binary").getAsBoolean()) continue;
@@ -133,17 +136,23 @@ public final class ReviewDiffAction extends DumbAwareAction {
             int index = at;
             Pair<Side, Integer> scroll = line > 0 ? Pair.create(side, line - 1) : null;
             ApplicationManager.getApplication().invokeLater(() -> {
+                if (index < 0) {
+                    VirtualFile local = LocalFileSystem.getInstance().refreshAndFindFileByPath(root + "/" + path);
+                    if (local != null) new OpenFileDescriptor(project, local, Math.max(line, 1) - 1, 0).navigate(focus);
+                    else Messages.showInfoMessage(project, path + " is not in the diff against " + diff.get("ref").getAsString() + ".", TITLE);
+                    return;
+                }
                 if (files.isEmpty()) {
                     Messages.showInfoMessage(project, "No changes against " + diff.get("ref").getAsString() + ".", TITLE);
                     return;
                 }
                 Opened last = project.getUserData(OPENED);
-                if (last != null && last.base().equals(base) && last.paths().equals(paths) && reuse(project, last, index, scroll, focus)) return;
+                if (last != null && last.session().equals(id) && last.base().equals(base) && last.paths().equals(paths) && reuse(project, last, index, scroll, focus)) return;
                 targets.get(index).line = scroll;
                 SimpleDiffRequestChain chain = SimpleDiffRequestChain.fromProducers(files, index);
                 chain.putUserData(DiffUserDataKeys.CONTEXT_ACTIONS, List.of(viewed(project, id), send(project, id), approve(project, id)));
                 ChainDiffVirtualFile file = new ChainDiffVirtualFile(chain, TITLE);
-                project.putUserData(OPENED, new Opened(file, base, paths, targets));
+                project.putUserData(OPENED, new Opened(file, id, base, paths, targets));
                 DiffEditorTabFilesManager.getInstance(project).showDiffFile(file, focus);
             }, project.getDisposed());
         });
@@ -262,58 +271,68 @@ public final class ReviewDiffAction extends DumbAwareAction {
     /** Send: the tree the diff shows is the working tree, once its documents are saved. */
     private static AnAction send(Project project, String id) {
         // Greyed, with why, as the last poll of the diff read the session; until the first poll, Send stays enabled.
-        Supplier<String> refusal = () -> {
-            JsonObject session = ThreadsInDiff.SESSIONS.get(id);
-            if (session == null) return null;
-            if (!Placement.claude(session)) return "Start a Claude session in this worktree to send to Claude: " + Placement.startClaude(session);
-            return ThreadsInDiff.pending(session) ? null : "No pending message to send";
-        };
+        Supplier<String> refusal = () -> ThreadsInDiff.SESSIONS.get(id) instanceof JsonObject session ? Placement.sendRefusal(session) : null;
         return new ToolbarButton("Send", AllIcons.Actions.Upload, true, refusal, () -> ReviewService.get(project).spinning(ReviewService.SENT_FROM_DIFF, null),
-            () -> send(project, id, null, ReviewService.SENT_FROM_DIFF, () -> {}));
+            done -> send(project, id, null, ReviewService.SENT_FROM_DIFF, done));
     }
 
     /**
-     * Send of the whole session, or of the thread `thread` only when not null, from the button `from`, then `sent` on the EDT:
+     * Send of the whole session, or of the thread `thread` only when not null, from the button `from`, then `done` on the EDT, sent or not:
      * the documents saved, the tree of the working tree is the one the diff and the editors show. Needs the write-intent lock.
      */
-    static void send(Project project, String id, Integer thread, String from, Runnable sent) {
+    static void send(Project project, String id, Integer thread, String from, Runnable done) {
         ReviewService.get(project).sentFrom(thread != null ? "thread:" + thread : from);
         FileDocumentManager.getInstance().saveAllDocuments();
         background(project, () -> {
-            JsonObject tree = new JsonObject();
-            tree.add("tree", Server.get("/api/sessions/" + id + "/tree").get("tree"));
-            if (thread != null) {
-                JsonArray threads = new JsonArray();
-                threads.add(thread);
-                tree.add("threads", threads);
+            try {
+                JsonObject tree = new JsonObject();
+                tree.add("tree", Server.get("/api/sessions/" + id + "/tree").get("tree"));
+                if (thread != null) {
+                    JsonArray threads = new JsonArray();
+                    threads.add(thread);
+                    tree.add("threads", threads);
+                }
+                JsonObject session = Server.post("/api/sessions/" + id + "/send", tree);
+                ThreadsInDiff.SESSIONS.put(id, session);
+                int count = sent(session);
+                notify(project, count + (count == 1 ? " message sent to Claude" : " messages sent to Claude"), ThreadView.Avatars.CLAUDE_SMALL);
+            } finally {
+                ApplicationManager.getApplication().invokeLater(done);
             }
-            JsonObject session = Server.post("/api/sessions/" + id + "/send", tree);
-            ThreadsInDiff.SESSIONS.put(id, session);
-            int count = sent(session);
-            notify(project, count + (count == 1 ? " message sent to Claude" : " messages sent to Claude"), ThreadView.Avatars.CLAUDE_SMALL);
-            ApplicationManager.getApplication().invokeLater(sent);
         });
     }
 
     private static AnAction approve(Project project, String id) {
-        return new ToolbarButton("Approve", AllIcons.Actions.Checked, false, () -> null, () -> false, () -> approve(project, id, () -> {}));
+        Supplier<String> refusal = () -> ThreadsInDiff.SESSIONS.get(id) instanceof JsonObject session ? Placement.approveRefusal(session) : null;
+        return new ToolbarButton("Approve", AllIcons.Actions.Checked, false, refusal, () -> false, done -> approve(project, id, done));
     }
 
-    /** Approve, once confirmed, then `approved` on the EDT. */
-    static void approve(Project project, String id, Runnable approved) {
+    /** Approve, once confirmed, then `done` on the EDT, approved, refused or cancelled. */
+    static void approve(Project project, String id, Runnable done) {
         background(project, () -> {
             int open = 0;
-            for (JsonElement thread : Server.get("/api/sessions/" + id).getAsJsonArray("threads")) {
-                if (!thread.getAsJsonObject().get("resolved").getAsBoolean()) open++;
+            try {
+                for (JsonElement thread : Server.get("/api/sessions/" + id).getAsJsonArray("threads")) {
+                    if (!thread.getAsJsonObject().get("resolved").getAsBoolean()) open++;
+                }
+            } catch (IOException | RuntimeException e) {
+                ApplicationManager.getApplication().invokeLater(done);
+                throw e;
             }
             int threads = open;
             ApplicationManager.getApplication().invokeLater(() -> {
                 String question = threads == 0 ? "Approve this session?" : "Approve this session with " + threads + " open threads?";
-                if (Messages.showYesNoDialog(project, question, TITLE, null) != Messages.YES) return;
+                if (Messages.showYesNoDialog(project, question, TITLE, null) != Messages.YES) {
+                    done.run();
+                    return;
+                }
                 background(project, () -> {
-                    Server.post("/api/sessions/" + id + "/approve", new JsonObject());
-                    notify(project, "Session approved", null);
-                    ApplicationManager.getApplication().invokeLater(approved);
+                    try {
+                        Server.post("/api/sessions/" + id + "/approve", new JsonObject());
+                        notify(project, "Session approved", null);
+                    } finally {
+                        ApplicationManager.getApplication().invokeLater(done);
+                    }
                 });
             });
         });
@@ -325,10 +344,14 @@ public final class ReviewDiffAction extends DumbAwareAction {
         private final Supplier<String> refusal;
         private final BooleanSupplier spinning;
         private final Icon icon;
-        private final Runnable run;
+        private final Consumer<Runnable> run;
+        private volatile boolean writing;
 
-        /** `refusal` gives why the button is greyed, null while it is enabled; `spinning`, whether a spinner takes the place of its icon. */
-        ToolbarButton(String text, Icon icon, boolean primary, Supplier<String> refusal, BooleanSupplier spinning, Runnable run) {
+        /**
+         * `refusal` gives why the button is greyed, null while it is enabled; `spinning`, whether a spinner takes the place of its icon;
+         * `run` writes, then runs the callback it is given on the EDT: the button stays greyed until then.
+         */
+        ToolbarButton(String text, Icon icon, boolean primary, Supplier<String> refusal, BooleanSupplier spinning, Consumer<Runnable> run) {
             super(text, null, icon);
             this.primary = primary;
             this.refusal = refusal;
@@ -345,14 +368,19 @@ public final class ReviewDiffAction extends DumbAwareAction {
         @Override
         public void update(AnActionEvent event) {
             String why = refusal.get();
-            event.getPresentation().setEnabled(why == null);
+            event.getPresentation().setEnabled(!writing && why == null);
             event.getPresentation().setDescription(why);
             event.getPresentation().setIcon(spinning.getAsBoolean() ? AnimatedIcon.Default.INSTANCE : icon);
         }
 
         @Override
         public void actionPerformed(AnActionEvent event) {
-            run.run();
+            write();
+        }
+
+        private void write() {
+            writing = true;
+            run.accept(() -> writing = false);
         }
 
         @Override
@@ -370,7 +398,7 @@ public final class ReviewDiffAction extends DumbAwareAction {
             button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             ClientProperty.put(button, DarculaButtonUI.DEFAULT_STYLE_KEY, primary);
             // A bare Swing listener, unlike an action, has to take the write-intent lock that saving the documents needs.
-            button.addActionListener(e -> WriteIntentReadAction.run(run));
+            button.addActionListener(e -> WriteIntentReadAction.run(this::write));
             JPanel margin = new JPanel(new BorderLayout());
             margin.setOpaque(false);
             margin.setBorder(JBUI.Borders.empty(0, 4));
@@ -410,6 +438,8 @@ public final class ReviewDiffAction extends DumbAwareAction {
                 call.run();
             } catch (IOException e) {
                 ApplicationManager.getApplication().invokeLater(() -> Messages.showErrorDialog(project, message(e), TITLE));
+            } catch (RuntimeException e) {
+                ApplicationManager.getApplication().invokeLater(() -> Messages.showErrorDialog(project, "Unexpected answer of the claude-reviews server: " + e, TITLE));
             }
         });
     }

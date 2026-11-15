@@ -45,7 +45,7 @@ public final class ReviewService implements Disposable {
         }
     }
 
-    private record Attached(String path, Disposable disposable, Threads threads) {}
+    private record Attached(VirtualFile file, Disposable disposable, Threads threads) {}
 
     private final List<Runnable> settings = new CopyOnWriteArrayList<>();
     private static final Logger LOG = Logger.getInstance(ReviewService.class);
@@ -180,8 +180,7 @@ public final class ReviewService implements Disposable {
         if (read.equals(state)) return;
         // Once, for the project, however many diffs are open: the end of a turn that leaves threads waiting is told by the desktop notification of the mod.
         JsonObject before = state.session();
-        if (before != null && read.session() != null && before.get("id").equals(read.session().get("id"))
-            && ThreadsInDiff.waiting(before) > 0 && ThreadsInDiff.waiting(read.session()) == 0) {
+        if (before != null && read.session() != null && Placement.repliedEverywhere(before, read.session())) {
             ReviewDiffAction.notify(project, "Claude replied in every thread", ThreadView.Avatars.CLAUDE_SMALL);
         }
         State changed = read;
@@ -218,13 +217,12 @@ public final class ReviewService implements Disposable {
         return new State(null, found.get("worktree").getAsString(), tree.get("ref").getAsString(), base, shown, files, session);
     }
 
-    /** Gives an editor of a file of the worktree its threads; a diff keeps its own. */
+    /** Gives an editor of a file of the project its threads, once it is a file of the worktree of the session; a diff keeps its own. */
     private void attach(Editor editor) {
         if (editor.getProject() != project || editor.getEditorKind() != EditorKind.MAIN_EDITOR || editors.containsKey(editor)) return;
         VirtualFile file = FileDocumentManager.getInstance().getFile(editor.getDocument());
-        String root = project.getBasePath();
-        if (file == null || root == null || !file.getPath().startsWith(root + "/")) return;
-        editors.put(editor, new Attached(file.getPath().substring(root.length() + 1), Disposer.newDisposable(), null));
+        if (file == null || !file.isInLocalFileSystem()) return;
+        editors.put(editor, new Attached(file, Disposer.newDisposable(), null));
         show(editor, false);
     }
 
@@ -237,11 +235,13 @@ public final class ReviewService implements Disposable {
         Attached attached = editors.get(editor);
         State shown = state;
         if (attached == null || editor.isDisposed()) return;
-        Review review = shown.session() == null ? null : new Review(shown.id(), shown.root(), shown.base(), attached.path());
+        // From the root of the worktree, which a project opened on a sub-folder of it, or through a symlink, does not share.
+        String path = shown.session() == null ? null : Placement.relative(shown.root(), attached.file().getPath());
+        Review review = path == null ? null : new Review(shown.id(), shown.root(), shown.base(), path);
         Threads threads = attached.threads();
         if (threads != null && (review == null || !review.equals(threads.review()))) {
             Disposer.dispose(attached.disposable());
-            attached = new Attached(attached.path(), Disposer.newDisposable(), null);
+            attached = new Attached(attached.file(), Disposer.newDisposable(), null);
             threads = null;
             editors.put(editor, attached);
             editor.putUserData(Threads.KEY, null);
@@ -249,7 +249,7 @@ public final class ReviewService implements Disposable {
         if (review == null) return;
         if (threads == null) {
             threads = new Threads(project, editor, review, "new", editor.getDocument(), Threads.Lines.SAME, this::refresh, attached.disposable());
-            attached = new Attached(attached.path(), attached.disposable(), threads);
+            attached = new Attached(attached.file(), attached.disposable(), threads);
             editors.put(editor, attached);
             editor.putUserData(Threads.KEY, List.of(threads));
             all = true;

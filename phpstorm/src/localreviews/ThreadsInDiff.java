@@ -87,20 +87,8 @@ public final class ThreadsInDiff extends DiffExtension {
     }
 
     // ponytail: never emptied, one session per diff of the review opened since the IDE started.
-    /** The last session each poll read, by id: Send reads from it whether there is anything to send. */
+    /** The last session each poll read, by id: Send and Approve of the diff read from it whether they are greyed. */
     static final Map<String, JsonObject> SESSIONS = new ConcurrentHashMap<>();
-
-    /** Whether a message the next Send would publish is Pending: one of a Resolved thread waits for its Unresolve. */
-    static boolean pending(JsonObject session) {
-        for (JsonElement thread : session.getAsJsonArray("threads")) {
-            if (thread.getAsJsonObject().get("resolved").getAsBoolean()) continue;
-            for (JsonElement message : thread.getAsJsonObject().getAsJsonArray("messages")) {
-                JsonElement date = message.getAsJsonObject().get("date");
-                if (date == null || date.isJsonNull()) return true;
-            }
-        }
-        return false;
-    }
 
     static int waiting(JsonObject session) {
         int waiting = 0;
@@ -124,12 +112,12 @@ public final class ThreadsInDiff extends DiffExtension {
         ContentRevision before = change.getBeforeRevision();
         ContentRevision after = change.getAfterRevision();
         boolean local = after != null ? after instanceof CurrentContentRevision : ChangeListManager.getInstance(project).getChange(before.getFile()) != null;
-        String path = (after != null ? after : before).getFile().getPath();
-        if (!local || !path.startsWith(state.root() + "/")) return null;
+        String path = Placement.relative(state.root(), (after != null ? after : before).getFile().getPath());
+        if (!local || path == null) return null;
         // An added file has no revision on the left: the base of the session places its threads, all on the new side.
         String base = before != null ? before.getRevisionNumber().asString() : state.base();
         if (!ID.matcher(base).matches()) return null;
-        return new Review(state.id(), state.root(), base, path.substring(state.root().length() + 1));
+        return new Review(state.id(), state.root(), base, path);
     }
 
     /** The document of a side of the diff, which the unified diff shows through a document of its own. */

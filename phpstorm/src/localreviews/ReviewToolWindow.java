@@ -44,7 +44,6 @@ import com.intellij.ui.components.panels.VerticalLayout;
 import com.intellij.ui.content.ContentFactory;
 import com.intellij.ui.treeStructure.Tree;
 import com.intellij.util.ui.JBUI;
-import com.intellij.util.ui.tree.TreeUtil;
 
 import javax.swing.ButtonGroup;
 import javax.swing.DefaultComboBoxModel;
@@ -55,6 +54,7 @@ import javax.swing.JTree;
 import javax.swing.SwingConstants;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeModel;
+import javax.swing.tree.TreeNode;
 import javax.swing.tree.TreePath;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -66,6 +66,9 @@ import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.LinkedHashMap;
 import java.time.Instant;
 import java.util.List;
@@ -130,6 +133,8 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         private final JBLabel summary = new JBLabel();
         private final JPanel startClaude = new JPanel(new BorderLayout());
         private final Tree tree = new Tree(new DefaultTreeModel(new DefaultMutableTreeNode()));
+        // Made once: a new one at each change of the state would scroll back to the top, and take the focus from the tree.
+        private final JBScrollPane scroll = new JBScrollPane(tree);
         private final JPanel header = new JPanel(new VerticalLayout(JBUI.scale(8)));
         private final JPanel empty = new JPanel(new VerticalLayout(JBUI.scale(8)));
         private final JBLabel emptyText = new JBLabel();
@@ -139,6 +144,8 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         private transient Object shownKey;
         private boolean updating;
         private boolean rebuilding;
+        /** The button whose write runs, Send or Approve, greyed with the other until it ends; null without one. */
+        private JButton writing;
 
         Panel(Project project, ToolWindow toolWindow) {
             super(new BorderLayout());
@@ -194,11 +201,13 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             ClientProperty.put(send, DarculaButtonUI.DEFAULT_STYLE_KEY, true);
             // Bare Swing listeners: saving the documents before a Send needs the write-intent lock.
             send.addActionListener(e -> {
-                send.setEnabled(false);
-                ThreadView.spin(send, true, AllIcons.Actions.Upload);
-                WriteIntentReadAction.run(() -> ReviewDiffAction.send(project, state.id(), null, ReviewService.SENT_FROM_TOOL_WINDOW, service::refresh));
+                write(send);
+                WriteIntentReadAction.run(() -> ReviewDiffAction.send(project, state.id(), null, ReviewService.SENT_FROM_TOOL_WINDOW, this::written));
             });
-            approve.addActionListener(e -> ReviewDiffAction.approve(project, state.id(), service::refresh));
+            approve.addActionListener(e -> {
+                write(approve);
+                ReviewDiffAction.approve(project, state.id(), this::written);
+            });
             JPanel buttons = new JPanel(new GridLayout(1, 2, JBUI.scale(8), 0));
             buttons.add(send);
             buttons.add(approve);
@@ -259,26 +268,53 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             service.listen(changed -> show(changed, false), toolWindow.getDisposable());
         }
 
+        private void write(JButton button) {
+            writing = button;
+            buttons();
+        }
+
+        private void written() {
+            writing = null;
+            buttons();
+            service.refresh();
+        }
+
+        /** Send and Approve, greyed with why during a write and as the session refuses them; Send spins while it runs, then while Claude answers. */
+        private void buttons() {
+            if (state.session() == null) return;
+            String sendRefusal = Placement.sendRefusal(state.session());
+            String approveRefusal = Placement.approveRefusal(state.session());
+            send.setEnabled(writing == null && sendRefusal == null);
+            send.setToolTipText(sendRefusal);
+            approve.setEnabled(writing == null && approveRefusal == null);
+            approve.setToolTipText(approveRefusal);
+            ThreadView.spin(send, writing == send || service.spinning(ReviewService.SENT_FROM_TOOL_WINDOW, null), AllIcons.Actions.Upload);
+        }
+
         /** Shows the state: the files rebuilt only when they or their threads changed, or when `all`. */
         private void show(ReviewService.State changed, boolean all) {
             state = changed;
-            removeAll();
             if (changed.session() == null) {
                 emptyText.setText(changed.error() != null ? html(changed.error()) : "No review of this worktree yet.");
                 start.setVisible(changed.error() == null);
-                add(empty, BorderLayout.CENTER);
+                if (empty.getParent() != this) {
+                    removeAll();
+                    add(empty, BorderLayout.CENTER);
+                }
                 revalidate();
                 repaint();
                 return;
             }
-            add(header, BorderLayout.NORTH);
-            add(new JBScrollPane(tree), BorderLayout.CENTER);
+            if (header.getParent() != this) {
+                removeAll();
+                add(header, BorderLayout.NORTH);
+                add(scroll, BorderLayout.CENTER);
+            }
 
             int[] counts = Placement.counts(changed.session(), null);
             send.setText(counts[1] == 0 ? "Send" : "Send " + counts[1] + " pending");
             boolean claude = Placement.claude(changed.session());
-            send.setEnabled(counts[1] > 0 && claude);
-            ThreadView.spin(send, service.spinning(ReviewService.SENT_FROM_TOOL_WINDOW, null), AllIcons.Actions.Upload);
+            buttons();
             // A Send without a Claude session in the worktree would wait for nobody: it says how to start one instead.
             startClaude.removeAll();
             if (!claude) startClaude.add(ThreadView.startClaude(changed.session()), BorderLayout.CENTER);
@@ -308,9 +344,14 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             repaint();
         }
 
-        /** The files of the diff, then those only threads name, each with its threads. */
+        /** The files of the diff, then those only threads name, each with its threads: the nodes collapsed stay so, the selection stays. */
         private void rebuild() {
             Object selected = selected();
+            Set<Object> collapsed = new HashSet<>();
+            for (Enumeration<TreeNode> nodes = ((DefaultMutableTreeNode) tree.getModel().getRoot()).breadthFirstEnumeration(); nodes.hasMoreElements(); ) {
+                DefaultMutableTreeNode node = (DefaultMutableTreeNode) nodes.nextElement();
+                if (!node.isRoot() && !node.isLeaf() && !tree.isExpanded(new TreePath(node.getPath()))) collapsed.add(key(node));
+            }
             DefaultMutableTreeNode root = new DefaultMutableTreeNode();
             Map<String, DefaultMutableTreeNode> dirs = new LinkedHashMap<>();
             DefaultMutableTreeNode reselect = null;
@@ -348,9 +389,22 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             }
             rebuilding = true;
             tree.setModel(new DefaultTreeModel(root));
-            TreeUtil.expandAll(tree);
-            if (reselect != null) TreeUtil.selectNode(tree, reselect);
+            // Expanded again where it was, without scrolling to the nodes it expands.
+            boolean scrolls = tree.getScrollsOnExpand();
+            tree.setScrollsOnExpand(false);
+            for (Enumeration<TreeNode> nodes = root.breadthFirstEnumeration(); nodes.hasMoreElements(); ) {
+                DefaultMutableTreeNode node = (DefaultMutableTreeNode) nodes.nextElement();
+                TreePath path = new TreePath(node.getPath());
+                if (!node.isLeaf() && !collapsed.contains(key(node)) && (node.isRoot() || tree.isExpanded(path.getParentPath()))) tree.expandPath(path);
+            }
+            tree.setScrollsOnExpand(scrolls);
+            if (reselect != null) tree.setSelectionPath(new TreePath(reselect.getPath()));
             rebuilding = false;
+        }
+
+        /** What a node of a directory or a file stays across rebuilds: its path. */
+        private static Object key(DefaultMutableTreeNode node) {
+            return node.getUserObject() instanceof JsonObject file ? file.get("path").getAsString() : node.getUserObject();
         }
 
         private void loadBases(String id) {
