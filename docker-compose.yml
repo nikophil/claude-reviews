@@ -1,0 +1,14 @@
+services:
+  # The UI tests of the PhpStorm plugin: npm run test:phpstorm.
+  phpstorm:
+    build: phpstorm/ui-test
+    user: ${HOST_UID:-1000}:${HOST_GID:-1000}
+    working_dir: /w
+    volumes:
+      - .:/w
+      # A directory of the host instead of the volume when PHPSTORM_CACHE names one, as the CI does to cache it.
+      - ${PHPSTORM_CACHE:-phpstorm-cache}:/cache
+    command: sh phpstorm/ui-test/run.sh
+
+volumes:
+  phpstorm-cache:

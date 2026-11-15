@@ -20,6 +20,8 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 - `npm run readme` : refait les images de `README.md` (`docs/images/`) par Playwright, sur des dépôts d'exemple ; l'animation est un PNG animé, assemblé sans outil à installer.
 - `npm run build:phpstorm` : construit `var/phpstorm/local-reviews.zip` avec le `javac` et les jars du PhpStorm installé (`PHPSTORM_HOME`, sinon celui de Toolbox) et `zip`, avec une version `0.1.<epoch>` par build, et écrit `var/phpstorm/updatePlugins.xml` ;
   ce dépôt de plugins, ajouté une fois par Settings › Plugins › ⚙ › Manage Plugin Repositories (`file://…/updatePlugins.xml`), propose ensuite chaque build en mise à jour.
+- `npm run test:phpstorm` : dans le conteneur de `docker-compose.yml`, construit le plugin contre PhpStorm 2026.2.5, le passe au Plugin Verifier, puis lance ses tests d'interface ;
+  PhpStorm, les dépendances Gradle et le Plugin Verifier se téléchargent une fois dans le volume `phpstorm-cache`, ou dans le dossier que nomme `PHPSTORM_CACHE`.
 
 ## Structure
 
@@ -38,6 +40,8 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
   sa vue Editor ouvre un fichier dans l'éditeur, sa vue Diff dans le diff de l'IDE, avec la case Viewed de chaque fichier dans l'arbre et dans la barre du diff ;
   il modifie et supprime mes messages Pending, passe d'un thread non Resolved à l'autre (Next Thread et Previous Thread, Alt+Shift+Page Down et Page Up), marque « Replied » ceux où Claude a répondu depuis mon dernier Send,
   et propose Suggest Change, Comment on File et Copy Threads as Markdown, au même format que l'UI web ; il ne parle qu'à l'API, comme tout client ([ADR 0004](docs/adr/0004-clients-et-mod-separes-par-l-api.md)).
+- `phpstorm/ui-test/` : les tests d'interface du plugin, en Kotlin, par Starter et Driver de JetBrains, sous Gradle dans Docker ([ADR 0005](docs/adr/0005-tests-d-interface-phpstorm-par-gradle-dans-docker.md)) ;
+  `run.sh` y enchaîne `build.sh`, le Plugin Verifier, qui échoue sur un verdict autre que « Compatible », et `gradle test`.
 - Aucune dépendance npm au runtime : ce qui manque s'écrit, ou se vendorise en un fichier dans `ui/vendor/`.
 
 ## Contrat HTTP
@@ -234,5 +238,6 @@ La coloration syntaxique passe par les variables `--color-prettylights-syntax-*`
 - Les dépôts de test se créent avec `repo()` et `write()` de `server/fixture.ts`, dans un dossier temporaire, à l'abri de la config git globale ; `removeRepos()` les supprime en fin de fichier de test.
 - Playwright (Chromium) couvre l'UI, dans `e2e/*.spec.ts`, sur les mêmes fixtures ; chaque test ouvre `/?worktree=<fixture>`.
 - Le serveur de Playwright, comme celui de `server/sessions.test.ts`, a un `gh` qui échoue en tête du `PATH`, pour que mon vrai login n'atteigne pas les tests ; un test qui en a besoin répond lui-même à `/api/me`, ou met son propre `gh` devant.
-- La CI (`.github/workflows/ci.yml`) lance les deux suites sur chaque PR, sous Node 25.
+- Starter et Driver couvrent le plugin PhpStorm, dans `phpstorm/ui-test/`, sur les mêmes fixtures (`fixture.ts`) : un seul PhpStorm pour les étapes d'une review, dans l'ordre, face à un serveur sur le port 7780, avec un `XDG_DATA_HOME` temporaire, le même faux `gh`, et un sondage `&claude` qui tient lieu de Claude session.
+- La CI (`.github/workflows/ci.yml`) lance les deux suites sur chaque PR, sous Node 25, et les tests du plugin PhpStorm dans le job `phpstorm`, avec le dossier `PHPSTORM_CACHE` gardé par `actions/cache` et les logs de l'IDE en artefact sur un échec.
 - Une PR ajoute au plus 1000 lignes, hors lockfile et fichiers vendorisés.

@@ -3,3 +3,7 @@ var/
 .claude/worktrees/
 test-results/
 playwright-report/
+phpstorm/ui-test/out/
+phpstorm/ui-test/build/
+phpstorm/ui-test/.gradle/
+phpstorm/ui-test/.kotlin/

@@ -25,7 +25,8 @@ Claude session ── mod (hooks/) ──HTTP──> serveur (server/) <──HT
 
 ## Considered Options
 
-- Kotlin et l'IntelliJ Platform Gradle Plugin, la voie officielle : `runIde` et le plugin verifier, au prix d'un JDK à installer et d'un build d'environ 1 Go au premier lancement.
+- Kotlin et l'IntelliJ Platform Gradle Plugin, la voie officielle : `runIde` et le plugin verifier, au prix d'un JDK à installer et d'un build d'environ 1 Go au premier lancement ;
+  Gradle revient pour les seuls tests d'interface, dans Docker ([ADR 0005](0005-tests-d-interface-phpstorm-par-gradle-dans-docker.md)).
 - La page embarquée par JCEF dans une tool window : essayée, puis remplacée, pour les raisons plus haut.
 - Un client qui démarre le serveur : il lui faudrait trouver le dossier du plugin Claude sous `~/.claude/plugins/`, et sans Claude session, aucun thread n'avance.
 - Une abstraction « agent » à la place de Claude dans le serveur : aucun autre agent n'est prévu.
