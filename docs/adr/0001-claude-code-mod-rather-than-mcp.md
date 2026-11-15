@@ -1,12 +1,12 @@
-# Un mod Claude Code plutôt qu'un serveur MCP et un hook Stop
+# A Claude Code mod rather than an MCP server and a Stop hook
 
-Claude reçoit les threads par un mod Claude Code (module de hooks déclaré dans `hooks/hooks.json`) :
-il enregistre les outils de Claude, interroge le serveur et injecte un tour avec `$.prompt.submit`.
-Un hook `Stop` ne se déclenche qu'en fin de tour, donc un Send fait pendant que la Claude session attend ne la réveillerait pas tant que je ne tape rien dans le terminal.
-Le prix : un mod ne tourne que dans la CLI et le panneau VS Code, pas dans Claude Desktop.
+Claude receives the threads through a Claude Code mod (a hooks module declared in `hooks/hooks.json`):
+it registers Claude's tools, queries the server and injects a turn with `$.prompt.submit`.
+A `Stop` hook fires only at the end of a turn, so a Send made while the Claude session waits would not wake it until I type something in the terminal.
+The price: a mod runs only in the CLI and the VS Code panel, not in Claude Desktop.
 
 ## Considered Options
 
-- Serveur MCP et hook `Stop` : marchent dans Claude Desktop, mais il faut taper un message après chaque Send.
-- Channels (research preview) : un plugin personnel exige `--dangerously-load-development-channels` au lancement.
-- Hook `asyncRewake` : son timeout s'applique, et la doc ne dit pas s'il est accepté sur `Stop`.
+- MCP server and `Stop` hook: they work in Claude Desktop, but you have to type a message after each Send.
+- Channels (research preview): a personal plugin requires `--dangerously-load-development-channels` at launch.
+- `asyncRewake` hook: its timeout applies, and the docs do not say whether it is accepted on `Stop`.

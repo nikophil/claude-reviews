@@ -1,12 +1,12 @@
-# Stocker les sessions hors du dépôt, en JSON
+# Store sessions outside the repository, as JSON
 
-Chaque session, avec ses threads, vit dans un fichier JSON sous `~/.local/share/claude-reviews/sessions/`, rangé sous son id et retrouvé par le chemin de son worktree ;
-seul le serveur l'écrit, par remplacement atomique.
-Une session close, approuvée ou dont le worktree a disparu, part sous `~/.local/share/claude-reviews/archive/`, rangée sous son id :
-elle reste consultable, et un nouveau worktree au même chemin ouvre une nouvelle session.
-Le brief prévoyait la `--git-dir` du worktree, mais `git worktree remove` efface `.git/worktrees/<nom>/`,
-et le serveur unique, qui sert tous les worktrees, lit alors un seul dossier.
+Each session, with its threads, lives in a JSON file under `~/.local/share/claude-reviews/sessions/`, stored under its id and found by the path of its worktree;
+only the server writes it, by atomic replacement.
+A closed session, approved or whose worktree has disappeared, moves under `~/.local/share/claude-reviews/archive/`, stored under its id:
+it remains viewable, and a new worktree at the same path opens a new session.
+The brief planned the worktree's `--git-dir`, but `git worktree remove` erases `.git/worktrees/<name>/`,
+and the single server, which serves all worktrees, then reads a single folder.
 
 ## Considered Options
 
-- SQLite (`node:sqlite`, intégré à Node 25) : écarté, un seul processus écrit et quelques dizaines de fichiers se lisent sans requête ni schéma à migrer.
+- SQLite (`node:sqlite`, built into Node 25): rejected, a single process writes, and a few dozen files are read with no query and no schema to migrate.

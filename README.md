@@ -1,112 +1,112 @@
 # claude-reviews
 
-Relire ce que Claude Code a écrit dans un diff local au look de l'onglet « Files changed » de GitHub,
-avec des threads sous les lignes où Claude répond, sans passer par GitHub.
+Review what Claude Code wrote in a local diff that looks like GitHub's "Files changed" tab,
+with threads under the lines where Claude replies, without going through GitHub.
 
-![Un thread ouvert sur une ligne avec une suggestion, envoyé à Claude, qui répond dans le thread](docs/images/review.png)
+![A thread opened on a line with a suggestion, sent to Claude, which replies in the thread](docs/images/review.png)
 
-## Pourquoi
+## Why
 
-Claude Desktop et les autres outils laissent commenter une ligne du diff, mais Claude répond dans la conversation, loin du code.
-Ici, chaque commentaire ouvre un thread ancré sur ses lignes :
-Claude y répond, modifie le code quand le thread le demande, et je résous le thread quand la question est close.
-Le contexte et les décisions du projet sont dans [BRIEF.md](BRIEF.md), son vocabulaire dans [GLOSSARY.md](GLOSSARY.md).
+Claude Desktop and the other tools let you comment on a line of the diff, but Claude replies in the conversation, far from the code.
+Here, each comment opens a thread anchored on its lines:
+Claude replies in it, changes the code when the thread asks for it, and I resolve the thread when the question is settled.
+The project's context and decisions are in [BRIEF.md](BRIEF.md), its vocabulary in [GLOSSARY.md](GLOSSARY.md).
 
-## Ce qu'on y fait
+## What you can do
 
-![La page Files changed : l'arbre des fichiers, le diff, un thread où Claude a répondu, et le menu des conversations](docs/images/files-changed.png)
+![The Files changed page: the file tree, the diff, a thread where Claude replied, and the conversations menu](docs/images/files-changed.png)
 
-- Relire le diff du worktree, changements non commités et fichiers non suivis compris, contre une base au choix :
-  HEAD, le code de mon dernier Send, la branche par défaut, la branche de base, une PR ouverte ou n'importe quelle branche.
-- Ouvrir un thread sur une ligne, une plage (Shift+clic) ou un fichier entier, avec un message en markdown.
-- Proposer un changement par un bloc `suggestion` : Claude l'applique quand il lit le thread.
-- Envoyer mes messages par Send, qui réveille la Claude session du worktree, même inactive ;
-  modifier ou supprimer un message tant qu'il n'est pas envoyé.
-- Suivre les threads : ils restent sur leur ligne quand le code bouge, et passent Outdated quand leurs lignes disparaissent.
-- Marquer un fichier Viewed, jusqu'à ce que son contenu change ;
-  passer d'un thread à l'autre avec `j` et `k`, ou par le menu des conversations.
-- Copier les threads en markdown, pour une description de PR, puis clore la session par Approve.
+- Review the diff of the worktree, uncommitted changes and untracked files included, against a base of your choice:
+  HEAD, the code of my last Send, the default branch, the base branch, an open PR or any branch.
+- Open a thread on a line, a range (Shift+click) or a whole file, with a message in markdown.
+- Propose a change with a `suggestion` block: Claude applies it when it reads the thread.
+- Send my messages with Send, which wakes the Claude session of the worktree, even an idle one;
+  edit or delete a message as long as it is not sent.
+- Follow the threads: they stay on their line when the code moves, and become Outdated when their lines disappear.
+- Mark a file Viewed, until its content changes;
+  go from one thread to another with `j` and `k`, or through the conversations menu.
+- Copy the threads as markdown, for a PR description, then close the session with Approve.
 
-L'écran Reviews liste les sessions de tous les worktrees, celles qui attendent Claude d'abord, et les sessions closes dans un onglet à part.
+The Reviews screen lists the sessions of all worktrees, those waiting for Claude first, and the closed sessions in a separate tab.
 
-![L'écran Reviews : trois sessions ouvertes, avec leur dépôt, leur branche et le nombre de threads qui attendent Claude](docs/images/reviews.png)
+![The Reviews screen: three open sessions, with their repository, their branch and the number of threads waiting for Claude](docs/images/reviews.png)
 
-## Installer
+## Installation
 
-Il faut Node 25 au moins, et git 2.41 au moins.
+You need Node 25 or later, and git 2.41 or later.
 
-Dans Claude Code :
+In Claude Code:
 
 ```
 /plugin install local-reviews --marketplace nikophil/claude-reviews
 ```
 
-Le plugin démarre le serveur de ton compte sur un port éphémère de `127.0.0.1` à l'ouverture d'une Claude session dans un dépôt git ;
-il écrit son port et son token dans `~/.local/share/claude-reviews/endpoint`, que seul ton compte lit, et chaque client envoie ce token.
-`CLAUDE_REVIEWS_PORT` fixe le port : sur une machine partagée où tu travailles en SSH, choisis le tien et forwarde le même numéro (`ssh -L <port>:127.0.0.1:<port>`).
+The plugin starts your account's server on an ephemeral port of `127.0.0.1` when a Claude session opens in a git repository;
+it writes its port and its token to `~/.local/share/claude-reviews/endpoint`, which only your account can read, and each client sends this token.
+`CLAUDE_REVIEWS_PORT` sets the port: on a shared machine where you work over SSH, choose yours and forward the same number (`ssh -L <port>:127.0.0.1:<port>`).
 
-## Utiliser
+## Usage
 
-1. Dans une Claude session, lance `/review-local` : la session de relecture du worktree s'ouvre dans le navigateur, ou dans PhpStorm ou VS Code, au choix, quand ils sont installés.
-2. Clique un numéro de ligne, écris, puis Add message ; le message reste Pending jusqu'au Send.
-3. Send : Claude se réveille, répond dans chaque thread qui l'attend, et modifie le code quand un thread le demande.
-   Une ligne de statut sous son prompt compte les threads qui l'attendent.
-4. Refresh quand le bandeau dit que le code a changé, réponds, résous les threads, puis Approve.
+1. In a Claude session, run `/review-local`: the review session of the worktree opens in the browser, or in PhpStorm or VS Code, as you choose, when they are installed.
+2. Click a line number, write, then Add message; the message stays Pending until the Send.
+3. Send: Claude wakes up, replies in each thread waiting for it, and changes the code when a thread asks for it.
+   A status line under its prompt counts the threads waiting for it.
+4. Refresh when the banner says the code changed, reply, resolve the threads, then Approve.
 
-Pour que Claude relise son propre travail, demande-lui de relire son diff et d'ouvrir des threads :
-il les ouvre avec l'outil `open_thread`, et ils t'attendent dans la page.
+To have Claude review its own work, ask it to review its diff and open threads:
+it opens them with the `open_thread` tool, and they wait for you in the page.
 
-## Plugin PhpStorm
+## PhpStorm plugin
 
-Le plugin PhpStorm montre la même session dans une tool window « Claude Reviews », avec les threads dans l'éditeur et dans le diff de l'IDE.
+The PhpStorm plugin shows the same session in a "Claude Reviews" tool window, with the threads in the editor and in the IDE's diff.
 
-![PhpStorm : la tool window Claude Reviews, et dans l'éditeur un thread où Claude a répondu, puis une suggestion qui attend Claude](docs/images/phpstorm.png)
+![PhpStorm: the Claude Reviews tool window, and in the editor a thread where Claude replied, then a suggestion waiting for Claude](docs/images/phpstorm.png)
 
-Ajoute une fois ce dépôt de plugins dans Settings › Plugins › ⚙ › Manage Plugin Repositories, puis installe Local Reviews depuis l'onglet Marketplace :
+Add this plugin repository once in Settings › Plugins › ⚙ › Manage Plugin Repositories, then install Local Reviews from the Marketplace tab:
 
 ```
 https://github.com/nikophil/claude-reviews/releases/latest/download/updatePlugins.xml
 ```
 
-PhpStorm propose ensuite chaque release en mise à jour.
+PhpStorm then offers each release as an update.
 
-Le plugin se construit aussi avec le PhpStorm installé, sans rien télécharger :
+The plugin also builds with the installed PhpStorm, without downloading anything:
 
 ```
 npm run build:phpstorm
 ```
 
-La commande écrit `var/phpstorm/updatePlugins.xml` :
-ajoute-le une fois dans Settings › Plugins › ⚙ › Manage Plugin Repositories (`file://…/updatePlugins.xml`), et PhpStorm proposera chaque build en mise à jour.
+The command writes `var/phpstorm/updatePlugins.xml`:
+add it once in Settings › Plugins › ⚙ › Manage Plugin Repositories (`file://…/updatePlugins.xml`), and PhpStorm will offer each build as an update.
 
-## Extension VS Code
+## VS Code extension
 
-L'extension VS Code montre la même session dans une vue « Claude Reviews », avec les threads dans l'éditeur et dans le diff de VS Code.
+The VS Code extension shows the same session in a "Claude Reviews" view, with the threads in the editor and in VS Code's diff.
 
-![La vue Claude Reviews de VS Code, avec les fichiers changés et leurs threads, et le diff d'un fichier où Claude a répondu dans un thread](docs/images/vscode.png)
+![The Claude Reviews view of VS Code, with the changed files and their threads, and the diff of a file where Claude replied in a thread](docs/images/vscode.png)
 
-Chaque release GitHub porte son `.vsix`, que VS Code ne met pas à jour seul hors de sa marketplace :
+Each GitHub release carries its `.vsix`, which VS Code does not update on its own outside its marketplace:
 
 ```
 curl -LO https://github.com/nikophil/claude-reviews/releases/latest/download/local-reviews.vsix
 code --install-extension local-reviews.vsix --force
 ```
 
-Elle se construit aussi avec `zip`, sans rien télécharger :
+It also builds with `zip`, without downloading anything:
 
 ```
 npm run build:vscode
 code --install-extension var/vscode/local-reviews.vsix --force
 ```
 
-## Sécurité
+## Security
 
-Le serveur n'écoute que sur `127.0.0.1` et refuse les autres sites (en-têtes `Host`, `Origin` et `Sec-Fetch-Site`, Content-Security-Policy).
-Chaque compte a son serveur et son token, que seul ce compte lit ([ADR 0006](docs/adr/0006-un-serveur-et-un-token-par-compte.md)) :
-sur une machine partagée en SSH, un autre compte atteint le port, mais n'obtient rien sans le token.
-Le serveur n'écrit jamais un fichier du worktree relu : une suggestion, c'est Claude qui l'applique ([ADR 0007](docs/adr/0007-claude-applique-les-suggestions.md)).
+The server listens only on `127.0.0.1` and refuses other sites (`Host`, `Origin` and `Sec-Fetch-Site` headers, Content-Security-Policy).
+Each account has its own server and token, which only that account can read ([ADR 0006](docs/adr/0006-one-server-and-one-token-per-account.md)):
+on a machine shared over SSH, another account reaches the port, but gets nothing without the token.
+The server never writes a file of the reviewed worktree: Claude applies a suggestion itself ([ADR 0007](docs/adr/0007-claude-applies-suggestions.md)).
 
-## Développer
+## Development
 
 ```
 npm ci
@@ -115,6 +115,6 @@ node --test
 npx playwright test
 ```
 
-`npm start` lance le serveur et écrit son port et son token dans `~/.local/share/claude-reviews/endpoint` ; ouvre `http://127.0.0.1:<port>/?worktree=<chemin absolu>#token=<token>`.
-`npm run readme` refait les images de ce README, sauf la capture de PhpStorm, prise à la main dans l'IDE.
-Les règles du dépôt, le contrat HTTP et le format des données sont dans [CLAUDE.md](CLAUDE.md), les décisions d'architecture dans [docs/adr/](docs/adr/).
+`npm start` starts the server and writes its port and its token to `~/.local/share/claude-reviews/endpoint`; open `http://127.0.0.1:<port>/?worktree=<absolute path>#token=<token>`.
+`npm run readme` regenerates the images of this README, except the PhpStorm screenshot, taken by hand in the IDE.
+The repository's rules, the HTTP contract and the data format are in [CLAUDE.md](CLAUDE.md), the architecture decisions in [docs/adr/](docs/adr/).

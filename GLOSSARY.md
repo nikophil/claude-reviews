@@ -1,101 +1,101 @@
 # claude-reviews
 
-Relecture locale, façon GitHub, du code que Claude Code écrit dans un worktree,
-avec des fils de discussion sous les lignes du diff où Claude répond.
+Local, GitHub-style review of the code that Claude Code writes in a worktree,
+with discussion threads under the lines of the diff, where Claude replies.
 
 ## Language
 
-### Sessions et reviews
+### Sessions and reviews
 
 **Session**:
-La relecture d'un worktree comparé à sa base, de son ouverture à son approbation, ou à la disparition du worktree.
-Elle suit le worktree, pas la branche : un checkout ou un rebase ne la clôt pas.
-Une session close reste consultable, en lecture seule.
-_Avoid_: review (dans ce sens), PR
+Reviewing a worktree against its base, from its opening to its approval, or to the worktree's disappearance.
+It follows the worktree, not the branch: a checkout or a rebase does not close it.
+A closed session stays viewable, read-only.
+_Avoid_: a review (which is one Send or Approve), PR
 
 **Review**:
-Un envoi des messages Pending d'une session : Send, ou Approve.
-_Avoid_: round, tour, submission
+One send of a session's Pending messages: Send, or Approve.
+_Avoid_: round, turn, submission
 
 **Send**:
-La review qui livre à Claude les messages Pending et réveille sa Claude session.
-Elle peut n'en porter aucun : elle prend alors un Snapshot, et ne réveille Claude que si des threads l'attendent encore.
-Elle peut ne livrer que les messages Pending d'un thread, depuis son bouton Send dans PhpStorm ou VS Code : elle prend quand même son Snapshot, et les autres restent Pending.
+The review that delivers the Pending messages to Claude and wakes its Claude session.
+It may carry none: it then takes a Snapshot, and wakes Claude only if threads are still waiting for it.
+It may deliver only the Pending messages of one thread, from that thread's Send button in PhpStorm or VS Code: it still takes its Snapshot, and the others stay Pending.
 _Avoid_: Comment, Request changes
 
 **Approve**:
-La review qui clôt une session, alors en lecture seule ; elle n'envoie rien à Claude.
+The review that closes a session, which then becomes read-only; it sends nothing to Claude.
 
 **Base**:
-Ce à quoi une session compare le working tree, choisi dans l'UI :
-les changements non commités (HEAD), le Snapshot de mon dernier Send, une branche (par défaut, de base, locale ou distante), ou une PR ouverte.
-Le diff va toujours jusqu'au working tree, changements non commités compris.
-_Avoid_: vues par tour
+What a session compares the working tree to, chosen in the UI:
+the uncommitted changes (HEAD), the Snapshot of my last Send, a branch (default, base, local or remote), or an open PR.
+The diff always goes up to the working tree, uncommitted changes included.
+_Avoid_: per-turn views
 
 **Snapshot**:
-Le code que j'avais sous les yeux au moment d'un Send, gardé comme base Since my last review.
-_Avoid_: photo, état de la review
+The code I had in front of me at the time of a Send, kept as the "Since my last review" base.
+_Avoid_: picture, review state
 
 **Viewed**:
-Se dit d'un fichier du diff que j'ai marqué vu ; son diff se replie.
-Il le reste tant que son contenu, dans le code affiché, garde celui que j'ai vu, même si la base change.
-_Avoid_: lu, relu
+Said of a file of the diff that I marked as viewed; its diff collapses.
+It stays Viewed as long as its content, in the displayed code, is still the one I viewed, even if the base changes.
+_Avoid_: read, reviewed
 
 **Claude session**:
-Une conversation Claude Code qui tourne dans un worktree.
-_Avoid_: session (seul, qui désigne la Session de relecture)
+A Claude Code conversation running in a worktree.
+_Avoid_: session (on its own, which names the Session)
 
 **Client**:
-Ce qui m'affiche une session et y écrit pour moi : la page dans un navigateur, ou un IDE (PhpStorm, VS Code).
-Un client ne parle qu'à l'API HTTP du serveur ; le côté Claude, lui, passe par le mod.
-_Avoid_: front, outil
+What shows me a session and writes to it for me: the page in a browser, or an IDE (PhpStorm, VS Code).
+A client talks only to the server's HTTP API; the Claude side, for its part, goes through the mod.
+_Avoid_: front end, tool
 
-### Fils
+### Threads
 
 **Thread**:
-Une discussion entre moi et Claude, ancrée sur des lignes du diff d'une session, ou sur un fichier entier.
-_Avoid_: fil (en code et dans l'UI), annotation, commentaire (pour le fil entier)
+A discussion between Claude and me, anchored on lines of a session's diff, or on a whole file.
+_Avoid_: annotation, comment (for the whole thread)
 
 **Anchor**:
-L'endroit d'un thread : un fichier, un côté du diff (ancien ou nouveau), une plage de lignes et leur contenu ; sans plage pour un thread sur le fichier entier.
-Pour moi comme pour Claude, le côté ancien est la base de la session, et le nouveau le working tree.
+The place of a thread: a file, a side of the diff (old or new), a range of lines and their content; no range for a thread on the whole file.
+For me as for Claude, the old side is the session's base, and the new one the working tree.
 
 **Message**:
-Une prise de parole dans un thread, de moi ou de Claude.
-Un message de Claude est publié dès qu'il l'écrit, hors de toute review ; seuls les miens passent par une review.
+One contribution to a thread, from me or from Claude.
+A message from Claude is published as soon as Claude writes it, outside any review; only mine go through a review.
 _Avoid_: comment, reply
 
 **Pending**:
-Se dit d'un message que j'ai écrit mais pas encore envoyé ; la prochaine review le publie.
-Tant qu'il l'est, je peux le modifier ou le supprimer, et un thread qui n'a plus de message disparaît avec lui.
-_Avoid_: draft, brouillon
+Said of a message I wrote but have not sent yet; the next review publishes it.
+While it is Pending, I can edit or delete it, and a thread left with no message disappears with it.
+_Avoid_: draft
 
 **Suggestion**:
-Un bloc de code d'un de mes messages, qui propose le code à mettre à la place des lignes du thread, côté nouveau.
-Claude l'applique au working tree, sauf désaccord, puis répond dans le thread ; aucun client ne l'applique lui-même.
+A code block in one of my messages, which proposes the code to put in place of the thread's lines, on the new side.
+Claude applies it to the working tree, barring disagreement, then replies in the thread; no client applies it itself.
 _Avoid_: patch, commit suggestion
 
 **Waiting for Claude**:
-Un thread non Resolved dont le dernier message envoyé est le mien.
+A thread not Resolved whose last sent message is mine.
 _Avoid_: unread, watermark
 
 **Replied**:
-Se dit d'un thread non Resolved où Claude a écrit depuis mon dernier Send ; avant mon premier Send, aucun ne l'est.
-C'est une marque pour retrouver ses réponses, pas un statut du thread.
+Said of a thread not Resolved where Claude wrote since my last Send; before my first Send, none is.
+It is a mark for finding Claude's replies, not a status of the thread.
 _Avoid_: Awaiting you, unread
 
-Un thread non Resolved où Claude a parlé en dernier n'a pas de nom ni de statut affiché : la notification « Claude replied in every thread » et le message de Claude suffisent.
+A thread not Resolved where Claude spoke last has no name and no displayed status: the "Claude replied in every thread" notification and Claude's message are enough.
 _Avoid_: Awaiting you
 
 **Resolved**:
-Un thread que j'ai clos ; seul moi le résous, et seul mon Unresolve le rouvre.
-Il n'attend plus Claude, même si mon message est le dernier, et une réponse de Claude ne le rouvre pas.
-Je n'y écris plus avant son Unresolve, et un Send garde Pending les messages que j'y avais écrits avant de le résoudre ; un Approve les laisse Pending, sans les envoyer.
+A thread I closed; only I resolve it, and only my Unresolve reopens it.
+It no longer waits for Claude, even if my message is the last, and a reply from Claude does not reopen it.
+I no longer write in it until its Unresolve, and a Send keeps Pending the messages I had written in it before resolving it; an Approve leaves them Pending, without sending them.
 
 **Unresolve**:
-Rouvrir un thread Resolved : je peux de nouveau y écrire, et le Send suivant publie ses messages Pending.
-_Avoid_: reopen, réouverture
+Reopen a Resolved thread: I can write in it again, and the next Send publishes its Pending messages.
+_Avoid_: reopen
 
 **Outdated**:
-Un thread dont les lignes d'ancrage ne se retrouvent plus dans le code qu'on regarde : le code affiché pour moi, la base de la session et le working tree pour Claude.
-Un thread sur un fichier entier l'est quand son fichier a disparu de ce code.
+A thread whose anchored lines can no longer be found in the code being looked at: the displayed code for me, the session's base and the working tree for Claude.
+A thread on a whole file is Outdated when its file has disappeared from that code.

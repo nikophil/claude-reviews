@@ -1,199 +1,199 @@
 # claude-reviews
 
-Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nommer les choses avec les mots du glossaire.
+Read `BRIEF.md`, `GLOSSARY.md` and `docs/adr/` before changing the code, and name things with the words of the glossary.
 
-## Prérequis
+## Prerequisites
 
-- Node 25 au moins.
-- git 2.41 au moins : la liste des bases trie les branches par `%(ahead-behind:HEAD)` de `git for-each-ref`.
+- Node 25 or later.
+- git 2.41 or later: the list of bases sorts the branches by `%(ahead-behind:HEAD)` of `git for-each-ref`.
 
-## Commandes
+## Commands
 
-- `npm ci` : installe `@playwright/test` et `@types/vscode`, les seules dépendances, de développement.
-- `npm start` (`node server/main.ts`) : lance le serveur sur un port éphémère de `127.0.0.1`, et écrit son port et son token dans `<données>/endpoint`.
-  Ouvrir ensuite `http://127.0.0.1:<port>/?worktree=<chemin absolu>#token=<token>`, qui ouvre la session du worktree et redirige vers `/s/<id>` sans le token dans l'URL.
-- `CLAUDE_REVIEWS_PORT=<port>` fixe le port au lieu d'en tirer un éphémère.
-  En SSH, chacun choisit le sien dans son profil shell et forwarde le même numéro des deux côtés (`ssh -L <port>:127.0.0.1:<port>`) :
-  la garde `Host` attend ce numéro, et un port éphémère change à chaque redémarrage du serveur.
-- `node --test` : tests du serveur, des fonctions pures et du mod, ce dernier sous un `$` factice.
-- `npm run test:mod` : `claude plugin test` sur une copie du mod dans `var/mod/`, car il lancerait aussi les `*.test.ts` de `node --test` ; ses tests sont des `*.test.tsx`, que `node --test` ignore.
-- `claude --plugin-dir .` : une Claude session avec le mod de ce dossier.
-- `/plugin install local-reviews --marketplace nikophil/claude-reviews` : installe le mod ; il lance le serveur avec le `node` du `PATH`, en version 25 au moins.
-- `npx playwright install chromium` une fois, puis `npx playwright test` : tests de l'UI, sur un serveur lancé sur le port 7779, avec un `XDG_DATA_HOME` temporaire.
-- `npm run readme` : refait les images de `README.md` (`docs/images/`) par Playwright, sur des dépôts d'exemple (`e2e/readme.ts`), celle de VS Code dans openvscode-server comme `npm run test:vscode`, sauf `phpstorm.png`, prise à la main dans l'IDE ;
-  l'animation est un PNG animé, assemblé sans outil à installer.
-- `npm run build:phpstorm` : construit `var/phpstorm/local-reviews.zip` avec le `javac` et les jars du PhpStorm installé (`PHPSTORM_HOME`, sinon celui de Toolbox) et `zip`, avec la version de `.claude-plugin/plugin.json` suivie de l'epoch du build, et écrit `var/phpstorm/updatePlugins.xml` ;
-  ce dépôt de plugins, ajouté une fois par Settings › Plugins › ⚙ › Manage Plugin Repositories (`file://…/updatePlugins.xml`), propose ensuite chaque build en mise à jour.
-- `npm run test:phpstorm` : dans le conteneur de `docker-compose.yml`, construit le plugin contre PhpStorm 2026.2.5, le passe au Plugin Verifier, puis lance ses tests d'interface ;
-  PhpStorm, les dépendances Gradle et le Plugin Verifier se téléchargent une fois dans le volume `phpstorm-cache`, ou dans le dossier que nomme `PHPSTORM_CACHE`.
-- `npm run build:vscode` : construit `var/vscode/local-reviews.vsix` avec `zip`, à la version de `.claude-plugin/plugin.json` (celle de `vscode/package.json` ne sert pas), à installer par `code --install-extension var/vscode/local-reviews.vsix --force`.
-- Une release : monter `.claude-plugin/plugin.json`, merger, puis pousser le tag `v<version>` sur main.
-  `.github/workflows/release.yml` vérifie que le tag nomme cette version, construit le zip PhpStorm (Plugin Verifier et tests d'interface compris) et le `.vsix` à cette version, puis les attache à la release GitHub du tag, avec l'`updatePlugins.xml` qui pointe vers ce zip :
-  PhpStorm lit celui de la dernière release (`releases/latest/download/updatePlugins.xml`) pour proposer la mise à jour.
-- `npm run test:vscode` : tests de l'extension VS Code, `e2e/vscode.spec.ts`, dans openvscode-server 1.109.5 (`~/.cache/claude-reviews/openvscode-server-v1.109.5-linux-x64`, sinon `OPENVSCODE_SERVER`), sur un serveur lancé sur le port 7781 ;
-  openvscode-server se télécharge une fois depuis les releases de `gitpod-io/openvscode-server`, comme le fait la CI.
+- `npm ci`: installs `@playwright/test` and `@types/vscode`, the only dependencies, both development ones.
+- `npm start` (`node server/main.ts`): starts the server on an ephemeral port of `127.0.0.1`, and writes its port and its token to `<data>/endpoint`.
+  Then open `http://127.0.0.1:<port>/?worktree=<absolute path>#token=<token>`, which opens the session of the worktree and redirects to `/s/<id>` without the token in the URL.
+- `CLAUDE_REVIEWS_PORT=<port>` sets the port instead of picking an ephemeral one.
+  Over SSH, each user picks their own in their shell profile and forwards the same number on both sides (`ssh -L <port>:127.0.0.1:<port>`):
+  the `Host` guard expects this number, and an ephemeral port changes on every restart of the server.
+- `node --test`: tests of the server, of the pure functions and of the mod, the latter under a fake `$`.
+- `npm run test:mod`: `claude plugin test` on a copy of the mod in `var/mod/`, because it would also run the `*.test.ts` of `node --test`; its tests are `*.test.tsx`, which `node --test` ignores.
+- `claude --plugin-dir .`: a Claude session with the mod of this folder.
+- `/plugin install local-reviews --marketplace nikophil/claude-reviews`: installs the mod; it starts the server with the `node` of the `PATH`, version 25 or later.
+- `npx playwright install chromium` once, then `npx playwright test`: tests of the UI, on a server started on port 7779, with a temporary `XDG_DATA_HOME`.
+- `npm run readme`: remakes the images of `README.md` (`docs/images/`) with Playwright, on example repositories (`e2e/readme.ts`), the VS Code one in openvscode-server like `npm run test:vscode`, except `phpstorm.png`, taken by hand in the IDE;
+  the animation is an animated PNG, assembled without any tool to install.
+- `npm run build:phpstorm`: builds `var/phpstorm/local-reviews.zip` with the `javac` and the jars of the installed PhpStorm (`PHPSTORM_HOME`, otherwise the Toolbox one) and `zip`, with the version of `.claude-plugin/plugin.json` followed by the epoch of the build, and writes `var/phpstorm/updatePlugins.xml`;
+  this plugin repository, added once through Settings › Plugins › ⚙ › Manage Plugin Repositories (`file://…/updatePlugins.xml`), then offers each build as an update.
+- `npm run test:phpstorm`: in the container of `docker-compose.yml`, builds the plugin against PhpStorm 2026.2.5, runs it through the Plugin Verifier, then runs its UI tests;
+  PhpStorm, the Gradle dependencies and the Plugin Verifier are downloaded once into the `phpstorm-cache` volume, or into the folder that `PHPSTORM_CACHE` names.
+- `npm run build:vscode`: builds `var/vscode/local-reviews.vsix` with `zip`, at the version of `.claude-plugin/plugin.json` (the one of `vscode/package.json` is not used), to install with `code --install-extension var/vscode/local-reviews.vsix --force`.
+- A release: bump `.claude-plugin/plugin.json`, merge, then push the tag `v<version>` on main.
+  `.github/workflows/release.yml` checks that the tag names this version, builds the PhpStorm zip (Plugin Verifier and UI tests included) and the `.vsix` at this version, then attaches them to the GitHub release of the tag, with the `updatePlugins.xml` that points to this zip:
+  PhpStorm reads the one of the latest release (`releases/latest/download/updatePlugins.xml`) to offer the update.
+- `npm run test:vscode`: tests of the VS Code extension, `e2e/vscode.spec.ts`, in openvscode-server 1.109.5 (`~/.cache/claude-reviews/openvscode-server-v1.109.5-linux-x64`, otherwise `OPENVSCODE_SERVER`), on a server started on port 7781;
+  openvscode-server is downloaded once from the releases of `gitpod-io/openvscode-server`, as the CI does.
 
 ## Structure
 
-- `server/` : serveur `node:http` en TypeScript, exécuté par Node 25 sans build (type stripping) ; les imports portent l'extension `.ts`.
-- `server/diff.ts` : écrit le tree du working tree avec un index temporaire, puis calcule et parse `git diff <base> <tree>`.
-- `server/sessions.ts` : sessions, threads, messages, Send et Approve, stockés en JSON sous le dossier de données.
-- `server/reanchor.ts` : `reanchor(anchor, lignes)`, la fonction pure qui retrouve la plage d'une Anchor dans un fichier, ou rend `null` quand le thread est Outdated (#8).
-- `ui/` : page servie telle quelle, en Preact + htm sans build ni JSX.
-- `ui/vendor/` : bibliothèques front copiées telles quelles, à ne pas modifier ni relire.
-- `e2e/` : tests Playwright.
-- `.claude-plugin/` : le plugin `local-reviews` (le préfixe `claude-` est réservé à Anthropic) et la marketplace de ce dépôt ; la version du plugin est celle du serveur, du plugin PhpStorm et de l'extension VS Code.
-  Tout changement de `server/` ou de `ui/` la monte : le mod garde un serveur déjà lancé de même version.
-- `hooks/register.ts` : le mod, qui enregistre les outils et `/review-local`, démarre le serveur, sonde la session toutes les 2 s et réveille Claude ; `$` n'y passe qu'à des fonctions déclarées en tête de fichier.
-- `hooks/watch.ts` : les décisions du mod (réveiller, relancer, se taire, reprendre après un `{ drop }`), et les sockets à l'écoute d'un port lus dans `/proc/net/tcp`, en fonctions pures.
-- `phpstorm/` : le plugin PhpStorm, en Java et Swing : la tool window « Claude Reviews » (base, Send, Approve, fichiers changés et leurs threads), les threads dans l'éditeur et dans le diff de l'IDE ;
-  sa vue Editor ouvre un fichier dans l'éditeur, sa vue Diff dans le diff de l'IDE, avec la case Viewed de chaque fichier dans l'arbre et dans la barre du diff ;
-  il modifie et supprime mes messages Pending, passe d'un thread non Resolved à l'autre (Next Thread et Previous Thread, Alt+Shift+Page Down et Page Up), marque « Replied » ceux, non Resolved, où Claude a répondu depuis mon dernier Send,
-  et propose Suggest Change, Comment on File et Copy Threads as Markdown, au même format que l'UI web ; il ne parle qu'à l'API, comme tout client ([ADR 0004](docs/adr/0004-clients-et-mod-separes-par-l-api.md)).
-- `phpstorm/ui-test/` : les tests d'interface du plugin, en Kotlin, par Starter et Driver de JetBrains, sous Gradle dans Docker ([ADR 0005](docs/adr/0005-tests-d-interface-phpstorm-par-gradle-dans-docker.md)) ;
-  `run.sh` y enchaîne `build.sh`, le Plugin Verifier, qui échoue sur un verdict autre que « Compatible », et `gradle test`.
-- `vscode/` : l'extension VS Code, en JS CommonJS vérifié par `// @ts-check`, sans build : la vue « Claude Reviews » (base, Send, Approve, fichiers changés avec leur case Viewed et leurs threads), les threads par l'API Comments dans l'éditeur et dans le diff de VS Code ;
-  un clic sur un fichier ouvre son diff, la case Viewed est aussi dans la barre du diff, et un thread Outdated s'ouvre sur son extrait de diff ; `vscode/review.js` garde les fonctions pures, testées par `node --test`.
-- Aucune dépendance npm au runtime : ce qui manque s'écrit, ou se vendorise en un fichier dans `ui/vendor/`.
+- `server/`: `node:http` server in TypeScript, run by Node 25 without a build (type stripping); the imports carry the `.ts` extension.
+- `server/diff.ts`: writes the tree of the working tree with a temporary index, then computes and parses `git diff <base> <tree>`.
+- `server/sessions.ts`: sessions, threads, messages, Send and Approve, stored as JSON under the data folder.
+- `server/reanchor.ts`: `reanchor(anchor, lines)`, the pure function that finds the range of an Anchor in a file, or returns `null` when the thread is Outdated.
+- `ui/`: page served as is, in Preact + htm without a build or JSX.
+- `ui/vendor/`: front-end libraries copied as is, not to be modified or reviewed.
+- `e2e/`: Playwright tests.
+- `.claude-plugin/`: the `local-reviews` plugin (the `claude-` prefix is reserved for Anthropic) and the marketplace of this repository; the version of the plugin is the one of the server, of the PhpStorm plugin and of the VS Code extension.
+  Any change to `server/` or `ui/` bumps it: the mod keeps an already running server of the same version.
+- `hooks/register.ts`: the mod, which registers the tools and `/review-local`, starts the server, polls the session every 2 s and wakes Claude; `$` is only passed there to functions declared at the top of the file.
+- `hooks/watch.ts`: the decisions of the mod (wake, relaunch, stay silent, resume after a `{ drop }`), and the sockets listening on a port read from `/proc/net/tcp`, as pure functions.
+- `phpstorm/`: the PhpStorm plugin, in Java and Swing: the "Claude Reviews" tool window (base, Send, Approve, changed files and their threads), the threads in the editor and in the diff of the IDE;
+  its Editor view opens a file in the editor, its Diff view in the diff of the IDE, with the Viewed checkbox of each file in the tree and in the bar of the diff;
+  it edits and deletes my Pending messages, moves from one thread not Resolved to the next (Next Thread and Previous Thread, Alt+Shift+Page Down and Page Up), marks "Replied" those, not Resolved, where Claude replied since my last Send,
+  and offers Suggest Change, Comment on File and Copy Threads as Markdown, in the same format as the web UI; it only talks to the API, like any client ([ADR 0004](docs/adr/0004-clients-and-mod-separated-by-the-api.md)).
+- `phpstorm/ui-test/`: the UI tests of the plugin, in Kotlin, with JetBrains' Starter and Driver, under Gradle in Docker ([ADR 0005](docs/adr/0005-phpstorm-ui-tests-with-gradle-in-docker.md));
+  there, `run.sh` runs in sequence `build.sh`, the Plugin Verifier, which fails on any verdict other than "Compatible", and `gradle test`.
+- `vscode/`: the VS Code extension, in CommonJS JS checked by `// @ts-check`, without a build: the "Claude Reviews" view (base, Send, Approve, changed files with their Viewed checkbox and their threads), the threads through the Comments API in the editor and in the diff of VS Code;
+  a click on a file opens its diff, the Viewed checkbox is also in the bar of the diff, and an Outdated thread opens on its diff excerpt; `vscode/review.js` holds the pure functions, tested by `node --test`.
+- No npm dependency at runtime: what is missing gets written, or vendored as a single file in `ui/vendor/`.
 
-## Contrat HTTP
+## HTTP contract
 
-Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
+The server serves the UI and a JSON API, for the UI and the mod.
 
-- `GET /` sert l'écran Reviews : les sessions ouvertes de `GET /api/sessions`, chacune un lien vers `/s/<id>`.
-- `GET /s/<id>` sert la page de la session `<id>`, ouverte ou approuvée ; celle d'une session approuvée dont le worktree a disparu, ou close par `closedBecause`, montre tous ses threads sur leur Anchor, sans diff ni Outdated, et « Closed » et son bandeau seulement si `closedBecause` le dit.
-- `GET /?worktree=<chemin>` sert la même page, qui ouvre la session du worktree par `POST /api/sessions`, puis remplace son URL par `/s/<id>`.
-- La page lit la session et `/tree` toutes les 2 s, et ne recharge le diff qu'à son ouverture, au Refresh, au changement de base et à Hide whitespace.
-- Le bandeau « The code changed since it was loaded » paraît quand `/tree` diffère du diff affiché : par son `tree`, ou par sa `base` hors Since my last review, qu'un Send déplace sans changer le code.
+- `GET /` serves the Reviews screen: the open sessions of `GET /api/sessions`, each a link to `/s/<id>`.
+- `GET /s/<id>` serves the page of the session `<id>`, open or approved; the page of an approved session whose worktree is gone, or closed by `closedBecause`, shows all its threads on their Anchor, without diff or Outdated, and "Closed" and its banner only if `closedBecause` says so.
+- `GET /?worktree=<path>` serves the same page, which opens the session of the worktree through `POST /api/sessions`, then replaces its URL with `/s/<id>`.
+- The page reads the session and `/tree` every 2 s, and only reloads the diff when it opens, on Refresh, on a change of base and on Hide whitespace.
+- The banner "The code changed since it was loaded" appears when `/tree` differs from the displayed diff: by its `tree`, or by its `base` outside Since my last review, which a Send moves without changing the code.
 
-- Le serveur écoute sur un port éphémère de `127.0.0.1`, et écrit `{ port, token }` dans `<données>/endpoint` (0600) : chaque compte a son serveur, et les clients y lisent où le joindre et son token.
-- Un client ne fait confiance au port de l'`endpoint` que si le socket qui l'écoute est de son compte, lu dans `/proc/net/tcp` et `/proc/net/tcp6`, que tout compte lit :
-  un autre compte qui prend le port d'un serveur mort et répond comme claude-reviews n'obtient ni appel, ni confiance. Sans `/proc` (macOS), le client fait confiance.
-- Toute route `/api/` sauf `GET /api/health` exige le token en `Authorization: Bearer <token>`, sinon 401 `{ "error": "unauthorized" }` : un autre compte atteint le port sur la loopback, mais n'obtient rien sans le token, et ne peut ni lire un dépôt, ni écrire un message, ni arrêter le serveur.
-- Le token se compare à temps constant ; il garde `/api/me`, donc le login github.com du compte ne fuit pas.
-- L'UI reçoit le token par le fragment `#token=<token>` à l'ouverture, le garde dans `localStorage`, que seuls ses propres scripts lisent, le retire de l'URL, puis l'envoie sur chaque appel ;
-  sur un 401, elle demande de rouvrir la review par `/review-local`. Le mod, PhpStorm et VS Code le lisent dans le fichier `endpoint`.
-- Toute requête dont le `Host` n'est ni `127.0.0.1:<port>` ni `localhost:<port>` reçoit 403.
-- `/?worktree=` reçoit 403 quand son `Sec-Fetch-Site` n'est ni absent, ni `same-origin`, ni `none` : la page ouvrirait la session et lancerait git sur un chemin choisi par un autre site.
-- Le HTML porte `Content-Security-Policy: script-src 'self'; object-src 'none'; frame-ancestors 'none'`.
-- Une requête `/api/` dont le `Sec-Fetch-Site` n'est ni `same-origin` ni `none` reçoit 403.
-- Une écriture (toute méthode sauf `GET` et `HEAD`) exige `Content-Type: application/json` (sinon 415) et un `Origin` absent ou égal à `http://<Host>` (sinon 403) : l'UI envoie le sien, le mod aucun ; ces gardes et la CSP protègent le navigateur, le token protège du process local.
-- Aucune réponse ne porte d'en-tête CORS.
-- Une erreur répond `{ "error": "<message>" }` : 400 pour une entrée invalide, 404 pour une session, un thread ou une route inconnus, 409 pour une écriture refusée, 413 pour un corps de plus de 1 Mo.
+- The server listens on an ephemeral port of `127.0.0.1`, and writes `{ port, token }` to `<data>/endpoint` (0600): each account has its own server, and the clients read there where to reach it and its token.
+- A client only trusts the port of the `endpoint` if the socket that listens on it belongs to its account, read from `/proc/net/tcp` and `/proc/net/tcp6`, which any account can read:
+  another account that takes the port of a dead server and answers like claude-reviews gets neither calls nor trust. Without `/proc` (macOS), the client trusts.
+- Every `/api/` route except `GET /api/health` requires the token in `Authorization: Bearer <token>`, otherwise 401 `{ "error": "unauthorized" }`: another account reaches the port on the loopback, but gets nothing without the token, and can neither read a repository, nor write a message, nor stop the server.
+- The token is compared in constant time; it guards `/api/me`, so the github.com login of the account does not leak.
+- The UI receives the token through the fragment `#token=<token>` on opening, keeps it in `localStorage`, which only its own scripts read, removes it from the URL, then sends it on each call;
+  on a 401, it asks to reopen the review through `/review-local`. The mod, PhpStorm and VS Code read it from the `endpoint` file.
+- Any request whose `Host` is neither `127.0.0.1:<port>` nor `localhost:<port>` gets 403.
+- `/?worktree=` gets 403 when its `Sec-Fetch-Site` is neither absent, nor `same-origin`, nor `none`: the page would open the session and run git on a path chosen by another site.
+- The HTML carries `Content-Security-Policy: script-src 'self'; object-src 'none'; frame-ancestors 'none'`.
+- An `/api/` request whose `Sec-Fetch-Site` is neither `same-origin` nor `none` gets 403.
+- A write (any method except `GET` and `HEAD`) requires `Content-Type: application/json` (otherwise 415) and an `Origin` that is absent or equal to `http://<Host>` (otherwise 403): the UI sends its own, the mod none; these guards and the CSP protect the browser, the token protects against local processes.
+- No response carries a CORS header.
+- An error answers `{ "error": "<message>" }`: 400 for an invalid input, 404 for an unknown session, thread or route, 409 for a refused write, 413 for a body over 1 MB.
 
-| Route | Rôle |
+| Route | Role |
 | --- | --- |
-| `GET /api/health` | `{ app: "claude-reviews", version }`, la version de `.claude-plugin/plugin.json` ; seule route sans token, pour le test de vivacité. |
-| `GET /api/me` | `{ login, name }`, pour les avatars de mes messages : mon login sur github.com (`gh api --hostname github.com user --jq .login`) et `git config --global --includes user.name`, chacun `null` en échec ou au-delà de 2 s. |
-| `POST /api/shutdown` `{}` | Arrête le serveur : il cesse d'écouter avant de répondre. |
-| `GET /api/sessions` | Les sessions ouvertes, pour Reviews : `[{ id, worktree, repo, branch, waitingForClaude, updatedAt }]`, Waiting for Claude d'abord, puis le reste, la plus récemment active d'abord à égalité. |
-| `GET /api/sessions?worktree=<chemin>[&claude]` | La session ouverte du worktree, sans en créer : 404 sans session ouverte ; `&claude` vient du mod, et dit qu'une Claude session tourne dans ce worktree, même sans session ouverte. |
-| `GET /api/sessions?closed` | Les sessions closes, pour l'onglet Closed de Reviews : `[{ id, worktree, repo, approvedAt, closedBecause }]`, la plus récemment close d'abord. |
-| `GET /api/inbox` | Une entrée par session ouverte, pour les sources locales de gh-notif : `[{ repo, branch, title, url, openThreads, awaitingMe, lastActor, updatedAt }]`, où `awaitingMe` compte les threads où Claude a parlé en dernier ; gh-notif l'appelle avec le port et le token du fichier `endpoint`, comme tout client. |
-| `POST /api/sessions` `{ worktree }` | Renvoie la session ouverte du worktree, ou en crée une. |
-| `GET /api/sessions/<id>` | La session, ouverte ou approuvée. |
-| `GET /api/sessions/<id>/diff[?base=&tree=][&w=1]` | Le diff du working tree de la session contre sa base : `{ ref, base, tree, files }`, où `ref` est la base choisie, ou `HEAD` quand elle ne désigne plus rien, et `base` et `tree` les ids de la base et du tree affichés ; avec `?base=&tree=`, `{ base, tree, files }`, le diff de ces ids ; avec `w=1` (Hide whitespace), `git diff -w`. |
-| `GET /api/sessions/<id>/tree` | `{ ref, base, tree }` comme `/diff`, sans calculer le diff : le poll de l'UI le compare au diff affiché. |
-| `GET /api/sessions/<id>/lines?path=<chemin>&tree=<id>&from=<n>&to=<m>` | `{ lines }`, les lignes `from` à `to` du fichier dans le tree affiché, que le diff cache et qu'« Expand » montre. |
-| `GET /api/sessions/<id>/file?object=<id>&path=<chemin>` | `{ text }`, le texte de `path` dans le commit ou le tree `object` du dépôt de la session : 404 sans ce fichier, 400 pour un objet que le dépôt n'a pas. |
-| `GET /api/sessions/<id>/bases` | Les bases du sélecteur, dans son ordre : `[{ ref, name, disabled?, group? }]`, `group` absent pour les choix rapides. |
-| `POST /api/sessions/<id>/base` `{ base }` | Choisit la base de la session parmi les `ref` non grisées de `/bases`. |
-| `POST /api/sessions/<id>/threads` `{ author, path, side, start, end, body, base?, tree? }` | Ouvre un thread avec son premier message (`open_thread` pour Claude). |
-| `POST /api/sessions/<id>/threads/<n>/messages` `{ author, body }` | Ajoute un message (`reply_to_thread` pour Claude). |
-| `POST /api/sessions/<id>/threads/<n>/messages/<i>` `{ body }` | Modifie mon message Pending de rang `i`, à partir de 0, dans le thread. |
-| `POST /api/sessions/<id>/threads/<n>/messages/<i>/delete` `{}` | Supprime mon message Pending de rang `i` ; un thread qui n'a plus de message part avec lui. |
-| `POST /api/sessions/<id>/threads/<n>/resolve` `{}` | Résout le thread. |
-| `POST /api/sessions/<id>/viewed` `{ path, tree, viewed }` | Marque le fichier Viewed sur le tree affiché, ou le démarque. |
-| `POST /api/sessions/<id>/threads/<n>/unresolve` `{}` | Rouvre le thread Resolved. |
-| `POST /api/sessions/<id>/send` `{ tree, threads? }` | Send : Snapshot du tree affiché, puis publication des messages Pending, ceux des seuls threads de `threads` quand il est donné. |
-| `POST /api/sessions/<id>/approve` `{}` | Approve : archive la session, puis supprime ses refs. |
-| `POST /api/sessions/<id>/show` `{}` | Demande aux clients d'IDE de montrer la session : elle porte ensuite `showRequestedAt`, la date de la demande, gardée en mémoire. |
-| `POST /api/sessions/<id>/turn-complete` `{}` | Notifie « Claude replied in N threads », suivi de « , M still waiting » s'il en reste, par `notify-send` (Linux) ou `osascript` (macOS). |
+| `GET /api/health` | `{ app: "claude-reviews", version }`, the version of `.claude-plugin/plugin.json`; the only route without a token, for the liveness check. |
+| `GET /api/me` | `{ login, name }`, for the avatars of my messages: my login on github.com (`gh api --hostname github.com user --jq .login`) and `git config --global --includes user.name`, each `null` on failure or beyond 2 s. |
+| `POST /api/shutdown` `{}` | Stops the server: it stops listening before answering. |
+| `GET /api/sessions` | The open sessions, for Reviews: `[{ id, worktree, repo, branch, waitingForClaude, updatedAt }]`, Waiting for Claude first, then the rest, the most recently active first on a tie. |
+| `GET /api/sessions?worktree=<path>[&claude]` | The open session of the worktree, without creating one: 404 without an open session; `&claude` comes from the mod, and says that a Claude session runs in this worktree, even without an open session. |
+| `GET /api/sessions?closed` | The closed sessions, for the Closed tab of Reviews: `[{ id, worktree, repo, approvedAt, closedBecause }]`, the most recently closed first. |
+| `GET /api/inbox` | One entry per open session, for the local sources of gh-notif: `[{ repo, branch, title, url, openThreads, awaitingMe, lastActor, updatedAt }]`, where `awaitingMe` counts the threads where Claude spoke last; gh-notif calls it with the port and the token of the `endpoint` file, like any client. |
+| `POST /api/sessions` `{ worktree }` | Returns the open session of the worktree, or creates one. |
+| `GET /api/sessions/<id>` | The session, open or approved. |
+| `GET /api/sessions/<id>/diff[?base=&tree=][&w=1]` | The diff of the working tree of the session against its base: `{ ref, base, tree, files }`, where `ref` is the chosen base, or `HEAD` when it no longer points to anything, and `base` and `tree` the ids of the displayed base and tree; with `?base=&tree=`, `{ base, tree, files }`, the diff of these ids; with `w=1` (Hide whitespace), `git diff -w`. |
+| `GET /api/sessions/<id>/tree` | `{ ref, base, tree }` like `/diff`, without computing the diff: the poll of the UI compares it with the displayed diff. |
+| `GET /api/sessions/<id>/lines?path=<path>&tree=<id>&from=<n>&to=<m>` | `{ lines }`, the lines `from` to `to` of the file in the displayed tree, which the diff hides and "Expand" shows. |
+| `GET /api/sessions/<id>/file?object=<id>&path=<path>` | `{ text }`, the text of `path` in the commit or the tree `object` of the repository of the session: 404 without this file, 400 for an object that the repository does not have. |
+| `GET /api/sessions/<id>/bases` | The bases of the selector, in its order: `[{ ref, name, disabled?, group? }]`, `group` absent for the quick choices. |
+| `POST /api/sessions/<id>/base` `{ base }` | Chooses the base of the session among the `ref`s of `/bases` that are not grayed out. |
+| `POST /api/sessions/<id>/threads` `{ author, path, side, start, end, body, base?, tree? }` | Opens a thread with its first message (`open_thread` for Claude). |
+| `POST /api/sessions/<id>/threads/<n>/messages` `{ author, body }` | Adds a message (`reply_to_thread` for Claude). |
+| `POST /api/sessions/<id>/threads/<n>/messages/<i>` `{ body }` | Edits my Pending message at index `i`, counted from 0, in the thread. |
+| `POST /api/sessions/<id>/threads/<n>/messages/<i>/delete` `{}` | Deletes my Pending message at index `i`; a thread that has no message left goes with it. |
+| `POST /api/sessions/<id>/threads/<n>/resolve` `{}` | Resolves the thread. |
+| `POST /api/sessions/<id>/viewed` `{ path, tree, viewed }` | Marks the file Viewed on the displayed tree, or unmarks it. |
+| `POST /api/sessions/<id>/threads/<n>/unresolve` `{}` | Reopens the Resolved thread. |
+| `POST /api/sessions/<id>/send` `{ tree, threads? }` | Send: Snapshot of the displayed tree, then publication of the Pending messages, only those of the threads in `threads` when it is given. |
+| `POST /api/sessions/<id>/approve` `{}` | Approve: archives the session, then deletes its refs. |
+| `POST /api/sessions/<id>/show` `{}` | Asks the IDE clients to show the session: it then carries `showRequestedAt`, the date of the request, kept in memory. |
+| `POST /api/sessions/<id>/turn-complete` `{}` | Notifies "Claude replied in N threads", followed by ", M still waiting" if some remain, through `notify-send` (Linux) or `osascript` (macOS). |
 
-- Lire les sessions (`GET /api/sessions`, avec ou sans `worktree`) clôt d'abord comme un Approve chaque session ouverte dont le worktree n'existe plus, même avec des messages Pending ; lire une session (`GET /api/sessions/<id>`) clôt de même celle-là, et une session approuvée dont le placement échoue répond sans `at`.
-- Un worktree n'existe plus quand son `stat` répond ENOENT, que son dossier parent existe encore, et que son `commonDir`, s'il est hors du worktree, existe encore ; toute autre erreur, ou un parent ou un `commonDir` disparu lui aussi (disque démonté), laisse la session ouverte.
-- Lire ou ouvrir la session d'un worktree clôt aussi la session à son chemin qui porte un autre `commonDir` : un autre dépôt ne reprend pas la session.
-- Une lecture n'attend la file des écritures que pour clore une session ; un fichier de session illisible est ignoré, avec une ligne dans le log du serveur, sans être supprimé ni réécrit.
-- Chaque session renvoyée porte `claudeSession`, vrai quand le mod a lu son worktree avec `&claude` dans les 10 dernières secondes, gardé en mémoire ; sans lui, le plugin PhpStorm grise ses Send, l'extension VS Code les refuse, et tous deux montrent, au lieu d'attendre Claude, la commande qui démarre une Claude session.
-- La notification compte les threads où Claude a écrit depuis le dernier Send, et les threads Waiting for Claude ; `start(port, notify)` reçoit la commande à lancer, que les tests enregistrent sans la lancer.
-- Hors `/diff`, `/tree`, `/lines`, `/bases` et la liste des sessions, chaque route d'une session renvoie la session entière, au format du fichier, et chaque thread y porte en plus son `status` : `resolved`, `waiting-for-claude` quand mon message est le dernier publié, `open` quand c'est celui de Claude, ou `null` tant qu'aucun message n'est publié ; les clients n'affichent pas `open`.
-- Une route qui renvoie la session et reçoit `?base=<id>&tree=<id>` (le code affiché par l'UI), ou `?reanchor` (la base de la session et le working tree, pour le mod), ré-ancre chaque thread sur ce code : il y porte aussi `at`, `null` s'il est Outdated, sinon `{ start, end, context }`.
-- Avec `?reanchor`, `at` vaut `{ start, end }`, sans `context` ni calcul du diff, un thread Resolved n'a pas d'`at`, et la session porte `reanchoredOn: { base, tree }`, les ids de ce code.
-- Une `base` ou un `tree` mal formés dans la query, ou un `w` autre que `1`, reçoivent 400 avant toute écriture ; une écriture enregistrée répond 200, avec ses threads sans `at` si leur ré-ancrage échoue.
-- Avec `?w=1` en plus de `?base=&tree=`, `context` se calcule sur le diff qui cache les espaces : un thread sur une ligne qui ne change que par ses espaces sort du diff, et reçoit ses lignes de contexte.
-- `context` liste, quand aucun hunk du diff de ce code ne montre la dernière ligne de la plage, les lignes de 3 au-dessus à 3 au-dessous de la plage, hors celles des hunks, inchangées et numérotées des deux côtés ; l'UI les affiche comme un hunk de plus.
-- Placée par `?base=&tree=`, la session ne garde dans `viewed` que les fichiers dont le contenu dans `tree` a toujours l'id enregistré : un fichier qui change n'est plus vu, un changement de base qui ne le touche pas le laisse vu.
-- Le serveur garde en mémoire `login` et `name` de `/api/me` dès qu'ils répondent ; un échec, il le garde 60 s, puis l'appel suivant relance sa commande ; le mod n'appelle pas `/api/me`.
-- `author` vaut `me` ou `claude` : un message de `me` naît Pending, un message de `claude` est publié sur-le-champ.
-- Un thread Resolved refuse un message de `me` avec 409 jusqu'à son Unresolve ; il accepte un message de `claude`, qui ne le rouvre pas.
-- Un Send ne publie pas les messages Pending d'un thread Resolved : ils attendent son Unresolve.
-- Les bases sont `HEAD` (Uncommitted changes), `last-review` (Since my last review, le Snapshot du dernier Send, grisé avant le premier), `origin/HEAD` (« main (default branch) »), la branche de base (« <nom> (base branch) »), puis, chacune dans son `group` : les PR ouvertes (`Pull requests`), les branches locales `refs/heads/<nom>` hors celle du worktree (`Local branches`), et les branches distantes `refs/remotes/<remote>/<nom>` (`Remote branches`), de la plus proche du merge-base à la plus lointaine.
-- La branche de base est la base de la PR de la branche du worktree, sur origin s'il l'a, sinon la branche locale la plus proche qui n'a pas HEAD et des commits en plus (la branche suivante d'une pile), aucune sur la branche par défaut ; quand elle porte le nom de la branche par défaut, elle se confond avec elle (« main (default and base branch) »).
-- La PR d'un fork est celle de la branche quand un remote dont l'URL nomme le propriétaire du fork (`/<login>/` ou `:<login>/`) porte une branche de ce nom : une autre PR d'un fork, d'une branche de même nom, ne compte pas.
-- Une PR ouverte se choisit par sa branche sur origin, `refs/remotes/origin/<head>` : une PR d'un fork, ou dont la branche n'est pas fetchée, n'est pas proposée ; une ref déjà proposée plus haut ne se répète pas.
-- Les PR viennent de `gh pr list` dans le worktree, gardées 60 s ; un `gh` en échec ou au-delà de 2 s n'en donne aucune, et la branche de base est alors la branche locale la plus proche.
-- Une branche, une PR et `origin/HEAD` comparent depuis leur merge-base avec HEAD.
-- Le diff se garde en mémoire par paire (`base`, `tree`) et par `?w=1` : le redemander sans changement ne relance pas `git diff`.
-- `side` vaut `old` ou `new`, et `start` et `end` sont les numéros de la première et de la dernière ligne de la plage, de ce côté ;
-  0 et 0 pour un thread sur le fichier entier, dont l'Anchor n'a pas de lignes, placé (`at` à `{ start: 0, end: 0 }`) tant que le fichier existe de ce côté.
-- Seul un message Pending de `me` se modifie ou se supprime : un autre reçoit 409.
-- L'Anchor se capture sur le code que voit l'auteur : pour `me`, la `base` et le `tree` affichés, obligatoires ; pour `claude`, la base de la session et le working tree au moment de l'appel.
-- `path` est le chemin du fichier depuis la racine du worktree, sous sa forme canonique : ni `./`, ni `/` en tête, ni segment vide ou `.`.
-- `base` et `tree` sont des ids de 40 ou 64 caractères hexadécimaux, d'un commit ou d'un tree pour `base`, d'un tree pour `tree`.
-- `/lines` refuse avec 400 un chemin non canonique, un `tree` qui n'est pas un tree du dépôt de la session, et une plage hors de `1 ≤ from ≤ to` ou de plus de 1000 lignes.
-- Dans `/diff`, chaque fichier modifié porte `lineCount`, son nombre de lignes dans le tree, pour savoir où s'arrêtent les lignes cachées après son dernier hunk ; 0 pour les autres fichiers, et pour tous quand `git grep` échoue, sans faire échouer le diff.
-- Le diff garde 3 lignes de contexte autour des changements, quelles que soient les configs `diff.context` et `diff.interHunkContext`.
-- Une session approuvée refuse toute écriture avec 409 et `{ "error": "session approved" }`.
-- L'Approve refuse avec 409 tant qu'un thread non Resolved porte un message Pending ; ceux d'un thread Resolved restent Pending dans l'archive, comme un Send les y laisse.
-- Un message de `claude` dans un thread sans message publié reçoit 409 : publié sur-le-champ, il passerait avant mon message Pending au Send.
-- Le mod ouvre un thread sans session connue par `POST /api/sessions`, puis `POST /api/sessions/<id>/threads` ; s'il garde l'id d'une session approuvée, il reçoit « session approved ».
-- Après un Approve, `POST /api/sessions` sur le même worktree ouvre une nouvelle session : seul un appel qui porte l'ancien id reçoit « session approved ».
+- Reading the sessions (`GET /api/sessions`, with or without `worktree`) first closes, like an Approve, each open session whose worktree no longer exists, even with Pending messages; reading a session (`GET /api/sessions/<id>`) closes that one the same way, and an approved session whose placement fails answers without `at`.
+- A worktree no longer exists when its `stat` answers ENOENT, its parent folder still exists, and its `commonDir`, if it is outside the worktree, still exists; any other error, or a parent or a `commonDir` gone as well (unmounted disk), leaves the session open.
+- Reading or opening the session of a worktree also closes the session at its path that carries another `commonDir`: another repository does not take over the session.
+- A read only waits for the write queue to close a session; an unreadable session file is ignored, with a line in the server log, without being deleted or rewritten.
+- Each returned session carries `claudeSession`, true when the mod read its worktree with `&claude` in the last 10 seconds, kept in memory; without it, the PhpStorm plugin grays out its Sends, the VS Code extension refuses them, and both show, instead of waiting for Claude, the command that starts a Claude session.
+- The notification counts the threads where Claude wrote since the last Send, and the Waiting for Claude threads; `start(port, notify)` receives the command to run, which the tests record without running it.
+- Except for `/diff`, `/tree`, `/lines`, `/bases` and the list of sessions, each route of a session returns the whole session, in the file format, and each thread there also carries its `status`: `resolved`, `waiting-for-claude` when my message is the last published one, `open` when it is Claude's, or `null` as long as no message is published; the clients do not display `open`.
+- A route that returns the session and receives `?base=<id>&tree=<id>` (the code displayed by the UI), or `?reanchor` (the base of the session and the working tree, for the mod), re-anchors each thread on this code: each thread then also carries `at`, `null` if it is Outdated, otherwise `{ start, end, context }`.
+- With `?reanchor`, `at` is `{ start, end }`, without `context` or diff computation, a Resolved thread has no `at`, and the session carries `reanchoredOn: { base, tree }`, the ids of this code.
+- A malformed `base` or `tree` in the query, or a `w` other than `1`, gets 400 before any write; a recorded write answers 200, with its threads without `at` if their re-anchoring fails.
+- With `?w=1` on top of `?base=&tree=`, `context` is computed on the diff that hides whitespace: a thread on a line that only changes by its whitespace leaves the diff, and receives its context lines.
+- `context` lists, when no hunk of the diff of this code shows the last line of the range, the lines from 3 above to 3 below the range, except those of the hunks, unchanged and numbered on both sides; the UI displays them as one more hunk.
+- Placed by `?base=&tree=`, the session keeps in `viewed` only the files whose content in `tree` still has the recorded id: a file that changes is no longer viewed, a change of base that does not touch it leaves it viewed.
+- The server keeps `login` and `name` of `/api/me` in memory as soon as they answer; it keeps a failure for 60 s, then the next call reruns its command; the mod does not call `/api/me`.
+- `author` is `me` or `claude`: a message from `me` starts Pending, a message from `claude` is published immediately.
+- A Resolved thread refuses a message from `me` with 409 until its Unresolve; it accepts a message from `claude`, which does not reopen it.
+- A Send does not publish the Pending messages of a Resolved thread: they wait for its Unresolve.
+- The bases are `HEAD` (Uncommitted changes), `last-review` (Since my last review, the Snapshot of the last Send, grayed out before the first one), `origin/HEAD` ("main (default branch)"), the base branch ("<name> (base branch)"), then, each in its `group`: the open PRs (`Pull requests`), the local branches `refs/heads/<name>` except the one of the worktree (`Local branches`), and the remote branches `refs/remotes/<remote>/<name>` (`Remote branches`), from the closest to the merge-base to the farthest.
+- The base branch is the base of the PR of the branch of the worktree, on origin if it has it, otherwise the closest local branch other than one that holds HEAD and commits of its own (the next branch of a stack), none on the default branch; when it bears the name of the default branch, the two are one entry ("main (default and base branch)").
+- A PR from a fork is the branch's when a remote whose URL names the fork's owner (`/<login>/` or `:<login>/`) carries a branch of that name: another fork's PR, from a branch of the same name, does not count.
+- An open PR is chosen by its branch on origin, `refs/remotes/origin/<head>`: a PR from a fork, or whose branch is not fetched, is not offered; a ref already offered higher up is not repeated.
+- The PRs come from `gh pr list` in the worktree, kept 60 s; a `gh` that fails or takes more than 2 s gives none, and the base branch is then the closest local branch.
+- A branch, a PR and `origin/HEAD` compare from their merge-base with HEAD.
+- The diff is kept in memory per pair (`base`, `tree`) and per `?w=1`: asking for it again without a change does not rerun `git diff`.
+- `side` is `old` or `new`, and `start` and `end` are the numbers of the first and of the last line of the range, on that side;
+  0 and 0 for a thread on the whole file, whose Anchor has no lines, placed (`at` set to `{ start: 0, end: 0 }`) as long as the file exists on that side.
+- Only a Pending message from `me` can be edited or deleted: any other gets 409.
+- The Anchor is captured on the code the author sees: for `me`, the displayed `base` and `tree`, required; for `claude`, the base of the session and the working tree at the time of the call.
+- `path` is the path of the file from the root of the worktree, in its canonical form: no leading `./` or `/`, no empty or `.` segment.
+- `base` and `tree` are ids of 40 or 64 hexadecimal characters, of a commit or a tree for `base`, of a tree for `tree`.
+- `/lines` refuses with 400 a non-canonical path, a `tree` that is not a tree of the repository of the session, and a range outside `1 ≤ from ≤ to` or of more than 1000 lines.
+- In `/diff`, each modified file carries `lineCount`, its number of lines in the tree, to know where the hidden lines after its last hunk end; 0 for the other files, and for all of them when `git grep` fails, without failing the diff.
+- The diff keeps 3 lines of context around the changes, whatever the `diff.context` and `diff.interHunkContext` configs.
+- An approved session refuses any write with 409 and `{ "error": "session approved" }`.
+- The Approve refuses with 409 as long as a thread not Resolved carries a Pending message; those of a Resolved thread stay Pending in the archive, as a Send leaves them there.
+- A message from `claude` in a thread without a published message gets 409: published immediately, it would come before my Pending message at the Send.
+- The mod opens a thread without a known session through `POST /api/sessions`, then `POST /api/sessions/<id>/threads`; if it keeps the id of an approved session, it gets "session approved".
+- After an Approve, `POST /api/sessions` on the same worktree opens a new session: only a call that carries the old id gets "session approved".
 
 ## Mod
 
-- Au `session.start`, le mod relie la Claude session au worktree par `git rev-parse --show-toplevel` sur le `cwd`, enregistre ses outils, puis démarre le serveur.
-- Il suit ensuite `$.session.root()`, que `/cd` et EnterWorktree déplacent : un autre worktree repart d'un état neuf, comme une Claude session qui y démarre.
-- Il trouve le serveur par `<données>/endpoint`, d'où il lit le port et le token ; sans fichier, avec un fichier corrompu, si un autre compte écoute sur son port, ou si le serveur qu'il nomme ne répond pas, il en lance un.
-- Il lance `node <racine du plugin>/server/main.ts` détaché par `nohup`, sous `umask 077`, depuis la racine du plugin, ses sorties dans `<données>/server.log` ;
-  puis il attend que le serveur réécrive `endpoint` et réponde, pendant 5 s, et en échec écrit par `$.ui.log` le chemin de `server.log` et ses dernières lignes.
-- Chaque appel au serveur porte le token en `Authorization: Bearer <token>` ; un serveur d'un autre compte, qui a un autre token, le rejette.
-  Il n'appelle plus un port qu'un autre compte a pris depuis : les outils le disent, et une nouvelle Claude session lance un serveur à lui.
-- Une version plus ancienne de claude-reviews, il l'arrête par `POST /api/shutdown` puis la relance ; une version plus récente, il l'utilise telle quelle, pour que deux Claude sessions de versions différentes n'arrêtent pas le serveur l'une de l'autre.
-- Le port de l'`endpoint`, tenu par son compte, qui répond autre chose que claude-reviews, ou qui ne répond pas en 2 s, ne lance rien : le mod le signale par `$.ui.log`, une ligne du transcript que le modèle ne lit pas, et sonde quand même.
-- `list_open_threads()` rend `base`, le commit de la base de la session, et, hors Resolved et hors threads sans message publié, l'id, le statut, `outdated`, le fichier, le côté, la plage ré-ancrée sur cette base côté `old` et sur le working tree côté `new` (celle de l'Anchor s'il est Outdated), les lignes de l'Anchor et les messages publiés.
-- Un thread Outdated y porte en plus `hunk`, l'extrait de diff d'origine en diff unifié, `null` si l'Anchor était hors du diff.
-- Un thread sur le fichier entier y a `start` et `end` à 0 et pas de lignes ; `open_thread` sans `lines` en ouvre un.
-- Un bloc ```` ```suggestion ```` dans un de mes messages est le code que je propose à la place des lignes du thread, côté `new` : les descriptions des outils demandent à Claude de l'appliquer au working tree sauf désaccord, puis de répondre.
-- Le sondage tient une ligne de statut par `$.ui.status` : « claude-reviews · N threads waiting for Claude », suivi de « · wake held until the next prompt » quand un réveil attend après un `{ drop }`, et rien sans thread qui attend Claude.
-- Il sonde `GET /api/sessions?worktree=<chemin>&claude` toutes les 2 s ; un Send qui laisse des threads Waiting for Claude le fait réveiller Claude par `$.prompt.submit`, jamais attendu dans un hook.
-- Seul un 404 vaut « aucune session ouverte » ; un sondage en échec laisse l'état tel quel, et le mod garde par session le dernier Send vu et la relance faite.
-- Il relance Claude une fois par Send, à la fin d'un tour fini sur une réponse, ni interrompu ni en erreur, qui laisse des threads en attente ; un `{ drop }` attend le prochain prompt ou début de tour, et ne compte pas.
-- À la fin du tour ouvert par un réveil ou une relance, s'il ne doit pas relancer, il appelle une fois `POST /api/sessions/<id>/turn-complete`, sans l'attendre, seulement si ce tour a fini sur une réponse : après un Esc ou une erreur, rien.
-- Le premier prompt d'une Claude session porte, dans le `context` de `prompt.submit`, le nombre de threads qui l'attendent : `prompt.context` atteindrait aussi les subagents, et `cc-plugin-sec-default` le court-circuite sur les comptes Team ou Enterprise.
-- Après un Approve, `open_thread` refait `POST /api/sessions` et ouvre une nouvelle session ; `reply_to_thread` répond « session approved ».
-- `/review-local phpstorm`, `/review-local vscode` ou `/review-local browser` ouvre la session dans PhpStorm, VS Code ou le navigateur ;
-  sans argument, il demande où par `$.ui.ask` parmi les IDE dont il trouve le lanceur (`phpstorm` du `PATH`, sinon le script de JetBrains Toolbox ; `code` du `PATH`) et le navigateur, le navigateur sans question s'il n'en trouve aucun ;
-  un IDE sans lanceur ouvre le navigateur et le dit. Les lanceurs et le navigateur partent de la racine du plugin, détachés par `nohup`.
-- Dans une session SSH (`SSH_CONNECTION`, `SSH_CLIENT` ou `SSH_TTY`), il ne lance pas de navigateur et affiche seulement l'URL :
-  aucun navigateur ne tourne sur cette machine, et l'argv du lanceur montrerait le token à tout compte (`/proc/<pid>/cmdline`, `ps`).
-- Pour un IDE, il fait `POST /show`, puis lance son lanceur sur le worktree ; le plugin PhpStorm active sa tool window, et l'extension VS Code sa vue, quand `showRequestedAt` change et date de moins de 30 s.
-- Tout appel au serveur abandonne au bout de 2 s : sans réponse, ou sur un 200 sans `threads`, les outils répondent `{ deny }` « does not answer », `/review-local` le dit, et un sondage laisse l'état tel quel ;
-  une erreur du serveur arrive aux outils avec son message.
+- On `session.start`, the mod links the Claude session to the worktree through `git rev-parse --show-toplevel` on the `cwd`, registers its tools, then starts the server.
+- It then follows `$.session.root()`, which `/cd` and EnterWorktree move: another worktree starts again from a fresh state, like a Claude session that starts there.
+- It finds the server through `<data>/endpoint`, from which it reads the port and the token; without a file, with a corrupt file, if another account listens on its port, or if the server it names does not answer, it starts one.
+- It runs `node <plugin root>/server/main.ts` detached by `nohup`, under `umask 077`, from the root of the plugin, its output in `<data>/server.log`;
+  then it waits for the server to rewrite `endpoint` and answer, for 5 s, and on failure writes through `$.ui.log` the path of `server.log` and its last lines.
+- Each call to the server carries the token in `Authorization: Bearer <token>`; a server of another account, which has another token, rejects it.
+  It no longer calls a port that another account has taken since: the tools say so, and a new Claude session starts a server of its own.
+- It stops an older version of claude-reviews through `POST /api/shutdown` then starts it again; it uses a newer version as is, so that two Claude sessions of different versions do not stop each other's server.
+- When the port of the `endpoint`, held by its account, answers something other than claude-reviews, or does not answer within 2 s, nothing starts: the mod reports it through `$.ui.log`, a line of the transcript that the model does not read, and polls anyway.
+- `list_open_threads()` returns `base`, the commit of the base of the session, and, except for Resolved threads and threads without a published message, the id, the status, `outdated`, the file, the side, the range re-anchored on this base on the `old` side and on the working tree on the `new` side (the one of the Anchor if it is Outdated), the lines of the Anchor and the published messages.
+- An Outdated thread also carries `hunk` there, the original diff excerpt as a unified diff, `null` if the Anchor was outside the diff.
+- A thread on the whole file has `start` and `end` at 0 there and no lines; `open_thread` without `lines` opens one.
+- A ```` ```suggestion ```` block in one of my messages is the code I propose in place of the lines of the thread, on the `new` side: the descriptions of the tools ask Claude to apply it to the working tree unless it disagrees, then to reply.
+- The poll keeps a status line through `$.ui.status`: "claude-reviews · N threads waiting for Claude", followed by "· wake held until the next prompt" when a wake waits after a `{ drop }`, and nothing without a thread waiting for Claude.
+- It polls `GET /api/sessions?worktree=<path>&claude` every 2 s; a Send that leaves Waiting for Claude threads makes it wake Claude through `$.prompt.submit`, never awaited in a hook.
+- Only a 404 means "no open session"; a failed poll leaves the state as is, and the mod keeps per session the last Send seen and the relaunch made.
+- It relaunches Claude once per Send, at the end of a turn that ended on an answer, neither interrupted nor in error, that leaves threads waiting; a `{ drop }` waits for the next prompt or turn start, and does not count.
+- At the end of the turn opened by a wake or a relaunch, if it must not relaunch, it calls `POST /api/sessions/<id>/turn-complete` once, without awaiting it, only if this turn ended on an answer: after an Esc or an error, nothing.
+- The first prompt of a Claude session carries, in the `context` of `prompt.submit`, the number of threads waiting for it: `prompt.context` would also reach the subagents, and `cc-plugin-sec-default` short-circuits it on Team or Enterprise accounts.
+- After an Approve, `open_thread` calls `POST /api/sessions` again and opens a new session; `reply_to_thread` answers "session approved".
+- `/review-local phpstorm`, `/review-local vscode` or `/review-local browser` opens the session in PhpStorm, VS Code or the browser;
+  without an argument, it asks where through `$.ui.ask` among the IDEs whose launcher it finds (`phpstorm` from the `PATH`, otherwise the JetBrains Toolbox script; `code` from the `PATH`) and the browser, the browser without a question if it finds none;
+  an IDE without a launcher opens the browser and says so. The launchers and the browser start from the root of the plugin, detached by `nohup`.
+- In an SSH session (`SSH_CONNECTION`, `SSH_CLIENT` or `SSH_TTY`), it does not start a browser and only displays the URL:
+  no browser runs on this machine, and the argv of the launcher would show the token to any account (`/proc/<pid>/cmdline`, `ps`).
+- For an IDE, it calls `POST /show`, then runs its launcher on the worktree; the PhpStorm plugin activates its tool window, and the VS Code extension its view, when `showRequestedAt` changes and is less than 30 s old.
+- Any call to the server gives up after 2 s: without an answer, or on a 200 without `threads`, the tools answer `{ deny }` "does not answer", `/review-local` says so, and a poll leaves the state as is;
+  an error of the server reaches the tools with its message.
 
-## Données
+## Data
 
-Le dossier de données est `$XDG_DATA_HOME/claude-reviews`, sinon `~/.local/share/claude-reviews` ; les tests le placent dans un dossier temporaire avec `dataHome()` de `server/fixture.ts`.
+The data folder is `$XDG_DATA_HOME/claude-reviews`, otherwise `~/.local/share/claude-reviews`; the tests place it in a temporary folder with `dataHome()` from `server/fixture.ts`.
 
-- Le dossier de données est en `0700`, le fichier `endpoint` et les fichiers de session en `0600` : un autre compte ne lit ni les threads, ni le token, ni le log.
-- `endpoint` porte `{ port, token }` du serveur, réécrit à chaque démarrage ; le serveur tire un token de 32 octets, écoute sur un port éphémère (ou `CLAUDE_REVIEWS_PORT`), puis l'écrit.
-- Au démarrage, le serveur renonce si l'`endpoint` nomme un serveur vivant de son compte : un compte n'a qu'un serveur, même avec deux Claude sessions ; un `endpoint` corrompu ne nomme aucun serveur.
-- Il arrête ensuite un serveur d'avant le token (0.6 et avant) resté sur `CLAUDE_REVIEWS_PORT`, sinon 7778, s'il est de son compte :
-  celui-ci sert le dossier de données à tout compte, et se reconnaît à son 404, au lieu d'un 401, pour une session inconnue sans token.
-- Une session ouverte vit dans `sessions/<id>.json`, une session approuvée dans `archive/<id>.json`.
-- Le serveur seul écrit ces fichiers, en écrivant `<id>.json.tmp` dans le même dossier, puis en le renommant.
-- Un Send commite le tree affiché sous `refs/claude-reviews/<id>/<n>`, où `n` est le numéro du Send.
-- L'Approve écrit la session approuvée, la déplace sous `archive/`, puis supprime ses refs dans `commonDir` ; une suppression ratée laisse les refs, pas la session ouverte.
-- Un worktree disparu clôt sa session de la même façon : `approvedAt` daté, `closedBecause` à `worktree-gone`, archive, refs supprimées dans `commonDir`.
+- The data folder is `0700`, the `endpoint` file and the session files `0600`: another account reads neither the threads, nor the token, nor the log.
+- `endpoint` carries `{ port, token }` of the server, rewritten at each start; the server draws a 32-byte token, listens on an ephemeral port (or `CLAUDE_REVIEWS_PORT`), then writes it.
+- At startup, the server gives up if the `endpoint` names a live server of its account: an account has only one server, even with two Claude sessions; a corrupt `endpoint` names no server.
+- It then stops a server from before the token (0.6 and earlier) left on `CLAUDE_REVIEWS_PORT`, otherwise 7778, if it belongs to its account:
+  that server serves the data folder to any account, and is recognized by its 404, instead of a 401, for an unknown session without a token.
+- An open session lives in `sessions/<id>.json`, an approved session in `archive/<id>.json`.
+- Only the server writes these files, by writing `<id>.json.tmp` in the same folder, then renaming it.
+- A Send commits the displayed tree under `refs/claude-reviews/<id>/<n>`, where `n` is the number of the Send.
+- The Approve writes the approved session, moves it under `archive/`, then deletes its refs in `commonDir`; a failed deletion leaves the refs, not the open session.
+- A vanished worktree closes its session the same way: `approvedAt` dated, `closedBecause` set to `worktree-gone`, archive, refs deleted in `commonDir`.
 
 ```json
 {
@@ -215,62 +215,63 @@ Le dossier de données est `$XDG_DATA_HOME/claude-reviews`, sinon `~/.local/shar
     },
     "resolved": false,
     "messages": [
-      { "author": "me", "body": "Pourquoi ?", "date": "2026-11-14T10:05:00.000Z", "review": 1 },
-      { "author": "claude", "body": "Parce que…", "date": "2026-11-14T10:06:00.000Z" },
+      { "author": "me", "body": "Why?", "date": "2026-11-14T10:05:00.000Z", "review": 1 },
+      { "author": "claude", "body": "Because…", "date": "2026-11-14T10:06:00.000Z" },
       { "author": "me", "body": "OK", "date": null }
     ]
   }]
 }
 ```
 
-- `id` : 16 caractères hexadécimaux, distinct du chemin du worktree ; un thread a pour id le plus grand id de la session plus 1, à partir de 1.
-- `worktree` : la racine du worktree (`git rev-parse --show-toplevel`).
-- `commonDir` : le dépôt commun aux worktrees (`git rev-parse --git-common-dir`), où restent les refs quand le worktree disparaît ; absent des sessions plus anciennes.
-- `base` : la dernière base choisie, une `ref` de `/bases`, `HEAD` à la création.
-- `sends` : le nombre de Send, donc le numéro de la dernière ref.
-- `sentAt` : la date du dernier Send, absente avant le premier.
-- `viewed` : chaque fichier marqué Viewed, avec l'id de son contenu dans le tree affiché quand je l'ai coché, `deleted` pour un fichier absent de ce tree ; absent des sessions plus anciennes.
-- `closedBecause` : `worktree-gone` pour une session close parce que son worktree a disparu, absent sinon, même après un Approve.
-- `anchor` : jusqu'à 3 voisines dans `before` et `after`, et `hunk`, l'extrait du diff jusqu'à la fin de la plage, `null` hors du diff ; aucun SHA.
-- Un message sans `date` est Pending ; un Send le date, lui donne son numéro dans `review`, et le place après les messages déjà publiés.
+- `id`: 16 hexadecimal characters, distinct from the path of the worktree; a thread has as its id the largest id of the session plus 1, starting from 1.
+- `worktree`: the root of the worktree (`git rev-parse --show-toplevel`).
+- `commonDir`: the repository shared by the worktrees (`git rev-parse --git-common-dir`), where the refs remain when the worktree disappears; absent from older sessions.
+- `base`: the last chosen base, a `ref` of `/bases`, `HEAD` at creation.
+- `sends`: the number of Sends, hence the number of the last ref.
+- `sentAt`: the date of the last Send, absent before the first one.
+- `viewed`: each file marked Viewed, with the id of its content in the displayed tree when I checked it, `deleted` for a file absent from this tree; absent from older sessions.
+- `closedBecause`: `worktree-gone` for a session closed because its worktree disappeared, absent otherwise, even after an Approve.
+- `anchor`: up to 3 neighboring lines in `before` and `after`, and `hunk`, the excerpt of the diff up to the end of the range, `null` outside the diff; no SHA.
+- A message without `date` is Pending; a Send dates it, gives it its number in `review`, and places it after the messages already published.
 
-## Fichiers vendorisés
+## Vendored files
 
-| Fichier                    | Source                                                    |
-| -------------------------- | --------------------------------------------------------- |
-| `ui/vendor/primer.css`     | `@primer/css@21.5.1/dist/primer.css`                      |
-| `ui/vendor/preact-htm.js`  | `htm@3.1.1/preact/standalone.module.js` (Preact 10 inclus) |
-| `ui/vendor/highlight.js`   | `@highlightjs/cdn-assets@11.12.0/es/highlight.min.js`     |
-| `ui/vendor/marked.js`      | `marked@18.1.2/lib/marked.esm.js`                         |
+| File                      | Source                                                       |
+| ------------------------- | ------------------------------------------------------------ |
+| `ui/vendor/primer.css`    | `@primer/css@21.5.1/dist/primer.css`                         |
+| `ui/vendor/preact-htm.js` | `htm@3.1.1/preact/standalone.module.js` (Preact 10 included) |
+| `ui/vendor/highlight.js`  | `@highlightjs/cdn-assets@11.12.0/es/highlight.min.js`        |
+| `ui/vendor/marked.js`     | `marked@18.1.2/lib/marked.esm.js`                            |
 
-Primer 21.5.1 nomme ses variables de diff `--diffBlob-addition-bgColor-line` et non `--diffBlob-additionLine-bgColor` comme en 22.
-Le markdown des messages passe par marked, avec les retours à la ligne gardés comme sur GitHub, le HTML brut échappé, les images remplacées par leur texte, et seuls les liens `http`, `https` et `mailto` cliquables (`ui/app.js`).
-Mes messages montrent `https://github.com/<login>.png`, et sans login, ou une fois l'image en échec sur la page, mes initiales tirées de `name` ; ceux de Claude, son étoile en SVG inline, carrée comme l'avatar d'une app GitHub.
-La page relit `/api/me` à chaque poll tant qu'il ne donne pas de `login`.
-La coloration syntaxique passe par les variables `--color-prettylights-syntax-*` de Primer (`ui/app.css`), pas par un thème highlight.js.
+Primer 21.5.1 names its diff variables `--diffBlob-addition-bgColor-line` and not `--diffBlob-additionLine-bgColor` as in 22.
+The markdown of the messages goes through marked, with line breaks kept as on GitHub, raw HTML escaped, images replaced by their text, and only `http`, `https` and `mailto` links clickable (`ui/app.js`).
+My messages show `https://github.com/<login>.png`, and without a login, or once the image has failed on the page, my initials taken from `name`; Claude's show its star in inline SVG, square like the avatar of a GitHub app.
+The page rereads `/api/me` at each poll as long as it gives no `login`.
+Syntax highlighting goes through the `--color-prettylights-syntax-*` variables of Primer (`ui/app.css`), not through a highlight.js theme.
 
-## Langues
+## Language
 
-- Code, commentaires, messages de commit et titres de PR en anglais ; un titre de PR commence par son scope, par exemple `[Server] Compute the diff against HEAD`.
-- Issues, corps de PR et docs en français.
-- Dans un `.md`, une phrase par ligne.
+- Everything in the repository is in English: code, comments, commit messages, PR titles and bodies, issues and docs.
+- Claude answers the user in the user's language.
+- A PR title starts with its scope, for example `[Server] Compute the diff against HEAD`.
+- In a `.md`, one sentence per line.
 
 ## Code
 
-- Le minimum qui résout l'issue : pas d'abstraction à usage unique, pas de configuration non demandée.
-- Commentaires rares, pour un pourquoi qui ne se lit pas dans le code.
-- Un raccourci délibéré porte un commentaire `ponytail:` qui nomme sa limite.
+- The minimum that solves the issue: no single-use abstraction, no unrequested configuration.
+- Rare comments, for a why that cannot be read in the code.
+- A deliberate shortcut carries a `ponytail:` comment that names its limit.
 
 ## Tests
 
-- Chaque critère d'acceptation d'une issue a son test, écrit avant le code (rouge, puis vert).
-- `node --test` couvre le serveur et les fonctions pures, dans des fichiers `*.test.ts` à côté du code ; sous Node 25, `node --test <dossier>` échoue (« Cannot find module ») : lancer `node --test` seul, ou nommer les fichiers.
-- Les tests du mod enregistrent plusieurs fois le même module : son état (le serveur visé, une boucle de `serve()` encore en cours) passe d'un test au suivant, ce qu'un CI plus lent révèle ; tout ce qu'une boucle lit se fige à son lancement.
-- Un serveur de test s'arrête par son PID : `pkill -f server/main.ts` arrête aussi le vrai serveur de la machine.
-- Les dépôts de test se créent avec `repo()` et `write()` de `server/fixture.ts`, dans un dossier temporaire, à l'abri de la config git globale ; `removeRepos()` les supprime en fin de fichier de test.
-- Playwright (Chromium) couvre l'UI, dans `e2e/*.spec.ts`, sur les mêmes fixtures ; chaque test ouvre `/?worktree=<fixture>`.
-- `e2e/vscode.spec.ts` couvre l'extension VS Code dans openvscode-server, par `playwright.vscode.config.ts` ; `playwright.config.ts` l'ignore.
-- Le serveur de Playwright, comme celui de `server/sessions.test.ts`, a un `gh` qui échoue en tête du `PATH`, pour que mon vrai login n'atteigne pas les tests ; un test qui en a besoin répond lui-même à `/api/me`, ou met son propre `gh` devant.
-- Starter et Driver couvrent le plugin PhpStorm, dans `phpstorm/ui-test/`, sur les mêmes fixtures (`fixture.ts`) : un seul PhpStorm pour les étapes d'une review, dans l'ordre, face à un serveur sur le port 7780, avec un `XDG_DATA_HOME` temporaire, le même faux `gh`, et un sondage `&claude` qui tient lieu de Claude session.
-- La CI (`.github/workflows/ci.yml`) lance les deux suites sur chaque PR, sous Node 25, celle de l'extension VS Code dans le job `vscode`, openvscode-server en cache, et les tests du plugin PhpStorm dans le job `phpstorm`, avec le dossier `PHPSTORM_CACHE` gardé par `actions/cache` et les logs de l'IDE en artefact sur un échec.
-- Une PR ajoute au plus 1000 lignes, hors lockfile et fichiers vendorisés.
+- Each acceptance criterion of an issue has its test, written before the code (red, then green).
+- `node --test` covers the server and the pure functions, in `*.test.ts` files next to the code; under Node 25, `node --test <folder>` fails ("Cannot find module"): run `node --test` alone, or name the files.
+- The tests of the mod register the same module several times: its state (the targeted server, a `serve()` loop still running) carries over from one test to the next, which a slower CI reveals; everything a loop reads is frozen when it starts.
+- A test server is stopped by its PID: `pkill -f server/main.ts` also stops the real server of the machine.
+- The test repositories are created with `repo()` and `write()` from `server/fixture.ts`, in a temporary folder, sheltered from the global git config; `removeRepos()` deletes them at the end of the test file.
+- Playwright (Chromium) covers the UI, in `e2e/*.spec.ts`, on the same fixtures; each test opens `/?worktree=<fixture>`.
+- `e2e/vscode.spec.ts` covers the VS Code extension in openvscode-server, through `playwright.vscode.config.ts`; `playwright.config.ts` ignores it.
+- The Playwright server, like the one of `server/sessions.test.ts`, has a failing `gh` at the head of the `PATH`, so that my real login does not reach the tests; a test that needs it answers `/api/me` itself, or puts its own `gh` in front.
+- Starter and Driver cover the PhpStorm plugin, in `phpstorm/ui-test/`, on the same fixtures (`fixture.ts`): a single PhpStorm for the steps of a review, in order, against a server on port 7780, with a temporary `XDG_DATA_HOME`, the same fake `gh`, and a `&claude` poll that stands in for a Claude session.
+- The CI (`.github/workflows/ci.yml`) runs both suites on each PR, under Node 25, the VS Code extension one in the `vscode` job, with openvscode-server cached, and the tests of the PhpStorm plugin in the `phpstorm` job, with the `PHPSTORM_CACHE` folder kept by `actions/cache` and the IDE logs as an artifact on a failure.
+- A PR adds at most 1000 lines, excluding the lockfile and vendored files.

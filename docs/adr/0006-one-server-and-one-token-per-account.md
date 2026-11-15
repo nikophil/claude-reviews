@@ -1,52 +1,52 @@
-# Un serveur et un token par compte, pour une machine partagée
+# One server and one token per account, for a shared machine
 
-claude-reviews était pensé pour un portable mono-utilisateur, sans authentification.
-Sur un serveur Linux partagé par plusieurs devs en SSH, chacun avec sa Claude Code, le port fixe `7778` sur `127.0.0.1` est commun à tous les comptes :
-la loopback n'est pas cloisonnée par compte, et un seul serveur peut lier le port.
-Le premier serveur lancé servait alors tous les autres comptes, git tournait sous son compte dans le worktree d'un autre, `/api/me` donnait son login github.com, et tout process local pouvait lire un dépôt, injecter un message dans la Claude d'un autre, ou arrêter le serveur.
+claude-reviews was designed for a single-user laptop, with no authentication.
+On a Linux server shared by several devs over SSH, each with their own Claude Code, the fixed port `7778` on `127.0.0.1` is common to all accounts:
+the loopback is not partitioned by account, and only one server can bind the port.
+The first server launched then served all the other accounts, git ran under its account in the worktree of another, `/api/me` gave its github.com login, and any local process could read a repository, inject a message into the Claude of another account, or stop the server.
 
-Chaque compte a désormais son serveur, sur un port éphémère, avec un token tiré au démarrage.
-Le serveur écrit `{ port, token }` dans `<données>/endpoint` (0600), que le mod, PhpStorm et VS Code lisent ;
-l'UI reçoit le token par le fragment `#token=` à l'ouverture, le garde dans `localStorage`, et l'envoie en `Authorization: Bearer` sur chaque appel.
-Toute route `/api/` sauf `GET /api/health` exige le token : un autre compte atteint le port, mais n'obtient rien sans lui.
-Le dossier de données passe en `0700`, ses fichiers en `0600`.
+Each account now has its own server, on an ephemeral port, with a token drawn at startup.
+The server writes `{ port, token }` to `<data>/endpoint` (0600), which the mod, PhpStorm and VS Code read;
+the UI receives the token through the `#token=` fragment on opening, keeps it in `localStorage`, and sends it as `Authorization: Bearer` on each call.
+Every `/api/` route except `GET /api/health` requires the token: another account reaches the port, but gets nothing without it.
+The data folder becomes `0700`, its files `0600`.
 
 ## Considered Options
 
-- **Un socket Unix dans `$XDG_RUNTIME_DIR`** : cloisonné par l'OS, sans token à gérer.
-  Écarté : l'UI est un navigateur, et aucun navigateur ne parle à un socket Unix, même en local ; le serveur doit rester en TCP.
-- **Un port dérivé de l'UID** : le verrou `EADDRINUSE` devient gratuit, et le port est connu sans fichier.
-  Écarté au profit du port éphémère : collision modulo possible, et échec si le port est déjà pris.
-- **Le token inliné dans la page HTML** : plus simple pour l'UI.
-  Écarté : un autre compte peut charger `/` et récupérer le token ; il ne doit sortir du serveur que sur preuve de sa possession, d'où le bootstrap par fragment `#token=`.
-- **Un cookie posé au bootstrap** : l'UI n'aurait rien à envoyer.
-  Écarté au profit de l'en-tête `Authorization` : un en-tête explicite évite l'auto-envoi du cookie et l'ambiguïté CSRF, et unifie l'UI avec le mod, PhpStorm et VS Code.
+- **A Unix socket in `$XDG_RUNTIME_DIR`**: partitioned by the OS, with no token to manage.
+  Rejected: the UI is a browser, and no browser talks to a Unix socket, even locally; the server must stay on TCP.
+- **A port derived from the UID**: the `EADDRINUSE` lock comes for free, and the port is known without a file.
+  Rejected in favor of the ephemeral port: a modulo collision is possible, and it fails if the port is already taken.
+- **The token inlined in the HTML page**: simpler for the UI.
+  Rejected: another account can load `/` and retrieve the token; the token must leave the server only on proof that the caller holds it, hence the bootstrap through the `#token=` fragment.
+- **A cookie set at bootstrap**: the UI would have nothing to send.
+  Rejected in favor of the `Authorization` header: an explicit header avoids the automatic sending of the cookie and the CSRF ambiguity, and unifies the UI with the mod, PhpStorm and VS Code.
 
-## Unicité du serveur par compte
+## A single server per account
 
-Le port éphémère perd le verrou naturel d'`EADDRINUSE` : deux Claude sessions d'un compte pourraient lancer deux serveurs sur les mêmes fichiers.
-Au démarrage, le serveur lit l'`endpoint` et renonce si le serveur qu'il nomme, de son compte, répond encore.
-Une course subsiste si deux `listen()` démarrent dans le même instant ;
-l'écriture atomique des sessions en fait une perte de mise à jour rare, pas une corruption, et un verrou `O_EXCL` la fermerait si elle gênait.
+The ephemeral port loses the natural lock of `EADDRINUSE`: two Claude sessions of one account could launch two servers on the same files.
+At startup, the server reads the `endpoint` and gives up if the server it names, of its account, still answers.
+A race remains if two `listen()` calls start at the same instant;
+the atomic writing of sessions makes it a rare lost update, not a corruption, and an `O_EXCL` lock would close it if it became a problem.
 
-## Un port qui n'est plus à moi
+## A port that is no longer mine
 
-L'`endpoint` survit au serveur : après un reboot ou un crash, il nomme encore son ancien port.
-Or `/proc/net/tcp` dit à tout compte quel uid écoute sur quel port ;
-un autre compte peut donc lier ce port dès qu'il se libère, et répondre comme claude-reviews.
-Sans parade, mon serveur lui laissait la place, et mon mod lui demandait ses threads, puis réveillait ma Claude avec ses consignes.
-Le serveur, le mod, PhpStorm et VS Code ne font donc confiance au port de l'`endpoint` que si le socket qui l'écoute est de leur compte, dans `/proc/net/tcp` et `/proc/net/tcp6`.
-Le token ne suffit pas à authentifier le serveur : un client l'envoie au premier appel, à quiconque écoute.
-Sans `/proc` (macOS), la machine n'a qu'un compte, et les clients font confiance.
+The `endpoint` outlives the server: after a reboot or a crash, it still names its old port.
+Yet `/proc/net/tcp` tells any account which uid listens on which port;
+another account can therefore bind this port as soon as it is freed, and answer as claude-reviews.
+Without a countermeasure, my server gave way to it, and my mod asked it for its threads, then woke my Claude with its instructions.
+The server, the mod, PhpStorm and VS Code therefore trust the port of the `endpoint` only if the socket listening on it belongs to their account, in `/proc/net/tcp` and `/proc/net/tcp6`.
+The token is not enough to authenticate the server: a client sends it on the first call, to whoever listens.
+Without `/proc` (macOS), the machine has only one account, and the clients trust the port.
 
-## Le token hors de l'argv
+## The token kept out of the argv
 
-Un argv se lit par `/proc/<pid>/cmdline` et `ps`, pour tout compte.
-Dans une session SSH, `/review-local` ne lance donc pas de navigateur, qui ne tournerait pas sur le serveur de toute façon, et affiche seulement l'URL avec son fragment.
-Le terminal et le transcript restent ceux du compte, qui lit déjà le token dans l'`endpoint`.
-Un code d'ouverture à usage unique a été écarté : sur un serveur sans navigateur, personne ne le consomme, et qui l'a lu dans l'argv l'échange avant son expiration.
+Any account can read an argv through `/proc/<pid>/cmdline` and `ps`.
+In an SSH session, `/review-local` therefore does not launch a browser, which would not run on the server anyway, and only displays the URL with its fragment.
+The terminal and the transcript remain those of the account, which already reads the token in the `endpoint`.
+A single-use opening code was rejected: on a server without a browser, nobody consumes it, and whoever read it in the argv exchanges it before it expires.
 
-## La mise à jour
+## The upgrade
 
-Un serveur d'avant le token (0.6 et avant) reste sur 7778 après la mise à jour, et sert le dossier de données à tout compte.
-Au démarrage, le serveur l'arrête s'il est de son compte : il se reconnaît à son 404, au lieu d'un 401, pour une session inconnue sans token.
+A server from before the token (0.6 and earlier) stays on 7778 after the upgrade, and serves the data folder to any account.
+At startup, the server stops it if it belongs to its account: it recognizes it by its 404, instead of a 401, for an unknown session without a token.

@@ -1,20 +1,20 @@
-# Tester l'interface du plugin PhpStorm par Starter et Driver, avec Gradle dans Docker
+# PhpStorm plugin UI tests with Starter and Driver, with Gradle in Docker
 
-Le plugin PhpStorm se teste en CI de bout en bout : un vrai PhpStorm, sur Xvfb, avec le plugin installé, face à un serveur claude-reviews.
-Les tests s'écrivent avec Starter et Driver, le framework de tests d'intégration de JetBrains, en Kotlin et sous JUnit 5, que seul Gradle sait assembler.
-Gradle ne sert qu'à ces tests, dans `phpstorm/ui-test/` : `build.sh` reste le build du plugin, et les tests installent son zip.
-Gradle, le JDK, Node et Xvfb vivent dans une image Docker (`docker-compose.yml`), et rien d'autre que Docker ne s'installe sur la machine ni sur le runner.
-Ce choix remplace, pour les tests seulement, le refus de Gradle de l'[ADR 0004](0004-clients-et-mod-separes-par-l-api.md) : son coût, un build lourd au premier lancement, reste dans un volume Docker.
+The PhpStorm plugin is tested end to end in CI: a real PhpStorm, on Xvfb, with the plugin installed, facing a claude-reviews server.
+The tests are written with Starter and Driver, the integration test framework of JetBrains, in Kotlin and on JUnit 5, which only Gradle can assemble.
+Gradle serves only these tests, in `phpstorm/ui-test/`: `build.sh` remains the build of the plugin, and the tests install its zip.
+Gradle, the JDK, Node and Xvfb live in a Docker image (`docker-compose.yml`), and nothing but Docker gets installed on the machine or on the runner.
+This choice replaces, for the tests only, the rejection of Gradle in [ADR 0004](0004-clients-and-mod-separated-by-the-api.md): its cost, a heavy build on the first run, stays in a Docker volume.
 
-`run.sh` télécharge une fois PhpStorm, dans la version que fixe le script, dans le volume `phpstorm-cache` ;
-`build.sh` compile contre ses jars, le Plugin Verifier vérifie le zip contre lui, et les tests le lancent tel quel, sans la copie qu'en ferait Starter.
-Starter et Driver viennent du Maven de JetBrains, sans le plugin Gradle IntelliJ Platform, qui téléchargerait un second IDE pour compiler.
-PhpStorm démarre en période d'essai dans le dossier de config neuf de chaque test : ni licence ni secret en CI.
+`run.sh` downloads PhpStorm once, in the version the script pins, into the `phpstorm-cache` volume;
+`build.sh` compiles against its jars, the Plugin Verifier checks the zip against it, and the tests launch it as is, without the copy Starter would make of it.
+Starter and Driver come from the Maven repository of JetBrains, without the IntelliJ Platform Gradle plugin, which would download a second IDE to compile.
+PhpStorm starts in trial mode in the fresh config folder of each test: no license and no secret in CI.
 
 ## Considered Options
 
-- Le plugin Gradle IntelliJ Platform pour builder aussi le plugin, la voie officielle : écarté, `build.sh` suffit, et deux builds du même plugin divergeraient.
-- Remote Robot : écarté, Starter et Driver le remplacent, et lancent l'IDE et Xvfb eux-mêmes.
-- IntelliJ IDEA plutôt que PhpStorm, faute de licence : inutile, la période d'essai de PhpStorm démarre sans fenêtre.
-- Une clé de licence en secret (`IDETestContext.setLicense`) : à reprendre si JetBrains retire la période d'essai sans compte.
-- Gradle installé sur la machine : écarté, Docker suffit, et la CI lance la même commande que le poste.
+- The IntelliJ Platform Gradle plugin to build the plugin too, the official way: rejected, `build.sh` is enough, and two builds of the same plugin would diverge.
+- Remote Robot: rejected, Starter and Driver replace it, and launch the IDE and Xvfb themselves.
+- IntelliJ IDEA rather than PhpStorm, for lack of a license: unnecessary, the PhpStorm trial starts without a window.
+- A license key as a secret (`IDETestContext.setLicense`): to revisit if JetBrains withdraws the trial without an account.
+- Gradle installed on the machine: rejected, Docker is enough, and the CI runs the same command as the workstation.

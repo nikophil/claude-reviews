@@ -1,16 +1,16 @@
-# Photographier le code affiché dans des refs cachées
+# Snapshot the displayed code in hidden refs
 
-Claude ne commite pas sans demande explicite :
-pendant une session, l'essentiel du code relu n'est pas commité, et les fichiers qu'il crée ne sont pas suivis.
-À chaque calcul du diff, le serveur écrit un tree du working tree (fichiers suivis et non suivis, hors ignorés),
-avec un index temporaire pour ne toucher ni à l'index ni au stash ;
-à chaque Send, il commite le tree que l'UI affichait sous `refs/claude-reviews/<session>/<n>`.
-Ces commits fournissent la base « Since my last review » ;
-ils apparaissent dans `git for-each-ref` des dépôts relus, jusqu'à l'Approve de la session, qui supprime ses refs.
+Claude does not commit without an explicit request:
+during a session, most of the reviewed code is not committed, and the files it creates are not tracked.
+On each computation of the diff, the server writes a tree of the working tree (tracked and untracked files, ignored ones excluded),
+with a temporary index so as to touch neither the index nor the stash;
+on each Send, it commits the tree the UI was displaying under `refs/claude-reviews/<session>/<n>`.
+These commits provide the "Since my last review" base;
+they appear in `git for-each-ref` of the reviewed repositories, until the session's Approve, which deletes its refs.
 
 ## Considered Options
 
-- Les seuls commits : le diff manque les fichiers non suivis, et « since my last review » ne voit rien tant que Claude ne commite pas.
-- `git stash create` : ignore les fichiers non suivis.
-- Le working tree au moment du Send : il contient ce que Claude a modifié depuis le dernier affichage,
-  que la base « Since my last review » cacherait ensuite sans que je l'aie vu.
+- Commits alone: the diff misses untracked files, and "since my last review" sees nothing as long as Claude does not commit.
+- `git stash create`: ignores untracked files.
+- The working tree at the time of the Send: it contains what Claude changed since the last display,
+  which the "Since my last review" base would then hide without my having seen it.
