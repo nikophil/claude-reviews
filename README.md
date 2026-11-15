@@ -62,7 +62,15 @@ Le plugin PhpStorm montre la même session dans une tool window « Claude Review
 
 ![PhpStorm : la tool window Claude Reviews, et dans l'éditeur un thread où Claude a répondu, puis une suggestion qui attend Claude](docs/images/phpstorm.png)
 
-Il se construit avec le PhpStorm installé, sans rien télécharger :
+Ajoute une fois ce dépôt de plugins dans Settings › Plugins › ⚙ › Manage Plugin Repositories, puis installe Local Reviews depuis l'onglet Marketplace :
+
+```
+https://github.com/nikophil/claude-reviews/releases/latest/download/updatePlugins.xml
+```
+
+PhpStorm propose ensuite chaque release en mise à jour.
+
+Le plugin se construit aussi avec le PhpStorm installé, sans rien télécharger :
 
 ```
 npm run build:phpstorm
@@ -77,7 +85,14 @@ L'extension VS Code montre la même session dans une vue « Claude Reviews », a
 
 ![La vue Claude Reviews de VS Code, avec les fichiers changés et leurs threads, et le diff d'un fichier où Claude a répondu dans un thread](docs/images/vscode.png)
 
-Elle se construit avec `zip`, sans rien télécharger :
+Chaque release GitHub porte son `.vsix`, que VS Code ne met pas à jour seul hors de sa marketplace :
+
+```
+curl -LO https://github.com/nikophil/claude-reviews/releases/latest/download/local-reviews.vsix
+code --install-extension local-reviews.vsix --force
+```
+
+Elle se construit aussi avec `zip`, sans rien télécharger :
 
 ```
 npm run build:vscode

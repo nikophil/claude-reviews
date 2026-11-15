@@ -4,6 +4,10 @@ services:
     build: phpstorm/ui-test
     user: ${HOST_UID:-1000}:${HOST_GID:-1000}
     working_dir: /w
+    # The version and the URL a release gives the zip; unset, build.sh takes the version of .claude-plugin/plugin.json and a local URL.
+    environment:
+      - PLUGIN_VERSION
+      - PLUGIN_URL
     volumes:
       - .:/w
       # A directory of the host instead of the volume when PHPSTORM_CACHE names one, as the CI does to cache it.

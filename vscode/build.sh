@@ -6,7 +6,10 @@ rm -rf "$OUT"
 mkdir -p "$OUT/vsix/extension/media"
 cp vscode/package.json vscode/extension.js vscode/review.js vscode/diff.js vscode/threads.js "$OUT/vsix/extension/"
 cp vscode/media/*.svg "$OUT/vsix/extension/media/"
-VERSION=$(node -p 'require("./vscode/package.json").version')
+# The version of the Claude Code plugin, given by a release as PLUGIN_VERSION, written in the package.json of the .vsix.
+VERSION=${PLUGIN_VERSION:-$(node -p 'require("./.claude-plugin/plugin.json").version')}
+node -e 'const fs = require("fs"); const [file, version] = process.argv.slice(1); fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), version }, null, 2) + "\n")' \
+    "$OUT/vsix/extension/package.json" "$VERSION"
 ENGINE=$(node -p 'require("./vscode/package.json").engines.vscode')
 cat > "$OUT/vsix/extension.vsixmanifest" <<XML
 <?xml version="1.0" encoding="utf-8"?>

@@ -22,11 +22,14 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 - `npx playwright install chromium` une fois, puis `npx playwright test` : tests de l'UI, sur un serveur lancé sur le port 7779, avec un `XDG_DATA_HOME` temporaire.
 - `npm run readme` : refait les images de `README.md` (`docs/images/`) par Playwright, sur des dépôts d'exemple (`e2e/readme.ts`), celle de VS Code dans openvscode-server comme `npm run test:vscode`, sauf `phpstorm.png`, prise à la main dans l'IDE ;
   l'animation est un PNG animé, assemblé sans outil à installer.
-- `npm run build:phpstorm` : construit `var/phpstorm/local-reviews.zip` avec le `javac` et les jars du PhpStorm installé (`PHPSTORM_HOME`, sinon celui de Toolbox) et `zip`, avec une version `0.1.<epoch>` par build, et écrit `var/phpstorm/updatePlugins.xml` ;
+- `npm run build:phpstorm` : construit `var/phpstorm/local-reviews.zip` avec le `javac` et les jars du PhpStorm installé (`PHPSTORM_HOME`, sinon celui de Toolbox) et `zip`, avec la version de `.claude-plugin/plugin.json` suivie de l'epoch du build, et écrit `var/phpstorm/updatePlugins.xml` ;
   ce dépôt de plugins, ajouté une fois par Settings › Plugins › ⚙ › Manage Plugin Repositories (`file://…/updatePlugins.xml`), propose ensuite chaque build en mise à jour.
 - `npm run test:phpstorm` : dans le conteneur de `docker-compose.yml`, construit le plugin contre PhpStorm 2026.2.5, le passe au Plugin Verifier, puis lance ses tests d'interface ;
   PhpStorm, les dépendances Gradle et le Plugin Verifier se téléchargent une fois dans le volume `phpstorm-cache`, ou dans le dossier que nomme `PHPSTORM_CACHE`.
-- `npm run build:vscode` : construit `var/vscode/local-reviews.vsix` avec `zip`, à installer par `code --install-extension var/vscode/local-reviews.vsix --force`.
+- `npm run build:vscode` : construit `var/vscode/local-reviews.vsix` avec `zip`, à la version de `.claude-plugin/plugin.json` (celle de `vscode/package.json` ne sert pas), à installer par `code --install-extension var/vscode/local-reviews.vsix --force`.
+- Une release : monter `.claude-plugin/plugin.json`, merger, puis pousser le tag `v<version>` sur main.
+  `.github/workflows/release.yml` vérifie que le tag nomme cette version, construit le zip PhpStorm (Plugin Verifier et tests d'interface compris) et le `.vsix` à cette version, puis les attache à la release GitHub du tag, avec l'`updatePlugins.xml` qui pointe vers ce zip :
+  PhpStorm lit celui de la dernière release (`releases/latest/download/updatePlugins.xml`) pour proposer la mise à jour.
 - `npm run test:vscode` : tests de l'extension VS Code, `e2e/vscode.spec.ts`, dans openvscode-server 1.109.5 (`~/.cache/claude-reviews/openvscode-server-v1.109.5-linux-x64`, sinon `OPENVSCODE_SERVER`), sur un serveur lancé sur le port 7781 ;
   openvscode-server se télécharge une fois depuis les releases de `gitpod-io/openvscode-server`, comme le fait la CI.
 
@@ -39,7 +42,7 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 - `ui/` : page servie telle quelle, en Preact + htm sans build ni JSX.
 - `ui/vendor/` : bibliothèques front copiées telles quelles, à ne pas modifier ni relire.
 - `e2e/` : tests Playwright.
-- `.claude-plugin/` : le plugin `local-reviews` (le préfixe `claude-` est réservé à Anthropic) et la marketplace de ce dépôt ; la version du plugin est celle du serveur.
+- `.claude-plugin/` : le plugin `local-reviews` (le préfixe `claude-` est réservé à Anthropic) et la marketplace de ce dépôt ; la version du plugin est celle du serveur, du plugin PhpStorm et de l'extension VS Code.
   Tout changement de `server/` ou de `ui/` la monte : le mod garde un serveur déjà lancé de même version.
 - `hooks/register.ts` : le mod, qui enregistre les outils et `/review-local`, démarre le serveur, sonde la session toutes les 2 s et réveille Claude ; `$` n'y passe qu'à des fonctions déclarées en tête de fichier.
 - `hooks/watch.ts` : les décisions du mod (réveiller, relancer, se taire, reprendre après un `{ drop }`), et les sockets à l'écoute d'un port lus dans `/proc/net/tcp`, en fonctions pures.
