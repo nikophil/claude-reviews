@@ -570,6 +570,29 @@ test('the bases are Uncommitted changes, Since my last review, the default branc
     }
 });
 
+test('the pull request of a branch pushed to a fork gives the base branch, not the pull request of another fork from a branch of the same name', async () => {
+    const dir = branches();
+    git(dir, 'remote', 'add', 'fork', 'git@github.com:Me/app.git');
+    git(dir, 'update-ref', 'refs/remotes/fork/mine', 'HEAD');
+    const { restore } = fakeGh(dir, [
+        { number: 6, title: 'Another fork', headRefName: 'mine', baseRefName: 'far', isCrossRepository: true, headRepositoryOwner: { login: 'e' } },
+        { number: 5, title: 'Mine', headRefName: 'mine', baseRefName: 'mid', isCrossRepository: true, headRepositoryOwner: { login: 'me' } },
+    ]);
+    try {
+        const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+
+        const listed = (await api('GET', `/api/sessions/${id}/bases`)).body;
+
+        assert.deepEqual(listed.slice(2, 5), [
+            { ref: 'origin/HEAD', name: 'main (default branch)' },
+            { ref: 'refs/remotes/origin/mid', name: 'mid (base branch)' },
+            { ref: 'refs/heads/near', name: 'near', group: 'Local branches' },
+        ]);
+    } finally {
+        restore();
+    }
+});
+
 test('without gh, the base branch is the nearest local branch, is the default branch when it bears its name, and none on the default branch', async () => {
     const dir = branches();
     const other = branches();
