@@ -4,12 +4,16 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.TreeNode;
+import java.util.Collections;
 import java.util.List;
 
 /**
  * Run by build.sh: fails the build when Placement leaves out or lets in the wrong threads, when raw HTML gets through a message,
  * or when the navigation, the Replied mark, a suggestion or the Markdown copy of the threads goes wrong,
- * or when the listeners of a port, read in /proc/net/tcp to tell a server of another account, come out wrong.
+ * when the listeners of a port, read in /proc/net/tcp to tell a server of another account, come out wrong,
+ * or when the files of the tool window group wrong by directory.
  */
 final class PlacementCheck {
     private PlacementCheck() {}
@@ -174,7 +178,50 @@ final class PlacementCheck {
         check(Server.listeners(proc, 0xA609).equals(List.of(1000, 1002)), "the listeners of a port, IPv4 or IPv6, a connection from it left out");
         check(Server.listeners(proc, 7778).equals(List.of(1001)), "a listener on any address");
         check(Server.listeners(proc, 1234).isEmpty(), "no listener on a free port");
+
+        DefaultMutableTreeNode root = new DefaultMutableTreeNode();
+        for (String path : List.of("a.php", "src/Mapping/Driver/XmlDriver.php", "src/Tools/Validator.php", "tests/ORM/Mapping/A.php", "tests/ORM/Mapping/xml/User.xml", "tests/ORM/Tools/T.php")) {
+            JsonObject changed = new JsonObject();
+            changed.addProperty("path", path);
+            DefaultMutableTreeNode node = new DefaultMutableTreeNode(changed);
+            node.add(new DefaultMutableTreeNode("#1"));
+            root.add(node);
+        }
+        ReviewToolWindow.Dir.group(root);
+        check(tree(root, "").equals("""
+            src
+              Mapping/Driver
+                XmlDriver.php
+                  #1
+              Tools
+                Validator.php
+                  #1
+            tests/ORM
+              Mapping
+                xml
+                  User.xml
+                    #1
+                A.php
+                  #1
+              Tools
+                T.php
+                  #1
+            a.php
+              #1
+            """), "the files under their directories, the directories first, a directory that holds only a directory merged with it");
+        check(((ReviewToolWindow.Dir) ((DefaultMutableTreeNode) root.getFirstChild().getChildAt(0)).getUserObject()).path().equals("src/Mapping/Driver"), "a merged directory keeps the path of the deepest");
         System.out.println("PlacementCheck: ok");
+    }
+
+    private static String tree(TreeNode node, String indent) {
+        StringBuilder text = new StringBuilder();
+        for (TreeNode child : Collections.list(node.children())) {
+            Object shown = ((DefaultMutableTreeNode) child).getUserObject();
+            String path = shown instanceof JsonObject file ? file.get("path").getAsString() : null;
+            text.append(indent).append(shown instanceof ReviewToolWindow.Dir dir ? dir.name() : path != null ? path.substring(path.lastIndexOf('/') + 1) : shown).append('\n');
+            text.append(tree(child, indent + "  "));
+        }
+        return text.toString();
     }
 
     private static List<Integer> ids(List<JsonObject> threads) {

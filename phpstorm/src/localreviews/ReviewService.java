@@ -35,6 +35,7 @@ public final class ReviewService implements Disposable {
     private static final String THREADS_IN_EDITOR = "localreviews.threadsInEditor";
     private static final String RESOLVED_TOO = "localreviews.resolvedToo";
     private static final String DIFF_VIEW = "localreviews.diffView";
+    private static final String GROUP_BY_DIRECTORY = "localreviews.groupByDirectory";
 
     /** What a poll read: no session yet (`session` null), or the session anchored on the diff it shows; `error` when the server did not answer. */
     record State(String error, String root, String ref, String base, String tree, JsonArray files, JsonObject session) {
@@ -125,6 +126,15 @@ public final class ReviewService implements Disposable {
 
     void diffView(boolean diff) {
         PropertiesComponent.getInstance(project).setValue(DIFF_VIEW, diff, false);
+    }
+
+    /** « Group By › Directory » of the tool window: its files in the tree of their directories, else flat, each with its directory. */
+    boolean groupByDirectory() {
+        return PropertiesComponent.getInstance(project).getBoolean(GROUP_BY_DIRECTORY, true);
+    }
+
+    void groupByDirectory(boolean grouped) {
+        PropertiesComponent.getInstance(project).setValue(GROUP_BY_DIRECTORY, grouped, true);
     }
 
     /** Whether `path` is Viewed in `session`, placed on the code shown: a file whose content changed since is not. */
