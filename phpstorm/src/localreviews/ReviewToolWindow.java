@@ -313,6 +313,30 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             DefaultActionGroup menu = new DefaultActionGroup(
                 DumbAwareAction.create("Open", event -> openSelected(false, true)),
                 DumbAwareAction.create("Show Diff", AllIcons.Actions.Diff, event -> openSelected(true, true)),
+                new DumbAwareAction("Resolve") {
+                    @Override
+                    public ActionUpdateThread getActionUpdateThread() {
+                        return ActionUpdateThread.EDT;
+                    }
+
+                    @Override
+                    public void update(AnActionEvent event) {
+                        JsonObject thread = selectedThread();
+                        event.getPresentation().setEnabledAndVisible(thread != null && !Placement.approved(state.session()));
+                        if (thread != null) event.getPresentation().setText(thread.get("resolved").getAsBoolean() ? "Unresolve" : "Resolve");
+                    }
+
+                    @Override
+                    public void actionPerformed(AnActionEvent event) {
+                        JsonObject thread = selectedThread();
+                        if (thread == null) return;
+                        String route = "/api/sessions/" + state.id() + "/threads/" + thread.get("id").getAsInt() + (thread.get("resolved").getAsBoolean() ? "/unresolve" : "/resolve");
+                        ReviewDiffAction.background(project, () -> {
+                            Server.post(route, new JsonObject());
+                            service.refresh();
+                        });
+                    }
+                },
                 DumbAwareAction.create("Toggle Viewed", event -> {
                     if (selectedFile() != null) toggleViewed(selectedFile());
                 }),
@@ -532,6 +556,11 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             if (path == null || !(((DefaultMutableTreeNode) path.getLastPathComponent()).getUserObject() instanceof JsonObject file) || !checkable(file)) return null;
             Rectangle bounds = tree.getPathBounds(path);
             return bounds != null && event.getX() < bounds.x + CHECKBOX.getIconWidth() + JBUI.scale(4) ? file : null;
+        }
+
+        private JsonObject selectedThread() {
+            DefaultMutableTreeNode node = (DefaultMutableTreeNode) tree.getLastSelectedPathComponent();
+            return node != null && node.getUserObject() instanceof ThreadNode shown ? shown.thread() : null;
         }
 
         private JsonObject selectedFile() {
