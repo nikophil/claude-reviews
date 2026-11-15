@@ -330,3 +330,22 @@ test('the page requests nothing but the local server',async ({ page, baseURL }) 
     expect(urls.length).toBeGreaterThan(4);
     expect(urls.filter(url => !url.startsWith(`${baseURL}/`))).toEqual([]);
 });
+
+test('the threads of a lockfile collapsed show above Load diff, and a folded file counts its threads not Resolved', async ({ page, request }) => {
+    const dir = repo({ 'package-lock.json': '{ "v": 1 }\n', 'a.txt': 'a\n' });
+    write(dir, { 'package-lock.json': '{ "v": 2 }\n', 'a.txt': 'b\n' });
+    const { id } = await (await request.post('/api/sessions', { data: { worktree: dir } })).json();
+    for (const path of ['package-lock.json', 'a.txt']) {
+        await request.post(`/api/sessions/${id}/threads`, { data: { author: 'claude', path, side: 'new', start: 1, end: 1, body: `About ${path}` } });
+    }
+    const { tree } = await (await request.get(`/api/sessions/${id}/tree`)).json();
+    await request.post(`/api/sessions/${id}/viewed`, { data: { path: 'a.txt', tree, viewed: true } });
+    await open(page, dir);
+
+    const lockfile = page.locator('section[data-path="package-lock.json"]');
+    await expect(lockfile.getByRole('button', { name: 'Load diff' })).toBeVisible();
+    await expect(lockfile.locator('.thread')).toContainText('About package-lock.json');
+    const viewed = page.locator('section[data-path="a.txt"]');
+    await expect(viewed.locator('.thread')).toBeHidden();
+    await expect(viewed.locator('.file-header')).toContainText('1 thread');
+});

@@ -78,7 +78,7 @@ _Avoid_: Awaiting you
 **Resolved**:
 Un thread que j'ai clos ; seul moi le résous, et seul mon Unresolve le rouvre.
 Il n'attend plus Claude, même si mon message est le dernier, et une réponse de Claude ne le rouvre pas.
-Je n'y écris plus avant son Unresolve, et un Send garde Pending les messages que j'y avais écrits avant de le résoudre.
+Je n'y écris plus avant son Unresolve, et un Send garde Pending les messages que j'y avais écrits avant de le résoudre ; un Approve les laisse Pending, sans les envoyer.
 
 **Unresolve**:
 Rouvrir un thread Resolved : je peux de nouveau y écrire, et le Send suivant publie ses messages Pending.

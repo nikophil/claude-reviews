@@ -88,7 +88,11 @@ async function load(id: string): Promise<Session> {
     throw httpError(404, `No session ${id}`);
 }
 
+/** The session, closed first as an Approve when its worktree is gone: a page left open on it learns so at its next poll. */
 export async function getSession(id: string) {
+    const session = await load(id);
+    if (session.approvedAt || !await gone(session)) return view(session);
+    await closeGone([id]);
     return view(await load(id));
 }
 
@@ -135,16 +139,18 @@ async function openSessions(lock: typeof exclusive = exclusive, here?: { worktre
         if (await gone(session, here)) closing.push(session.id);
         else open.push(session);
     }
-    if (closing.length) {
-        await lock(async () => {
-            // Read again under the lock: a write queued since must not be lost.
-            for (const id of closing) {
-                const session = await load(id).catch(() => null);
-                if (session && !session.approvedAt && await gone(session, here)) await close(session, 'worktree-gone');
-            }
-        });
-    }
+    if (closing.length) await closeGone(closing, lock, here);
     return open;
+}
+
+/** Closes as an Approve each of these sessions whose worktree is gone, read again under the lock: a write queued since must not be lost. */
+async function closeGone(ids: string[], lock: typeof exclusive = exclusive, here?: { worktree: string; commonDir: string }): Promise<void> {
+    await lock(async () => {
+        for (const id of ids) {
+            const session = await load(id).catch(() => null);
+            if (session && !session.approvedAt && await gone(session, here)) await close(session, 'worktree-gone');
+        }
+    });
 }
 
 /** The top of the worktree at `path`, its common repository, and its open session if it has one. */
@@ -162,7 +168,7 @@ export async function listSessions() {
         return {
             id: session.id,
             worktree: session.worktree,
-            repo: basename(dirname(session.commonDir ?? join(session.worktree, '.git'))),
+            repo: repository(session.commonDir ?? join(session.worktree, '.git')),
             // Empty on a detached HEAD.
             branch: (await git(session.worktree, ['symbolic-ref', '--short', '-q', 'HEAD']).catch(() => '')).trim(),
             waitingForClaude: session.threads.filter(thread => status(thread) === 'waiting-for-claude').length,
@@ -170,6 +176,11 @@ export async function listSessions() {
         };
     }));
     return list.sort((a, b) => Number(b.waitingForClaude > 0) - Number(a.waitingForClaude > 0) || b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/** The name of a repository from its common directory: app for app/.git, a bare app.git, or the submodule app under .git/modules/. */
+function repository(commonDir: string): string {
+    return basename(commonDir) === '.git' ? basename(dirname(commonDir)) : basename(commonDir).replace(/\.git$/, '');
 }
 
 /** The open session of the worktree, never created: the mod looks for it without filling Reviews with empty sessions. */
@@ -239,7 +250,8 @@ export async function bases(session: Session): Promise<Base[]> {
     const mine = prs.find(pr => !pr.isCrossRepository && pr.headRefName === branch);
     // The default branch itself has no base branch.
     const baseRef = mine ? [`refs/remotes/origin/${mine.baseRefName}`, `refs/heads/${mine.baseRefName}`].find(has)
-        : branch === defaultName ? undefined : refs.find(found => !found.remote)?.ref;
+        // A branch that holds HEAD and commits of its own comes after it, as the next branch of a stack: never its base.
+        : branch === defaultName ? undefined : refs.find(found => !found.remote && !(found.behind === 0 && found.ahead > 0))?.ref;
     const baseName = mine ? mine.baseRefName : baseRef && name(baseRef);
     const listed = new Set([origin]);
     if (origin) list.push({ ref: 'origin/HEAD', name: `${defaultName} (${baseName === defaultName ? 'default and base branch' : 'default branch'})` });
@@ -385,7 +397,8 @@ export async function placed(answer: unknown, query: URLSearchParams): Promise<u
     const { worktree } = session;
     // list_open_threads() leaves Resolved threads out, and shows no context.
     const forClaude = query.has('reanchor');
-    const shown = forClaude ? { base: await head(worktree), tree: await writeTree(worktree) } : await displayed(worktree, query);
+    // Claude's old side is the base of the session, as mine: a line a commit deleted still stands there.
+    const shown = forClaude ? await current(session) : await displayed(worktree, query);
     // A file stays Viewed while its content in the displayed tree keeps the id it was marked on, whatever the base.
     const viewed = Object.entries(session.viewed ?? {});
     const [files, blobsNow] = forClaude ? [[], []] : await Promise.all([
@@ -397,6 +410,7 @@ export async function placed(answer: unknown, query: URLSearchParams): Promise<u
     return {
         ...session,
         viewed: forClaude ? session.viewed : Object.fromEntries(viewed.filter(([, blob], i) => blob === blobsNow[i])),
+        ...forClaude && { reanchoredOn: { base: shown.base, tree: shown.tree } },
         threads: await Promise.all(session.threads.map(async thread => {
             if (forClaude && thread.resolved) return thread;
             const { path, side } = thread.anchor;
@@ -437,7 +451,7 @@ function context(hunks: Hunk[], side: 'old' | 'new', { start, end }: { start: nu
 /** A session that still takes messages: an approved one refuses them all. */
 async function writable(id: string): Promise<Session> {
     const session = await load(id);
-    if (session.approvedAt) throw httpError(409, 'session approuvée');
+    if (session.approvedAt) throw httpError(409, 'session approved');
     return session;
 }
 
@@ -458,7 +472,7 @@ export async function openThread(id: string, input: Record<string, unknown>) {
     const shown = first.author === 'me' ? {
         base: await checkObject(session.worktree, input.base, 'base', ['commit', 'tree']),
         tree: await checkObject(session.worktree, input.tree, 'tree', ['tree']),
-    } : undefined;
+    } : await current(session);
     const { base, tree, files } = await diff(session.worktree, shown);
     const lines = await fileLines(session.worktree, side === 'new' ? tree : base, path);
     if (!lines) throw httpError(400, `No ${path} on the ${side} side`);
@@ -582,7 +596,8 @@ export function replies(session: Session): string {
 
 export async function approve(id: string) {
     const session = await writable(id);
-    if (session.threads.some(thread => thread.messages.some(message => !message.date))) {
+    // A Pending message of a Resolved thread waits for its Unresolve, which an approved session will never get.
+    if (session.threads.some(thread => !thread.resolved && thread.messages.some(message => !message.date))) {
         throw httpError(409, 'Pending messages must be sent before an Approve');
     }
     await close(session);

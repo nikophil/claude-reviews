@@ -389,7 +389,7 @@ test('a body over 1 MB is refused with 413', async () => {
     assert.equal(res.status, 413);
 });
 
-test('an approved session refuses the reply_to_thread and open_thread of Claude with "session approuvée", and writes nothing', async () => {
+test('an approved session refuses the reply_to_thread and open_thread of Claude with "session approved", and writes nothing', async () => {
     const { id, path } = await sessionWithThread();
     await api('POST', `/api/sessions/${id}/approve`, {});
     const archived = readFileSync(join(data, 'archive', `${id}.json`), 'utf8');
@@ -399,7 +399,7 @@ test('an approved session refuses the reply_to_thread and open_thread of Claude 
 
     for (const refused of [replied, opened]) {
         assert.equal(refused.status, 409);
-        assert.equal(refused.body.error, 'session approuvée');
+        assert.equal(refused.body.error, 'session approved');
     }
     assert.equal(readFileSync(join(data, 'archive', `${id}.json`), 'utf8'), archived);
     assert.equal(existsSync(join(data, 'sessions', `${id}.json`)), false);
@@ -1023,7 +1023,7 @@ test('an approved session refuses to mark a file Viewed with 409, and writes not
     const marked = await api('POST', `/api/sessions/${id}/viewed`, { path: 'a.txt', tree, viewed: true });
 
     assert.equal(marked.status, 409);
-    assert.equal(marked.body.error, 'session approuvée');
+    assert.equal(marked.body.error, 'session approved');
     assert.deepEqual(JSON.parse(readFileSync(join(data, 'archive', `${id}.json`), 'utf8')).viewed, {});
 });
 
@@ -1087,4 +1087,87 @@ test('/file gives the text of a path in a commit or tree of the repository, 404 
     assert.equal((await file(shown.base, 'missing.txt')).status, 404);
     assert.equal((await file('0'.repeat(40), 'a.txt')).status, 400);
     assert.equal((await file('nope', 'a.txt')).status, 400);
+});
+
+test('an Approve leaves the Pending messages of Resolved threads Pending, as a Send does, and archives the session', async () => {
+    const { id, path } = await sessionWithThread();
+    await api('POST', `${path}/messages`, { author: 'me', body: 'Written, then resolved' });
+    await api('POST', `${path}/resolve`, {});
+
+    const approved = await api('POST', `/api/sessions/${id}/approve`, {});
+
+    assert.equal(approved.status, 200);
+    assert.ok(approved.body.approvedAt);
+    assert.equal(approved.body.threads[0].messages[1].date, null);
+});
+
+test('a local branch that holds HEAD and commits of its own, as the next branch of a stack, is not the base branch', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    git(dir, 'branch', '-m', 'parent');
+    git(dir, 'checkout', '-qb', 'mine');
+    commit(dir, { 'b.txt': 'b\n' });
+    git(dir, 'checkout', '-qb', 'child');
+    commit(dir, { 'c.txt': 'c\n' });
+    git(dir, 'checkout', '-q', 'mine');
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+
+    const listed = (await api('GET', `/api/sessions/${id}/bases`)).body;
+
+    assert.deepEqual(listed.slice(2), [
+        { ref: 'refs/heads/parent', name: 'parent (base branch)' },
+        { ref: 'refs/heads/child', name: 'child', group: 'Local branches' },
+    ]);
+});
+
+test('Claude anchors and reanchors the old side on the base of the session, where a line deleted by a commit still is', async () => {
+    const dir = repo({ 'a.txt': 'one\ntwo\nthree\n' });
+    git(dir, 'branch', '-m', 'main');
+    git(dir, 'checkout', '-qb', 'mine');
+    commit(dir, { 'a.txt': 'one\nthree\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    await api('POST', `/api/sessions/${id}/base`, { base: 'refs/heads/main' });
+    const shown = (await api('GET', `/api/sessions/${id}/diff`)).body;
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'me', base: shown.base, tree: shown.tree, path: 'a.txt', side: 'old', start: 2, end: 2, body: 'Why?' });
+
+    const opened = await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path: 'a.txt', side: 'old', start: 2, end: 2, body: 'Because' });
+    const listed = (await api('GET', `/api/sessions?worktree=${encodeURIComponent(dir)}&reanchor`)).body;
+
+    assert.equal(opened.status, 200);
+    assert.deepEqual(opened.body.threads[1].anchor.lines, ['two']);
+    assert.deepEqual(opened.body.threads[1].anchor.hunk.lines.map((line: any) => line.text), ['one', 'two']);
+    assert.deepEqual(listed.threads.map((thread: any) => thread.at), [{ start: 2, end: 2 }, { start: 2, end: 2 }]);
+    assert.deepEqual(listed.reanchoredOn, { base: shown.base, tree: shown.tree });
+});
+
+test('reading a session whose worktree is gone closes it, and answers its threads unplaced', async () => {
+    const main = repo({ 'a.txt': 'a\n' });
+    const dir = join(main, 'linked');
+    git(main, 'worktree', 'add', '-q', dir);
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const shown = (await api('GET', `/api/sessions/${id}/diff`)).body;
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path: 'a.txt', side: 'new', start: 1, end: 1, body: 'Here' });
+    vanish(dir);
+
+    const read = await api('GET', `/api/sessions/${id}?base=${shown.base}&tree=${shown.tree}`);
+
+    assert.equal(read.status, 200);
+    assert.ok(read.body.approvedAt);
+    assert.equal(read.body.closedBecause, 'worktree-gone');
+    assert.equal(read.body.threads[0].at, undefined);
+    assert.ok(existsSync(join(data, 'archive', `${id}.json`)));
+});
+
+test('the repository of a session is named after its common directory: app for app/.git, or a bare app.git', async () => {
+    const plain = repo({ 'a.txt': 'a\n' });
+    const bare = join(plain, 'app.git');
+    git(plain, 'clone', '-q', '--bare', plain, bare);
+    git(bare, 'worktree', 'add', '-q', join(plain, 'wt'));
+    const ids = [
+        (await api('POST', '/api/sessions', { worktree: plain })).body.id,
+        (await api('POST', '/api/sessions', { worktree: join(plain, 'wt') })).body.id,
+    ];
+
+    const list = (await api('GET', '/api/sessions')).body;
+
+    assert.deepEqual(ids.map(id => list.find((session: any) => session.id === id).repo), [plain.split('/').at(-1), 'app']);
 });

@@ -49,7 +49,7 @@ Décisions structurantes : [docs/adr/](docs/adr/).
    à chaque Send, il commite le tree que l'UI affichait sous `refs/claude-reviews/<session>/<n>` ;
    l'Approve, ou la disparition du worktree, supprime ces refs ([ADR 0002](docs/adr/0002-snapshots-dans-des-refs-cachees.md)).
 4. **Le mod Claude Code**, livré en plugin (`hooks/hooks.json` → `"modules"`) :
-   - il enregistre les outils `list_open_threads()`, qui renvoie en entier les threads Waiting for Claude,
+   - il enregistre les outils `list_open_threads()`, qui renvoie en entier les threads non Resolved, Waiting for Claude ou où Claude a parlé en dernier,
      `reply_to_thread(id, body)` et `open_thread(file, side, lines, body)`, ainsi que la commande `/review-local`,
      qui ouvre la session du worktree dans PhpStorm ou le navigateur, et demande lequel quand PhpStorm est installé ;
    - il relie la Claude session à sa session de relecture par le chemin du worktree (`git rev-parse --show-toplevel` sur le `cwd`) ;
@@ -94,10 +94,10 @@ Décisions structurantes : [docs/adr/](docs/adr/).
   - **Outdated**, calculé quand l'ancre ne se retrouve plus dans le code qu'on regarde.
 - **Ré-ancrage, dès le MVP** : chercher les lignes par leur contenu exact, au plus près de leur position d'origine, et départager par les voisines ;
   sinon le thread est Outdated et s'affiche avec son extrait d'origine.
-  L'UI ré-ancre sur le code affiché, et `list_open_threads()` sur le working tree courant.
+  L'UI ré-ancre sur le code affiché, et `list_open_threads()` sur la base de la session et le working tree courant.
 - **Thread hors du diff affiché** (Claude a commité, ou la base a changé) : il s'affiche dans son fichier, à sa ligne, avec quelques lignes de contexte,
   comme un hunk de plus.
-- **Approve** reste grisé tant qu'il reste des messages Pending.
+- **Approve** reste grisé tant qu'un thread non Resolved porte un message Pending.
   Il passe la session en lecture seule, n'envoie rien à Claude, et laisse commit, push et PR à la conversation.
   La session approuvée reste consultable à son URL, mais quitte l'écran Reviews.
   On peut approuver avec des threads ouverts : la boîte de dialogue les compte.
@@ -111,7 +111,7 @@ Maquette cliquable : https://claude.ai/artifact/Vx1yLU9aWnA8HujQPUSWBP
 (contenu d'exemple, antérieure à ces décisions : elle montre encore Comment / Request changes).
 
 - **Files changed** : arbre des fichiers, diff unifié, threads dans le diff, sélecteur de base,
-  bandeau « Changed since your last review » qui bascule sur la base Since my last review, et boutons Send et Approve.
+  bandeau « The code changed since it was loaded » et son Refresh, qui met en avant Since my last review après un Send, et boutons Send et Approve.
 - **Reviews** : la liste des sessions ouvertes sur tous les worktrees, triées par qui doit agir ;
   l'écran garde le nom du produit, bien qu'il liste des sessions.
 - **gh-notif · Local reviews** : la section proposée côté gh-notif.

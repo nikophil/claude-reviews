@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -36,8 +37,11 @@ async function api(method: string, path: string, body?: unknown): Promise<any> {
  * The mod under a stand-in for Claude Code: its hooks, and a `$` that answers from the real server and real git,
  * records what reaches the host (prompts, commands, log lines), and fires the poll only when the test says so.
  */
-/** `launcher`, the PhpStorm launcher the mod finds, none by default; `choice`, the answer to its question, none for a dismissed one. */
-async function mod(cwd: string, { serverPort = port, launcher = '', choice = undefined as string | undefined } = {}) {
+/**
+ * `serverPort`, the value of CLAUDE_REVIEWS_PORT; `launcher`, the PhpStorm launcher the mod finds, none by default;
+ * `choice`, the answer to its question, none for a dismissed one; `down`, whether the server fails from the start.
+ */
+async function mod(cwd: string, { serverPort = port as number | string, launcher = '', choice = undefined as string | undefined, down = false } = {}) {
     const hooks: { event: string; matcher: Record<string, string>; hook: Function }[] = [];
     const on = (event: string, matcher: any, hook?: Function) => {
         hooks.push(hook ? { event, matcher, hook } : { event, matcher: {}, hook: matcher });
@@ -46,10 +50,10 @@ async function mod(cwd: string, { serverPort = port, launcher = '', choice = und
     register(on as any, {} as any);
     const seen = { asked: [] as string[], fetched: [] as string[], submitted: [] as string[], appended: 0, run: [] as string[][], cwd: [] as (string | undefined)[], log: [] as string[], polls: [] as Function[] };
     let answer: object = {};
-    let down = false;
+    let root = cwd;
     const $ = {
         plugin: { name: 'local-reviews', root: ROOT },
-        env: { get: async (name: string) => name === 'CLAUDE_REVIEWS_PORT' ? String(serverPort) : undefined },
+        env: { get: async (name: string) => name === 'CLAUDE_REVIEWS_PORT' ? String(serverPort) : process.env[name] },
         fs: { read: (path: string) => readFile(path, 'utf8') },
         http: {
             fetch: async (url: string, init?: any) => {
@@ -72,9 +76,10 @@ async function mod(cwd: string, { serverPort = port, launcher = '', choice = und
         clock: {
             every: (_: number, poll: Function) => (seen.polls.push(poll), { cancel() {} }),
             after: (ms: number, fn: () => void) => { const timer = setTimeout(fn, ms); return { cancel: () => clearTimeout(timer) }; },
+            sleep: async () => {},
         },
-        prompt: { submit: async ({ text }: { text: string }) => (seen.submitted.push(text), { text, ...answer }) },
-        session: { append: async () => { seen.appended++; } },
+        prompt: { submit: async ({ text }: { text: string }) => (seen.submitted.push(text), { text, ...await answer }) },
+        session: { append: async () => { seen.appended++; }, root: async () => root },
         tool: { register: async ({ name }: { name: string }) => ({ tool: `mcp__local-reviews__${name}` }) },
         command: { register: async ({ name }: { name: string }) => ({ command: name }) },
         ui: {
@@ -102,10 +107,12 @@ async function mod(cwd: string, { serverPort = port, launcher = '', choice = und
     await fire('session.start', { cwd, surface: null, isInteractive: false });
     return {
         seen, fire, settle,
-        /** How the engine answers the next prompts: entered, or `{ drop }`. */
+        /** How the engine answers the next prompts: entered, or `{ drop }`, or once a promise settles. */
         answer: (value: object) => { answer = value; },
         /** Whether every request to the server fails with a 500. */
         down: (value: boolean) => { down = value; },
+        /** Moves the session's root, as /cd or EnterWorktree do. */
+        move: (dir: string) => { root = dir; },
         poll: async () => { for (const poll of seen.polls) await poll(); await settle(); },
         tool: (name: string, input: object = {}) => fire('tool.call', { tool: `mcp__local-reviews__${name}`, ...input }),
     };
@@ -162,6 +169,7 @@ test('list_open_threads gives, but for Resolved threads and threads without publ
 
     const result = JSON.parse((await claude.tool('list_open_threads')).result);
 
+    assert.equal(result.base, (await api('GET', `/api/sessions?worktree=${encodeURIComponent(dir)}&reanchor`)).reanchoredOn.base);
     assert.deepEqual(result.threads.map((thread: any) => [thread.id, thread.status]), [[1, 'waiting-for-claude'], [3, 'open']]);
     const { date } = result.threads[0].messages[0];
     assert.match(date, /^\d{4}-\d\d-\d\dT/);
@@ -191,7 +199,7 @@ test('list_open_threads gives a thread whose line changed in the working tree as
     assert.deepEqual([thread.outdated, thread.start, thread.end, thread.hunk], [true, 2, 2, '@@ -1,3 +1,3 @@\n one\n-two\n+2']);
 });
 
-test('on an approved session, reply_to_thread answers "session approuvée", and the mod stops relaunching for the worktree', async () => {
+test('on an approved session, reply_to_thread answers "session approved", and the mod stops relaunching for the worktree', async () => {
     const { dir, id } = await session();
     const claude = await mod(dir);
     await claude.tool('list_open_threads');
@@ -206,7 +214,7 @@ test('on an approved session, reply_to_thread answers "session approuvée", and 
     await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't2' });
     await claude.settle();
 
-    assert.deepEqual(replied, { deny: 'session approuvée' });
+    assert.deepEqual(replied, { deny: 'session approved' });
     assert.equal(claude.seen.submitted.length, 1);
 });
 
@@ -281,7 +289,8 @@ test('when the server does not answer, the tools and /review-local say so instea
     const opened = await claude.tool('open_thread', { file: 'a.txt', side: 'new', lines: [1], body: 'Hi' });
     const command = await claude.fire('command.run', { command: 'review-local', args: '' });
 
-    assert.ok(replied.deny && opened.deny, 'both tools deny');
+    assert.match(replied.deny, /does not answer/);
+    assert.match(opened.deny, /does not answer/);
     assert.match(command.text, /does not answer/);
 });
 
@@ -342,9 +351,10 @@ async function impostor(answer: (path: string, res: any) => void): Promise<{ por
     return { port: (other.address() as AddressInfo).port, paths };
 }
 
+const DATA = join(process.env.XDG_DATA_HOME!, 'claude-reviews');
 const LAUNCH = ['/bin/sh', '-c',
-    `d="\${XDG_DATA_HOME:-$HOME/.local/share}/claude-reviews"; mkdir -p "$d"; trap '' HUP; nohup node "$1" >> "$d/server.log" 2>&1 </dev/null &`,
-    'claude-reviews', `${ROOT}/server/main.ts`];
+    `mkdir -p "$2"; trap '' HUP; nohup node "$1" >> "$2/server.log" 2>&1 </dev/null &`,
+    'claude-reviews', `${ROOT}/server/main.ts`, DATA];
 
 const launches = (claude: { seen: { run: string[][] } }) => claude.seen.run.filter(argv => argv[0] !== 'git');
 
@@ -383,6 +393,9 @@ test('a claude-reviews server of an older version is shut down, then started aga
 
     assert.deepEqual(other.paths.slice(0, 2), ['GET /api/health', 'POST /api/shutdown']);
     assert.deepEqual(launches(claude), [LAUNCH]);
+    await until(() => other.paths.length > 2);
+    await claude.settle();
+    assert.deepEqual(claude.seen.log, [], 'the server answers after its launch');
 });
 
 test('a port answered by something other than claude-reviews is reported, and no server is started', async () => {
@@ -486,4 +499,155 @@ test('when a Send is relaunched, turn-complete is called at the end of the relau
     await claude.settle();
 
     assert.equal(calls(), 1);
+});
+
+test('a server that does not answer a few seconds after its launch is reported, with the path of its log and its last lines', async () => {
+    mkdirSync(DATA, { recursive: true });
+    appendFileSync(join(DATA, 'server.log'), 'Error: listen EADDRINUSE\n');
+
+    const claude = await mod(repo({ 'a.txt': 'a\n' }), { serverPort: await nobody() });
+    await until(() => claude.seen.log.length);
+
+    const log = claude.seen.log.join('\n');
+    assert.match(log, /did not start/);
+    assert.ok(log.includes(join(DATA, 'server.log')), log);
+    assert.match(log, /EADDRINUSE/);
+});
+
+test('after /cd or EnterWorktree into another worktree, the mod polls it and its tools write there, from a fresh state', async () => {
+    const first = await session(['First']);
+    const second = await session(['Second']);
+    const claude = await mod(first.dir);
+    const tops = () => claude.seen.run.filter(argv => argv.join(' ') === 'git rev-parse --show-toplevel').length;
+    const typed = (text: string) => claude.fire('prompt.submit', { text, wait: false, origin: { kind: 'composer' } });
+    await claude.tool('list_open_threads');
+    await typed('Hello');
+    await claude.poll();
+    assert.equal(tops(), 1, 'no git rev-parse while the root stays');
+
+    claude.move(second.dir);
+    await claude.poll();
+    await claude.poll();
+    const prompted = await typed('Again');
+    const replied = await claude.tool('reply_to_thread', { id: 1, body: 'Here' });
+
+    assert.equal(tops(), 2);
+    assert.deepEqual(replied, { result: 'Replied in thread 1' });
+    assert.equal((await api('GET', `/api/sessions/${second.id}`)).threads[0].messages.at(-1).body, 'Here');
+    assert.equal((await api('GET', `/api/sessions/${first.id}`)).threads[0].messages.length, 1);
+    assert.deepEqual(claude.seen.submitted, [], 'a Send made before the move wakes nobody, as at the start of a Claude session');
+    assert.deepEqual(prompted.context, [prompt(1)], 'the next prompt counts the threads of the new worktree');
+});
+
+test('a wake still in flight when the worktree changes settles without touching the watch of the new worktree', async () => {
+    const first = await session([]);
+    const second = await session([]);
+    const claude = await mod(first.dir);
+    let enter!: (value: object) => void;
+    claude.answer(new Promise(resolve => { enter = resolve; }));
+    await claude.poll();
+    await send(first.id, 'And this?');
+    await claude.poll();
+    assert.equal(claude.seen.submitted.length, 1);
+
+    claude.move(second.dir);
+    await claude.poll();
+    enter({});
+    await claude.settle();
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
+    await claude.settle();
+
+    assert.equal(claude.seen.fetched.filter(call => call.endsWith('/turn-complete')).length, 0);
+});
+
+test('a server error reaches the tools as its message', async () => {
+    const { dir } = await session();
+    const claude = await mod(dir);
+    claude.down(true);
+
+    const listed = await claude.tool('list_open_threads');
+    const replied = await claude.tool('reply_to_thread', { id: 1, body: 'Hi' });
+
+    assert.deepEqual([listed, replied], [{ deny: 'down' }, { deny: 'down' }]);
+});
+
+test('a 200 without threads reads as no answer: neither the poll nor the end of a turn fails, and the tools say the server does not answer', async () => {
+    const other = await impostor((path, res) => res.end(path === '/api/health' ? JSON.stringify({ app: 'claude-reviews', version: '0.10.0' }) : '{}'));
+    const claude = await mod(repo({ 'a.txt': 'a\n' }), { serverPort: other.port });
+
+    await claude.poll();
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
+    const listed = await claude.tool('list_open_threads');
+
+    assert.match(listed.deny, /does not answer/);
+});
+
+test('a first prompt the server does not answer leaves the count of waiting threads to the next prompt', async () => {
+    const { dir } = await session(['One']);
+    const claude = await mod(dir);
+    const typed = (text: string) => claude.fire('prompt.submit', { text, wait: false, origin: { kind: 'composer' } });
+
+    claude.down(true);
+    const first = await typed('Hello');
+    claude.down(false);
+    const second = await typed('Again');
+    const third = await typed('More');
+
+    assert.deepEqual([first.context, second.context, third.context], [undefined, [prompt(1)], undefined]);
+});
+
+test('a turn opened by a wake and interrupted, or ended on an error, calls no turn-complete, nor does the next turn in its place', async () => {
+    for (const reason of ['aborted', 'error']) {
+        const { dir, id } = await session([]);
+        const claude = await mod(dir);
+        const calls = () => claude.seen.fetched.filter(call => call === `POST /api/sessions/${id}/turn-complete`).length;
+        await claude.poll();
+        await send(id, 'And this?');
+        await claude.poll();
+
+        await claude.fire('turn.complete', { reason, answer: '', turnId: 't1', isAborted: reason === 'aborted' });
+        await claude.tool('reply_to_thread', { id: 1, body: 'Because' });
+        await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't2' });
+        await claude.settle();
+
+        assert.equal(calls(), 0, reason);
+    }
+});
+
+test('an empty CLAUDE_REVIEWS_PORT means port 7778', async () => {
+    const claude = await mod(repo({ 'a.txt': 'a\n' }), { serverPort: '', down: true });
+    await until(() => claude.seen.log.length);
+
+    assert.match(claude.seen.log.join('\n'), /http:\/\/127\.0\.0\.1:7778 answers/);
+});
+
+test('/review-local phpstorm without a PhpStorm launcher says so, and opens the browser', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir);
+
+    const command = await claude.fire('command.run', { command: 'review-local', args: 'phpstorm' });
+
+    assert.match(command.text, /PhpStorm launcher not found/);
+    assert.ok(claude.seen.run.some(argv => argv.includes(`http://127.0.0.1:${port}/s/${id}`)));
+});
+
+test('/review-local compares an answer typed under Other without case', async () => {
+    const { dir } = await session([]);
+    const claude = await mod(dir, { launcher: '/opt/bin/phpstorm', choice: 'phpstorm' });
+
+    const command = await claude.fire('command.run', { command: 'review-local', args: '' });
+
+    assert.match(command.text, /opened in PhpStorm/);
+});
+
+test('/review-local looks the launcher up and runs it from the plugin\'s root, by nohup and immune to SIGHUP, so that PhpStorm outlives the Claude session', async () => {
+    const { dir } = await session([]);
+    const claude = await mod(dir, { launcher: '/opt/bin/phpstorm' });
+
+    await claude.fire('command.run', { command: 'review-local', args: 'phpstorm' });
+
+    const lookup = claude.seen.run.findIndex(argv => argv[3] === 'phpstorm-launcher');
+    const detached = claude.seen.run.findIndex(argv => argv.includes('/opt/bin/phpstorm'));
+    assert.deepEqual([claude.seen.cwd[lookup], claude.seen.cwd[detached]], [ROOT, ROOT]);
+    assert.match(claude.seen.run[detached][2], /trap '' HUP; nohup "\$@"/);
 });

@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { removeRepos, repo, write } from '../server/fixture.ts';
+import { git, removeRepos, repo, vanish, write } from '../server/fixture.ts';
 
 test.afterAll(removeRepos);
 
@@ -249,4 +249,79 @@ test('a link of a message opens in a new tab', async ({ page, request }) => {
     const link = page.locator('.thread .markdown-body').getByRole('link', { name: 'docs' });
     await expect(link).toHaveAttribute('target', '_blank');
     await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+});
+
+test('a Refresh drops a selection whose lines changed, so a thread never opens on the line that took its number', async ({ page }) => {
+    const dir = repo({ 'a.txt': 'one\ntwo\n' });
+    write(dir, { 'a.txt': 'one\nTARGET\n' });
+    await open(page, dir);
+    await page.locator('.diff-line-add .diff-num').nth(1).click();
+    await page.getByRole('textbox').fill('About TARGET');
+    write(dir, { 'a.txt': 'zero\nhalf\none\nTARGET\n' });
+
+    await page.getByRole('button', { name: 'Refresh' }).click({ timeout: 4000 });
+
+    await expect(page.locator('.selected')).toHaveCount(0);
+    await page.locator('.diff-line-add:has-text("TARGET") .diff-num').nth(1).click();
+    await expect(page.getByRole('textbox')).toHaveValue('About TARGET');
+});
+
+test('a Pending message of a Resolved thread does not gray out Approve, and text typed but not added is named before an Approve', async ({ page, request }) => {
+    const dir = changed();
+    const { id, thread } = await claudeThread(request, dir, 2, 'Is this right?');
+    await request.post(`/api/sessions/${id}/threads/${thread}/messages`, { data: { author: 'me', body: 'Written, then resolved' } });
+    await request.post(`/api/sessions/${id}/threads/${thread}/resolve`, { data: {} });
+    await claudeThread(request, dir, 3, 'And this?');
+    await open(page, dir);
+    const approve = page.getByRole('button', { name: 'Approve' });
+    await expect(approve).toBeEnabled();
+    await page.getByRole('textbox').fill('Not added yet');
+    const asked = new Promise<string>(resolve => page.once('dialog', dialog => { resolve(dialog.message()); dialog.dismiss(); }));
+
+    await approve.click();
+
+    expect(await asked).toMatch(/not added/i);
+});
+
+test('a line break in a message shows as one, as on GitHub', async ({ page, request }) => {
+    const dir = changed();
+    await claudeThread(request, dir, 2, 'First line\nSecond line');
+    await open(page, dir);
+
+    await expect(page.locator('.thread .markdown-body br')).toHaveCount(1);
+});
+
+test('the page of a session closed because its worktree is gone shows every thread, none Outdated, and not the diff of a new worktree at its path', async ({ page, request }) => {
+    const main = repo({ 'a.txt': 'one\ntwo\n' });
+    const dir = `${main}/linked`;
+    git(main, 'worktree', 'add', '-q', dir);
+    const { id, thread } = await claudeThread(request, dir, 1, 'Resolved one');
+    await request.post(`/api/sessions/${id}/threads/${thread}/resolve`, { data: {} });
+    await claudeThread(request, dir, 2, 'Open one');
+    vanish(dir);
+    await request.get(`/api/sessions/${id}`);
+    git(main, 'init', '-q', dir);
+    write(dir, { 'new.txt': 'new\n' });
+
+    await page.goto(`/s/${id}`);
+
+    await expect(page.getByText('Closed', { exact: true })).toBeVisible();
+    await expect(page.locator('.thread')).toHaveCount(2);
+    await expect(page.locator('.thread').first()).toContainText('Resolved one');
+    await expect(page.getByText('Outdated')).toHaveCount(0);
+    await expect(page.getByText('new.txt')).toHaveCount(0);
+});
+
+test('a page left open on a session learns at its next poll that the worktree is gone, and shows it Closed', async ({ page, request }) => {
+    const main = repo({ 'a.txt': 'one\ntwo\n' });
+    const dir = `${main}/linked`;
+    git(main, 'worktree', 'add', '-q', dir);
+    await claudeThread(request, dir, 1, 'Here');
+    await open(page, dir);
+    await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
+
+    vanish(dir);
+
+    await expect(page.getByText('Closed', { exact: true })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('button', { name: 'Send' })).toHaveCount(0);
 });

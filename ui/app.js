@@ -12,7 +12,9 @@ const STATUS = {
 
 // Raw HTML shows as text, and only http, https and mailto links are clickable: a message can quote any HTML.
 // A link opens in a new tab, so following it does not lose a message being written.
+// A line break shows as one, as in a comment on GitHub.
 marked.use({
+    breaks: true,
     renderer: {
         html: ({ text }) => escape(text),
         link(token) {
@@ -178,7 +180,8 @@ function App() {
             // A closed session may outlive its worktree: without code to show, its threads show the code they were opened on.
             // Hide whitespace lives in the displayed diff; the preference only chooses the first one.
             const hideWhitespace = preference('hide-whitespace', 'false') === 'true';
-            const loaded = await api(`/api/sessions/${opened.id}/diff${hideWhitespace ? '?w=1' : ''}`).then(loaded => ({ ...loaded, hideWhitespace }))
+            // A new worktree may stand at the path of a session closed because its worktree was gone: its code is not the session's.
+            const loaded = opened.closedBecause ? undefined : await api(`/api/sessions/${opened.id}/diff${hideWhitespace ? '?w=1' : ''}`).then(loaded => ({ ...loaded, hideWhitespace }))
                 .catch(error => { if (!opened.approvedAt) throw error; });
             setSession(loaded ? await api(`/api/sessions/${opened.id}${placedOn(loaded)}`) : opened);
             setDiff(loaded ?? { ref: 'HEAD', files: [] });
@@ -204,8 +207,9 @@ function App() {
                 // Both ids name content: a mismatch is a change, whenever the displayed diff was loaded.
                 // Since my last review, only a Send moves the base, and a Send changes no code.
                 // An answer to a poll that left before a new diff was loaded (base chosen, Refresh) is stale.
+                // A write on its way may be a change of base, whose diff is not loaded yet.
                 api(`/api/sessions/${session.id}/tree`).then(now => {
-                    if (loaded && loaded === shown.current) setChanged(now.tree !== loaded.tree || (now.base !== loaded.base && loaded.ref !== 'last-review'));
+                    if (loaded && loaded === shown.current && writes.current === at && at % 2 === 0) setChanged(now.tree !== loaded.tree || (now.base !== loaded.base && loaded.ref !== 'last-review'));
                 }),
             ]).finally(() => { if (!stopped) timer = setTimeout(poll, 2000); });
         };
@@ -215,6 +219,14 @@ function App() {
             clearTimeout(timer);
         };
     }, [session?.id, session?.approvedAt]);
+    // Text typed and not added yet: leaving the page, or an Approve, loses it.
+    const typed = !!draft[0].trim() || Object.values(messages).some(text => text.trim());
+    useEffect(() => {
+        if (!typed) return;
+        const warn = event => event.preventDefault();
+        addEventListener('beforeunload', warn);
+        return () => removeEventListener('beforeunload', warn);
+    }, [typed]);
 
     if (error) return html`<div class="flash flash-error m-3">${error}</div>`;
     if (!diff) return html`<p class="m-3 color-fg-muted">Loading…</p>`;
@@ -250,6 +262,11 @@ function App() {
         if (n !== asked.current) return null;
         setSession(placed);
         setDiff(fresh);
+        // A selection names lines by their numbers: it stays while they hold the same text in the new diff, as my draft does.
+        setSelection(current => current && [...Array(current.end - current.start + 1)].every((_, i) => {
+            const text = lineText(diff, current, current.start + i);
+            return text !== undefined && text === lineText(fresh, current, current.start + i);
+        }) ? current : null);
         if (!displayed) setChanged(false);
         return fresh;
     };
@@ -292,14 +309,16 @@ function App() {
         closeSettings();
         load(value, diff).then(fresh => { if (fresh) setPreference('hide-whitespace', String(value)); }, error => setFlash(error.message));
     };
-    const pending = session.threads.some(thread => thread.messages.some(message => !message.date));
+    // A Pending message of a Resolved thread waits for its Unresolve, which an Approve gives up.
+    const pending = session.threads.some(thread => !thread.resolved && thread.messages.some(message => !message.date));
     const approve = () => {
         const open = session.threads.filter(thread => !thread.resolved).length;
-        if (confirm(`Approve this session with ${open} open thread${open === 1 ? "" : "s"}?`)) act('/approve', {});
+        const lost = typed ? ' The text typed and not added will be lost.' : '';
+        if (confirm(`Approve this session with ${open} open thread${open === 1 ? "" : "s"}?${lost}`)) act('/approve', {});
     };
-    // A file out of the diff still shows its threads, while one is not Resolved.
+    // A file out of the diff still shows its threads, while one is not Resolved; without any code shown, all of them.
     const changedPaths = new Set(diff.files.map(file => file.path));
-    const files = [...diff.files, ...[...new Set(session.threads.filter(thread => !thread.resolved).map(thread => thread.anchor.path))].filter(path => !changedPaths.has(path))
+    const files = [...diff.files, ...[...new Set(session.threads.filter(thread => !thread.resolved || !diff.tree).map(thread => thread.anchor.path))].filter(path => !changedPaths.has(path))
         .map(path => ({ path, status: 'unchanged', binary: false, collapsed: false, additions: 0, deletions: 0, hunks: [] }))];
     // The answer placed on the displayed tree keeps only the files whose content did not change since they were marked.
     const isViewed = path => Object.hasOwn(session.viewed ?? {}, path);
@@ -331,7 +350,7 @@ function App() {
                             ${[['Unified', false], ['Split', true]].map(([name, value]) => html`
                                 <label class="dropdown-item"><input type="radio" name="diff-view" class="mr-2" checked=${split === value} onChange=${() => chooseView(value)} />${name}</label>`)}
                             <div class="dropdown-divider"></div>
-                            <label class="dropdown-item"><input type="checkbox" class="mr-2" checked=${!!diff.hideWhitespace} onChange=${event => chooseWhitespace(event.target.checked)} />Hide whitespace</label>
+                            <label class="dropdown-item"><input type="checkbox" class="mr-2" checked=${!!diff.hideWhitespace} disabled=${busy} onChange=${event => chooseWhitespace(event.target.checked)} />Hide whitespace</label>
                         </div>
                     </details>
                     ${diff.files.length > 0 && html`
@@ -485,6 +504,8 @@ function FileDiff({ id, file, viewed, threads, review }) {
     // The sides whose numbers show on a single column of code: both in Unified, none in the two halves of Split.
     // As on GitHub, an added or deleted file would leave a half empty in Split: it takes the whole width, with the numbers of its only side.
     const sides = !review.split ? ['old', 'new'] : { added: ['new'], deleted: ['old'] }[file.status] ?? null;
+    // Folded, or its diff not loaded, a file still tells it holds threads.
+    const unresolved = threads.filter(thread => !thread.resolved).length;
     return html`
         <section id=${id} data-path=${file.path} class="Box mb-3">
             <div class=${`Box-header file-header py-2 pl-2 d-flex flex-items-center${folded ? ' border-bottom-0 rounded-2' : ''}`}>
@@ -492,6 +513,7 @@ function FileDiff({ id, file, viewed, threads, review }) {
                     ${octicon(folded ? 'chevron-right' : 'chevron-down')}
                 </button>
                 <span class="text-mono text-bold">${file.path}</span>
+                ${unresolved > 0 && html`<span class="Counter ml-2">${unresolved} thread${unresolved === 1 ? '' : 's'}</span>`}
                 <button class="btn-octicon ml-1 mr-auto" aria-label="Copy file path"
                     onClick=${() => Promise.resolve().then(() => navigator.clipboard.writeText(file.path)).catch(() => {})}>${octicon('copy')}</button>
                 <span class="color-fg-success mr-1">+${file.additions}</span>
@@ -508,7 +530,7 @@ function FileDiff({ id, file, viewed, threads, review }) {
                     </label>`}
             </div>
             <div hidden=${folded}>
-                ${threads.filter(thread => !thread.at).map(thread => html`<div key=${thread.id}>${threadBox(thread, review)}</div>`)}
+                ${threads.filter(thread => !thread.at || !open).map(thread => html`<div key=${thread.id}>${threadBox(thread, review)}</div>`)}
                 ${file.binary ? html`<div class="Box-body color-fg-muted">Binary file not shown</div>`
                     : hunks.length === 0 ? file.status !== 'unchanged' && html`<div class="Box-body color-fg-muted">${file.status === 'modified' ? 'File mode changed' : 'Empty file'}</div>`
                     : !open ? html`<div class="Box-body text-center"><button class="btn-link" onClick=${() => setOpen(true)}>Load diff</button></div>`
@@ -561,8 +583,15 @@ function gaps(hunks, lineCount) {
     });
 }
 
-function threadBox(thread, { message, fold, readOnly, busy, act, avatar }) {
-    return html`<${Thread} thread=${thread} draft=${message(thread.id)} fold=${fold(thread)} readOnly=${readOnly} busy=${busy} act=${act} avatar=${avatar} />`;
+function threadBox(thread, { message, fold, readOnly, busy, act, avatar, diff }) {
+    // Outdated says the lines are gone from the code shown: a session without code shows none.
+    return html`<${Thread} thread=${thread} draft=${message(thread.id)} fold=${fold(thread)} readOnly=${readOnly} busy=${busy} act=${act} avatar=${avatar} outdated=${!thread.at && !!diff.tree} />`;
+}
+
+/** The text of line `no` on `side` of the file at `path` in the hunks of a diff; undefined when they do not show it. */
+function lineText(diff, { path, side }, no) {
+    const key = side === 'new' ? 'newNo' : 'oldNo';
+    return diff.files.find(file => file.path === path)?.hunks.flatMap(hunk => hunk.lines).find(line => line[key] === no)?.text;
 }
 
 function language(path) {
@@ -694,7 +723,7 @@ function rows(file, threads, review) {
         .filter(Boolean);
 }
 
-function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act, avatar }) {
+function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act, avatar, outdated }) {
     const [label, color] = STATUS[thread.status] ?? [];
     const { side } = thread.anchor;
     const { start, end } = thread.at ?? thread.anchor;
@@ -705,7 +734,7 @@ function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act, ava
             <summary class="Box-header py-2">
                 <span class="text-bold">${start === end ? `Line ${sign}${start}` : `Lines ${sign}${start} to ${sign}${end}`}</span>
                 ${label && html`<span class=${`Label ${color} ml-2`}>${label}</span>`}
-                ${!thread.at && html`<span class="Label Label--secondary ml-2">Outdated</span>`}
+                ${outdated && html`<span class="Label Label--secondary ml-2">Outdated</span>`}
             </summary>
             ${!thread.at && html`<${Excerpt} anchor=${thread.anchor} />`}
             ${thread.messages.map(message => html`

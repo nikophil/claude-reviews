@@ -102,7 +102,15 @@ export function start(port: number, notify = (argv: string[]) => { execFile(argv
                 checkPlacement(url.searchParams);
                 const answer = await route(req.method!, url, body, notify);
                 // A write recorded answers its success, even unplaced: a retry would record it twice, and the next poll places the threads.
-                return json(res, 200, await placed(answer, url.searchParams).catch(error => { if (req.method === 'GET') throw error; return answer; }));
+                // A session closed because its worktree is gone has no code left to place its threads on.
+                return json(res, 200, await placed(answer, url.searchParams).catch(error => {
+                    if (req.method === 'GET' && !(answer as { approvedAt?: string | null }).approvedAt) throw error;
+                    return answer;
+                }));
+            }
+            // A link from another site may open a page, but not the session of a worktree of its choice, which runs git there.
+            if (url.searchParams.has('worktree') && site !== undefined && site !== 'same-origin' && site !== 'none') {
+                return json(res, 403, { error: `Sec-Fetch-Site ${site} cannot open the session of a worktree` });
             }
             // The URL parser already resolves "..", so the joined path stays inside UI.
             // The page of a session, /s/<id>, is the same page as /, which reads the id from its URL.
@@ -110,7 +118,8 @@ export function start(port: number, notify = (argv: string[]) => { execFile(argv
             const type = TYPES[extname(path)];
             if (!type) throw Object.assign(new Error('Not found'), { code: 'ENOENT' });
             const content = await readFile(path);
-            res.writeHead(200, { 'content-type': type }).end(content);
+            // No other site may frame the page and click its buttons, and no script but the page's own runs in it.
+            res.writeHead(200, { 'content-type': type, 'content-security-policy': "script-src 'self'; object-src 'none'; frame-ancestors 'none'" }).end(content);
         } catch (error) {
             const { code, status } = error as NodeJS.ErrnoException & { status?: number };
             json(res, status ?? (code === 'ENOENT' ? 404 : 500), { error: (error as Error).message });
@@ -156,6 +165,6 @@ async function route(method: string, { pathname: path, searchParams }: URL, body
 }
 
 if (import.meta.main) {
-    const server = await start(Number(process.env.CLAUDE_REVIEWS_PORT ?? 7778));
+    const server = await start(Number(process.env.CLAUDE_REVIEWS_PORT || 7778));
     console.log(`claude-reviews listening on http://127.0.0.1:${(server.address() as AddressInfo).port}`);
 }

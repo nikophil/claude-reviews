@@ -263,3 +263,13 @@ test('GET /api/me keeps a failure of gh or of the name 60 s, then reads them aga
 test('an idle connection stays open longer than the JDK HTTP client keeps it, 30 s: the IDE never writes on a connection the server is closing', () => {
     assert.ok(server.keepAliveTimeout > 30_000, String(server.keepAliveTimeout));
 });
+
+test('a link from another site cannot open the session of a worktree, and no other site may frame the page', async () => {
+    const host = `127.0.0.1:${port}`;
+    const path = `/?worktree=${encodeURIComponent(repo({ 'a.txt': 'a\n' }))}`;
+
+    for (const site of ['cross-site', 'same-site']) assert.equal((await request(path, { host, 'sec-fetch-site': site })).status, 403, site);
+    const opened = await request(path, { host, 'sec-fetch-site': 'none' });
+    assert.equal(opened.status, 200);
+    assert.match(String(opened.headers['content-security-policy']), /frame-ancestors 'none'/);
+});

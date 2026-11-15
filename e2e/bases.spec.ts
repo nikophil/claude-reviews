@@ -180,3 +180,21 @@ test('a poll answered after a change of base shows no banner', async ({ page }) 
 
     await expect(banner(page)).toBeHidden();
 });
+
+test('a slow change of base shows no banner while its diff loads', async ({ page }) => {
+    const dir = changed();
+    git(dir, 'branch', 'other');
+    git(dir, 'commit', '-qam', 'Committed');
+    await open(page, dir);
+    await expect(page.getByText('0 files changed')).toBeVisible();
+    await page.route('**/diff*', async route => {
+        await new Promise(resolve => setTimeout(resolve, 4000));
+        await route.continue();
+    });
+
+    await base(page).selectOption('refs/heads/other');
+    await page.waitForTimeout(3000);
+
+    // Checked once, before the diff loads: a retried check would pass once it loaded.
+    expect(await banner(page).isVisible()).toBe(false);
+});
