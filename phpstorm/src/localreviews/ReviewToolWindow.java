@@ -293,7 +293,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             new DoubleClickListener() {
                 @Override
                 protected boolean onDoubleClick(MouseEvent event) {
-                    if (checkbox(event) == null) openSelected(service.diffView(), true);
+                    if (checkbox(event) == null) WriteIntentReadAction.run(() -> openSelected(service.diffView(), true));
                     return true;
                 }
             }.installOn(tree);
@@ -309,7 +309,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             tree.addKeyListener(new KeyAdapter() {
                 @Override
                 public void keyPressed(KeyEvent e) {
-                    if (e.getKeyCode() == KeyEvent.VK_ENTER) openSelected(service.diffView(), true);
+                    if (e.getKeyCode() == KeyEvent.VK_ENTER) WriteIntentReadAction.run(() -> openSelected(service.diffView(), true));
                     if (e.getKeyCode() == KeyEvent.VK_SPACE && selectedFile() != null) toggleViewed(selectedFile());
                 }
             });
@@ -365,8 +365,9 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                 });
             PopupHandler.installPopupMenu(tree, menu, "LocalReviewsFiles");
             // A click, or the arrows, show the file or the thread selected, the focus kept in the tree; a double-click or Enter takes it there.
+            // Bare Swing listeners: finding a file the VFS does not know yet, as one Claude just wrote, refreshes it under the write-intent lock.
             tree.addTreeSelectionListener(e -> {
-                if (!rebuilding) openSelected(service.diffView(), false);
+                if (!rebuilding) WriteIntentReadAction.run(() -> openSelected(service.diffView(), false));
             });
 
             service.listen(changed -> show(changed, false), toolWindow.getDisposable());

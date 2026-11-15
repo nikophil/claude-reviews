@@ -8,6 +8,7 @@ import com.intellij.driver.sdk.ui.components.common.IdeaFrameUI
 import com.intellij.driver.sdk.ui.components.common.codeEditor
 import com.intellij.driver.sdk.ui.components.common.gutter
 import com.intellij.driver.sdk.ui.components.common.ideFrame
+import com.intellij.driver.sdk.ui.components.common.JEditorUiComponent
 import com.intellij.driver.sdk.ui.components.elements.button
 import com.intellij.driver.sdk.ui.components.elements.radioButton
 import com.intellij.driver.sdk.ui.components.elements.tree
@@ -134,6 +135,12 @@ class ReviewTest {
             return JsonParser.parseString(response.body()).asJsonObject
         }
 
+        private fun post(path: String, body: String): JsonObject {
+            val response = http.send(request(path).header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
+            check(response.statusCode() == 200) { "POST $path: ${response.statusCode()} ${response.body()}" }
+            return JsonParser.parseString(response.body()).asJsonObject
+        }
+
         /** The open session of the worktree, as the server has it. */
         private fun session(): JsonObject = get("/api/sessions?worktree=${encode(worktree)}")
 
@@ -247,5 +254,31 @@ class ReviewTest {
         frame { tree("//div[@class='Tree']").rightClickPath("a.php", "#1", fullMatch = false) }
         driver.ui.x("//div[@class='ActionMenuItem' and @text='Resolve']").click()
         awaitSession("the thread is Resolved") { it.getAsJsonArray("threads")[0].asJsonObject["resolved"].asBoolean }
+    }
+
+    @Test
+    @Order(8)
+    fun `in the Diff view, a click on a thread of the file shown scrolls its diff there, an added file too`() {
+        Files.createDirectories(Path.of(worktree, "src"))
+        Files.writeString(Path.of(worktree, "src/c.php"), "<?php\n" + (1..60).joinToString("") { "// line $it\n" })
+        // As Claude does through open_thread: anchored on the base of the session and the working tree.
+        post("/api/sessions/${session()["id"].asString}/threads", """{ "author": "claude", "path": "src/c.php", "side": "new", "start": 50, "end": 50, "body": "Here" }""")
+        frame {
+            tree("//div[@class='Tree']").apply {
+                waitOneContainsText("Line +50")
+                clickPath("src", "c.php", fullMatch = false)
+            }
+            // The editor of the diff of c.php, beside the one of a.php that step 2 opened.
+            fun diff() = xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java).list().singleOrNull { "// line 60" in it.text }
+            repeat(50) { if (diff() == null) Thread.sleep(200) }
+            tree("//div[@class='Tree']").clickPath("src", "c.php", "Line +50", fullMatch = false)
+            var line = -1
+            repeat(50) {
+                line = diff()!!.editor.getCaretModel().getLogicalPosition().getLine()
+                if (line == 49) return@frame
+                Thread.sleep(200)
+            }
+            assertEquals(49, line, "the caret of the diff on the line of the thread")
+        }
     }
 }
