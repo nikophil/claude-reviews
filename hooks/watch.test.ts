@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { due, look, notified, resumed, sending, start, submitted, turnEnded, type Watch } from './watch.ts';
+import { due, look, notified, resumed, sending, start, status, submitted, turnEnded, type Watch } from './watch.ts';
 
 /** What the glue does once the decision says a prompt is due: submit it, then learn whether it entered. */
 function submit(watch: Watch, dropped = false): Watch {
@@ -101,4 +101,18 @@ test('a relaunch dropped, then made needless by threads resolved in the UI, leav
     watch = turnEnded(watch, { id: 's', sends: 1, waiting: 0 });
 
     assert.equal(notified(watch).session, null);
+});
+
+test('the status line counts the threads waiting for Claude, adds a wake held by a drop, and is undefined when none waits', () => {
+    let watch = look(start, { id: 's', sends: 0, waiting: 0 });
+    assert.equal(status(watch), undefined);
+    assert.equal(status(look(start, null)), undefined);
+    assert.equal(status(look(watch, { id: 's', sends: 0, waiting: 1 })), 'claude-reviews · 1 thread waiting for Claude');
+
+    watch = look(watch, { id: 's', sends: 1, waiting: 2 });
+    assert.equal(status(watch), 'claude-reviews · 2 threads waiting for Claude');
+    watch = submit(watch, true);
+    assert.equal(status(watch), 'claude-reviews · 2 threads waiting for Claude · wake held until the next prompt');
+    assert.equal(status(look(watch, { id: 's', sends: 1, waiting: 0 })), undefined, 'nothing waiting, nothing held');
+    assert.equal(status(submit(resumed(watch))), 'claude-reviews · 2 threads waiting for Claude');
 });

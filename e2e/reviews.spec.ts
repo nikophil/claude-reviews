@@ -63,3 +63,17 @@ test('an approved session whose worktree is gone afterwards shows Approved, not 
     await expect(page.getByText('Closed', { exact: true })).toHaveCount(0);
     await expect(page.getByText(/The worktree is gone/)).toHaveCount(0);
 });
+
+test('the Closed tab of Reviews lists the closed sessions, the latest first, each a link to its page', async ({ page, request }) => {
+    const closed = await withThread(request, 'claude', 'Done');
+    await request.post(`/api/sessions/${closed.id}/approve`, { data: {} });
+
+    await page.goto('/');
+    await page.getByRole('tab', { name: 'Closed' }).click();
+
+    const row = page.getByRole('link', { name: new RegExp(basename(closed.dir)) });
+    await expect(row).toContainText('Approved');
+    await row.click();
+    await expect(page).toHaveURL(`/s/${closed.id}`);
+    await expect(page.getByText('Approved', { exact: true })).toBeVisible();
+});

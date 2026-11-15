@@ -1,7 +1,10 @@
 import type { EngineInterface, Register } from 'claude-code';
-import { due, look, notified, prompt, resumed, sending, start, submitted, turnEnded, type Seen, type Watch } from './watch.ts';
+import { due, look, notified, prompt, resumed, sending, start, status, submitted, turnEnded, type Seen, type Watch } from './watch.ts';
 
 type Session = { id: string; sends: number; reanchoredOn?: { base: string; tree: string }; threads: { id: number; status: string | null; anchor: any; at?: { start: number; end: number } | null; messages: { author: string; body: string; date: string | null }[] }[] };
+
+const SUGGESTION = 'A message of the user may hold a ```suggestion code block, the code the user proposes in place of the lines start to end of the thread, on side new: '
+    + 'apply it to the working tree unless you disagree, then reply in the thread.';
 
 const TOOLS = [
     {
@@ -9,12 +12,14 @@ const TOOLS = [
         description: 'Lists the claude-reviews threads of this worktree that are not resolved: those waiting for your reply (status waiting-for-claude) and those you answered last (status open), with their anchor and published messages. '
             + 'The old side of a thread is the base of the session, the branch or snapshot the user reviews, whose commit is base: read a file there with git show <base>:<file>; the new side is the working tree. '
             + 'start and end are the range reanchored on that base for side old, on the working tree for side new, and lines the lines the thread was opened on. '
-            + 'outdated is true when those lines are no longer found: start and end are then the original range, and hunk the original diff excerpt, as unified diff (null if the lines were out of the diff).',
+            + 'outdated is true when those lines are no longer found: start and end are then the original range, and hunk the original diff excerpt, as unified diff (null if the lines were out of the diff). '
+            + 'A thread with start and end at 0 is on the whole file, without lines, and outdated only once the file is gone. '
+            + SUGGESTION,
         inputSchema: { type: 'object', properties: {} },
     },
     {
         name: 'reply_to_thread',
-        description: 'Replies in a claude-reviews thread, published at once. Reply in every thread waiting for you; change the code when a thread asks for it.',
+        description: `Replies in a claude-reviews thread, published at once. Reply in every thread waiting for you; change the code when a thread asks for it. ${SUGGESTION}`,
         inputSchema: {
             type: 'object',
             properties: { id: { type: 'integer', description: 'The thread id, from list_open_threads' }, body: { type: 'string', description: 'Markdown' } },
@@ -23,16 +28,16 @@ const TOOLS = [
     },
     {
         name: 'open_thread',
-        description: 'Opens a claude-reviews thread on lines of a file of this worktree, only when the user asks you to review your diff or to open threads.',
+        description: 'Opens a claude-reviews thread on lines of a file of this worktree, or on the whole file without lines, only when the user asks you to review your diff or to open threads.',
         inputSchema: {
             type: 'object',
             properties: {
                 file: { type: 'string', description: 'The path from the top of the worktree' },
                 side: { enum: ['old', 'new'], description: 'new for the working tree, old for the base of the session, the one list_open_threads gives' },
-                lines: { type: 'array', items: { type: 'integer' }, minItems: 1, maxItems: 2, description: '[start, end], 1-based and inclusive' },
+                lines: { type: 'array', items: { type: 'integer' }, minItems: 1, maxItems: 2, description: '[start, end], 1-based and inclusive; left out for the whole file' },
                 body: { type: 'string', description: 'Markdown' },
             },
-            required: ['file', 'side', 'lines', 'body'],
+            required: ['file', 'side', 'body'],
         },
     },
 ];
@@ -47,6 +52,8 @@ let session: string | undefined;
 let watch = start;
 /** Whether the first prompt of the Claude session entered, with the threads waiting for Claude. */
 let greeted = false;
+/** The status line on screen, undefined for none. */
+let shown: string | undefined;
 
 const silent = () => `claude-reviews does not answer on ${base}`;
 
@@ -174,7 +181,7 @@ async function openThread($: EngineInterface, input: { file: string; side: strin
             session = opened.body.id as string;
         }
         const res = await api($, 'POST', `/api/sessions/${session}/threads`, {
-            author: 'claude', path: input.file, side: input.side, start: input.lines?.[0], end: input.lines?.at(-1), body: input.body,
+            author: 'claude', path: input.file, side: input.side, start: input.lines?.[0] ?? 0, end: input.lines?.at(-1) ?? 0, body: input.body,
         });
         if (res.status === 200) return { result: `Opened thread ${res.body.threads.at(-1).id}` };
         if (res.body.error !== 'session approved' || retry) return { deny: res.body.error };
@@ -191,7 +198,7 @@ function excerpt(hunk: { header: string; lines: { type: 'context' | 'add' | 'del
 // ponytail: the matchers spell the plugin's name, local-reviews; renaming the plugin means renaming them.
 export const register: Register = on => {
     // Each register starts afresh, as a reloaded module does: the node tests register it several times.
-    [base, root, worktree, session, watch, greeted] = ['http://127.0.0.1:7778', undefined, undefined, undefined, start, false];
+    [base, root, worktree, session, watch, greeted, shown] = ['http://127.0.0.1:7778', undefined, undefined, undefined, start, false, undefined];
 
     // ponytail: a Claude session that starts out of a worktree leaves the mod off, even once /cd takes it into one.
     on('session.start', async ($, e, next) => {
@@ -209,6 +216,7 @@ export const register: Register = on => {
             await follow($);
             const found = await find($);
             if ('open' in found) apply($, look(watch, seen(found.open)));
+            if (status(watch) !== shown) $.ui.status(shown = status(watch));
         });
         return next(e);
     });

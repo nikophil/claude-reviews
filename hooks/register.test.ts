@@ -48,7 +48,10 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
         return { catch() {} };
     };
     register(on as any, {} as any);
-    const seen = { asked: [] as string[], fetched: [] as string[], submitted: [] as string[], appended: 0, run: [] as string[][], cwd: [] as (string | undefined)[], log: [] as string[], polls: [] as Function[] };
+    const seen = {
+        asked: [] as string[], fetched: [] as string[], submitted: [] as string[], appended: 0, run: [] as string[][], cwd: [] as (string | undefined)[], log: [] as string[], polls: [] as Function[],
+        status: [] as (string | undefined)[], tools: [] as { name: string; description: string; inputSchema: any }[],
+    };
     let answer: object = {};
     let root = cwd;
     const $ = {
@@ -80,10 +83,11 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
         },
         prompt: { submit: async ({ text }: { text: string }) => (seen.submitted.push(text), { text, ...await answer }) },
         session: { append: async () => { seen.appended++; }, root: async () => root },
-        tool: { register: async ({ name }: { name: string }) => ({ tool: `mcp__local-reviews__${name}` }) },
+        tool: { register: async (tool: { name: string; description: string; inputSchema: any }) => (seen.tools.push(tool), { tool: `mcp__local-reviews__${tool.name}` }) },
         command: { register: async ({ name }: { name: string }) => ({ command: name }) },
         ui: {
             log: (text: string) => seen.log.push(text),
+            status: (text: string | undefined) => seen.status.push(text),
             ask: async (question: string) => {
                 seen.asked.push(question);
                 if (choice === undefined) throw new Error('dismissed');
@@ -650,4 +654,80 @@ test('/review-local looks the launcher up and runs it from the plugin\'s root, b
     const detached = claude.seen.run.findIndex(argv => argv.includes('/opt/bin/phpstorm'));
     assert.deepEqual([claude.seen.cwd[lookup], claude.seen.cwd[detached]], [ROOT, ROOT]);
     assert.match(claude.seen.run[detached][2], /trap '' HUP; nohup "\$@"/);
+});
+
+test('the poll pins "claude-reviews · N threads waiting for Claude" by $.ui.status, without a request of its own, and only when the text changes', async () => {
+    const { dir } = await session(['One', 'Two']);
+    const claude = await mod(dir);
+    const before = claude.seen.fetched.length;
+
+    await claude.poll();
+    assert.deepEqual(claude.seen.fetched.slice(before), ['GET /api/sessions']);
+    await claude.poll();
+    await claude.tool('reply_to_thread', { id: 1, body: 'Done' });
+    await claude.poll();
+    await claude.tool('reply_to_thread', { id: 2, body: 'Done' });
+    await claude.poll();
+    await claude.poll();
+
+    assert.deepEqual(claude.seen.status, ['claude-reviews · 2 threads waiting for Claude', 'claude-reviews · 1 thread waiting for Claude', undefined]);
+});
+
+test('the status line says nothing without a session, and says that a dropped wake waits for the next prompt', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir);
+    await claude.poll();
+    assert.deepEqual(claude.seen.status, []);
+
+    claude.answer({ drop: 'busy' });
+    await send(id, 'And this?');
+    await claude.poll();
+    await claude.poll();
+    claude.answer({});
+    await claude.fire('prompt.submit', { text: 'Hello', wait: false, origin: { kind: 'composer' } });
+    await claude.poll();
+
+    assert.deepEqual(claude.seen.status, [
+        'claude-reviews · 1 thread waiting for Claude',
+        'claude-reviews · 1 thread waiting for Claude · wake held until the next prompt',
+        'claude-reviews · 1 thread waiting for Claude',
+    ]);
+});
+
+test('list_open_threads and reply_to_thread tell Claude that a suggestion block replaces the lines of the thread on side new, to apply unless he disagrees, then reply', async () => {
+    const claude = await mod(repo({ 'a.txt': 'a\n' }));
+
+    for (const name of ['list_open_threads', 'reply_to_thread']) {
+        const { description } = claude.seen.tools.find(tool => tool.name === name)!;
+        assert.match(description, /```suggestion/, name);
+        assert.match(description, /apply it to the working tree unless you disagree, then reply in the thread/, name);
+    }
+});
+
+test('list_open_threads gives a thread on a whole file with start and end at 0 and no lines, and says so', async () => {
+    const { dir, id } = await session([]);
+    const shown = await api('GET', `/api/sessions/${id}/diff`);
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'me', base: shown.base, tree: shown.tree, path: 'a.txt', side: 'new', start: 0, end: 0, body: 'The whole file' });
+    await api('POST', `/api/sessions/${id}/send`, { tree: shown.tree });
+    const claude = await mod(dir);
+
+    const [thread] = JSON.parse((await claude.tool('list_open_threads')).result).threads;
+
+    assert.deepEqual([thread.outdated, thread.start, thread.end, thread.lines], [false, 0, 0, []]);
+    assert.match(claude.seen.tools.find(tool => tool.name === 'list_open_threads')!.description, /start and end at 0 is on the whole file/);
+});
+
+test('open_thread without lines opens a thread on the whole file, start and end at 0, and says so', async () => {
+    const dir = repo({ 'a.txt': 'one\ntwo\n' });
+    const claude = await mod(dir);
+
+    const opened = await claude.tool('open_thread', { file: 'a.txt', side: 'new', body: 'The whole file' });
+
+    const { anchor } = (await api('GET', `/api/sessions?worktree=${encodeURIComponent(dir)}`)).threads[0];
+    assert.deepEqual(opened, { result: 'Opened thread 1' });
+    assert.deepEqual([anchor.start, anchor.end, anchor.lines], [0, 0, []]);
+    const tool = claude.seen.tools.find(tool => tool.name === 'open_thread')!;
+    assert.deepEqual(tool.inputSchema.required, ['file', 'side', 'body']);
+    assert.match(tool.description, /whole file/);
+    assert.match(tool.inputSchema.properties.lines.description, /whole file/);
 });

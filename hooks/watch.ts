@@ -27,6 +27,13 @@ export function prompt(waiting: number): string {
     return `claude-reviews : ${threads}. Lis-les avec list_open_threads, réponds dans chacun avec reply_to_thread, et modifie le code quand un thread le demande.`;
 }
 
+/** The status line: the threads waiting for Claude, and a wake a drop holds; undefined when none waits. */
+export function status(watch: Watch): string | undefined {
+    if (!watch.waiting) return undefined;
+    const threads = watch.waiting > 1 ? `${watch.waiting} threads` : '1 thread';
+    return `claude-reviews · ${threads} waiting for Claude${watch.dropped && watch.owed ? ' · wake held until the next prompt' : ''}`;
+}
+
 /** A look at the session: a new Send wakes Claude if threads wait for him; nothing waiting, nothing is owed. */
 export function look(watch: Watch, seen: Seen): Watch {
     if (!seen) return { ...watch, session: null, waiting: 0, owed: null };

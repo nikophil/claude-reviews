@@ -62,6 +62,8 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 | `POST /api/shutdown` `{}` | Arrête le serveur : il cesse d'écouter avant de répondre. |
 | `GET /api/sessions` | Les sessions ouvertes, pour Reviews : `[{ id, worktree, repo, branch, waitingForClaude, updatedAt }]`, Waiting for Claude d'abord, puis le reste, la plus récemment active d'abord à égalité. |
 | `GET /api/sessions?worktree=<chemin>[&claude]` | La session ouverte du worktree, sans en créer : 404 sans session ouverte ; `&claude` vient du mod, et dit qu'une Claude session tourne dans ce worktree, même sans session ouverte. |
+| `GET /api/sessions?closed` | Les sessions closes, pour l'onglet Closed de Reviews : `[{ id, worktree, repo, approvedAt, closedBecause }]`, la plus récemment close d'abord. |
+| `GET /api/inbox` | Une entrée par session ouverte, pour les sources locales de gh-notif : `[{ repo, branch, title, url, openThreads, awaitingMe, lastActor, updatedAt }]`, où `awaitingMe` compte les threads où Claude a parlé en dernier. |
 | `POST /api/sessions` `{ worktree }` | Renvoie la session ouverte du worktree, ou en crée une. |
 | `GET /api/sessions/<id>` | La session, ouverte ou approuvée. |
 | `GET /api/sessions/<id>/diff[?base=&tree=][&w=1]` | Le diff du working tree de la session contre sa base : `{ ref, base, tree, files }`, où `ref` est la base choisie, ou `HEAD` quand elle ne désigne plus rien, et `base` et `tree` les ids de la base et du tree affichés ; avec `?base=&tree=`, `{ base, tree, files }`, le diff de ces ids ; avec `w=1` (Hide whitespace), `git diff -w`. |
@@ -72,6 +74,8 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 | `POST /api/sessions/<id>/base` `{ base }` | Choisit la base de la session parmi les `ref` non grisées de `/bases`. |
 | `POST /api/sessions/<id>/threads` `{ author, path, side, start, end, body, base?, tree? }` | Ouvre un thread avec son premier message (`open_thread` pour Claude). |
 | `POST /api/sessions/<id>/threads/<n>/messages` `{ author, body }` | Ajoute un message (`reply_to_thread` pour Claude). |
+| `POST /api/sessions/<id>/threads/<n>/messages/<i>` `{ body }` | Modifie mon message Pending de rang `i`, à partir de 0, dans le thread. |
+| `POST /api/sessions/<id>/threads/<n>/messages/<i>/delete` `{}` | Supprime mon message Pending de rang `i` ; un thread qui n'a plus de message part avec lui. |
 | `POST /api/sessions/<id>/threads/<n>/resolve` `{}` | Résout le thread. |
 | `POST /api/sessions/<id>/viewed` `{ path, tree, viewed }` | Marque le fichier Viewed sur le tree affiché, ou le démarque. |
 | `POST /api/sessions/<id>/threads/<n>/unresolve` `{}` | Rouvre le thread Resolved. |
@@ -103,7 +107,9 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - Les PR viennent de `gh pr list` dans le worktree, gardées 60 s ; un `gh` en échec ou au-delà de 2 s n'en donne aucune, et la branche de base est alors la branche locale la plus proche.
 - Une branche, une PR et `origin/HEAD` comparent depuis leur merge-base avec HEAD.
 - Le diff se garde en mémoire par paire (`base`, `tree`) et par `?w=1` : le redemander sans changement ne relance pas `git diff`.
-- `side` vaut `old` ou `new`, et `start` et `end` sont les numéros de la première et de la dernière ligne de la plage, de ce côté.
+- `side` vaut `old` ou `new`, et `start` et `end` sont les numéros de la première et de la dernière ligne de la plage, de ce côté ;
+  0 et 0 pour un thread sur le fichier entier, dont l'Anchor n'a pas de lignes, placé (`at` à `{ start: 0, end: 0 }`) tant que le fichier existe de ce côté.
+- Seul un message Pending de `me` se modifie ou se supprime : un autre reçoit 409.
 - L'Anchor se capture sur le code que voit l'auteur : pour `me`, la `base` et le `tree` affichés, obligatoires ; pour `claude`, la base de la session et le working tree au moment de l'appel.
 - `path` est le chemin du fichier depuis la racine du worktree, sous sa forme canonique : ni `./`, ni `/` en tête, ni segment vide ou `.`.
 - `base` et `tree` sont des ids de 40 ou 64 caractères hexadécimaux, d'un commit ou d'un tree pour `base`, d'un tree pour `tree`.
@@ -127,6 +133,9 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - Le mod lit `CLAUDE_REVIEWS_PORT` comme le serveur : vide, il vaut 7778.
 - `list_open_threads()` rend `base`, le commit de la base de la session, et, hors Resolved et hors threads sans message publié, l'id, le statut, `outdated`, le fichier, le côté, la plage ré-ancrée sur cette base côté `old` et sur le working tree côté `new` (celle de l'Anchor s'il est Outdated), les lignes de l'Anchor et les messages publiés.
 - Un thread Outdated y porte en plus `hunk`, l'extrait de diff d'origine en diff unifié, `null` si l'Anchor était hors du diff.
+- Un thread sur le fichier entier y a `start` et `end` à 0 et pas de lignes ; `open_thread` sans `lines` en ouvre un.
+- Un bloc ```` ```suggestion ```` dans un de mes messages est le code que je propose à la place des lignes du thread, côté `new` : les descriptions des outils demandent à Claude de l'appliquer au working tree sauf désaccord, puis de répondre.
+- Le sondage tient une ligne de statut par `$.ui.status` : « claude-reviews · N threads waiting for Claude », suivi de « · wake held until the next prompt » quand un réveil attend après un `{ drop }`, et rien sans thread qui attend Claude.
 - Il sonde `GET /api/sessions?worktree=<chemin>&claude` toutes les 2 s ; un Send qui laisse des threads Waiting for Claude le fait réveiller Claude par `$.prompt.submit`, jamais attendu dans un hook.
 - Seul un 404 vaut « aucune session ouverte » ; un sondage en échec laisse l'état tel quel, et le mod garde par session le dernier Send vu et la relance faite.
 - Il relance Claude une fois par Send, à la fin d'un tour fini sur une réponse, ni interrompu ni en erreur, qui laisse des threads en attente ; un `{ drop }` attend le prochain prompt ou début de tour, et ne compte pas.
@@ -177,7 +186,7 @@ Le dossier de données est `$XDG_DATA_HOME/claude-reviews`, sinon `~/.local/shar
 }
 ```
 
-- `id` : 16 caractères hexadécimaux, distinct du chemin du worktree ; un thread a pour id son rang dans la session, à partir de 1.
+- `id` : 16 caractères hexadécimaux, distinct du chemin du worktree ; un thread a pour id le plus grand id de la session plus 1, à partir de 1.
 - `worktree` : la racine du worktree (`git rev-parse --show-toplevel`).
 - `commonDir` : le dépôt commun aux worktrees (`git rev-parse --git-common-dir`), où restent les refs quand le worktree disparaît ; absent des sessions plus anciennes.
 - `base` : la dernière base choisie, une `ref` de `/bases`, `HEAD` à la création.

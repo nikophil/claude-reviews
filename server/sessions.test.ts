@@ -1171,3 +1171,92 @@ test('the repository of a session is named after its common directory: app for a
 
     assert.deepEqual(ids.map(id => list.find((session: any) => session.id === id).repo), [plain.split('/').at(-1), 'app']);
 });
+
+test('a Pending message of mine can be edited or deleted; a published one, or one of Claude, cannot', async () => {
+    const { id, path } = await sessionWithThread();
+    await api('POST', `${path}/messages`, { author: 'me', body: 'Typo hree' });
+
+    const edited = await api('POST', `${path}/messages/1`, { body: 'Typo here' });
+    const emptied = await api('POST', `${path}/messages/1`, { body: ' ' });
+    const published = await api('POST', `${path}/messages/0`, { body: 'Rewritten' });
+    const deleted = await api('POST', `${path}/messages/1/delete`, {});
+    const missing = await api('POST', `${path}/messages/5/delete`, {});
+
+    assert.equal(edited.status, 200);
+    assert.equal(edited.body.threads[0].messages[1].body, 'Typo here');
+    assert.equal(edited.body.threads[0].messages[1].date, null);
+    assert.equal(published.status, 409);
+    assert.equal(deleted.status, 200);
+    assert.deepEqual(deleted.body.threads[0].messages.map((message: any) => message.body), ['Look here']);
+    assert.equal(emptied.status, 400);
+    assert.equal(missing.status, 404);
+    assert.equal((await api('GET', `/api/sessions/${id}`)).body.threads[0].messages.length, 1);
+});
+
+test('deleting the only message of a thread deletes the thread, and the next thread takes a new id', async () => {
+    const dir = repo({ 'a.txt': 'a\nb\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const shown = (await api('GET', `/api/sessions/${id}/diff`)).body;
+    const mine = { author: 'me', base: shown.base, tree: shown.tree, path: 'a.txt', side: 'new', body: 'Mine' };
+    await api('POST', `/api/sessions/${id}/threads`, { ...mine, start: 1, end: 1 });
+    await api('POST', `/api/sessions/${id}/threads`, { ...mine, start: 2, end: 2 });
+
+    const deleted = await api('POST', `/api/sessions/${id}/threads/1/messages/0/delete`, {});
+    const opened = await api('POST', `/api/sessions/${id}/threads`, { ...mine, start: 1, end: 1 });
+
+    assert.deepEqual(deleted.body.threads.map((thread: any) => thread.id), [2]);
+    assert.deepEqual(opened.body.threads.map((thread: any) => thread.id), [2, 3]);
+});
+
+test('GET /api/sessions?closed lists the closed sessions, the latest closed first', async () => {
+    const first = await sessionWithThread();
+    const second = await sessionWithThread();
+    await api('POST', `/api/sessions/${first.id}/approve`, {});
+    await api('POST', `/api/sessions/${second.id}/approve`, {});
+
+    const closed = await api('GET', '/api/sessions?closed');
+
+    assert.equal(closed.status, 200);
+    const ours = closed.body.filter((session: any) => [first.id, second.id].includes(session.id));
+    assert.deepEqual(ours.map((session: any) => session.id), [second.id, first.id]);
+    assert.ok(ours[0].approvedAt);
+    assert.equal(ours[0].closedBecause, null);
+    assert.equal(ours[0].worktree, second.dir);
+});
+
+test('GET /api/inbox gives an entry per open session, as gh-notif reads it', async () => {
+    const { dir, id, path } = await sessionWithThread();
+    git(dir, 'checkout', '-qb', 'invoice-footer');
+    await api('POST', `${path}/messages`, { author: 'me', body: 'Why?' });
+    await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id) });
+
+    const inbox = await api('GET', '/api/inbox');
+
+    assert.equal(inbox.status, 200);
+    const entry = inbox.body.find((entry: any) => entry.url.endsWith(`/s/${id}`));
+    assert.deepEqual({ ...entry, updatedAt: typeof entry.updatedAt }, {
+        repo: dir.split('/').at(-1), branch: 'invoice-footer', title: 'invoice-footer', url: `${base}/s/${id}`,
+        openThreads: 1, awaitingMe: 0, lastActor: 'me', updatedAt: 'string',
+    });
+});
+
+test('a thread on a whole file has no lines, stays placed while its file is there, and is Outdated once it is gone', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    write(dir, { 'a.txt': 'b\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    const shown = (await api('GET', `/api/sessions/${id}/diff`)).body;
+
+    const opened = await api('POST', `/api/sessions/${id}/threads`, { author: 'me', base: shown.base, tree: shown.tree, path: 'a.txt', side: 'new', start: 0, end: 0, body: 'Split this file' });
+    const placed = await api('GET', `/api/sessions/${id}?base=${shown.base}&tree=${shown.tree}`);
+    rmSync(join(dir, 'a.txt'));
+    const now = (await api('GET', `/api/sessions/${id}/diff`)).body;
+    const gone = await api('GET', `/api/sessions/${id}?base=${now.base}&tree=${now.tree}`);
+    const claude = await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path: 'a.txt', side: 'old', start: 0, end: 0, body: 'The old file' });
+
+    assert.equal(opened.status, 200);
+    assert.deepEqual(opened.body.threads[0].anchor, { path: 'a.txt', side: 'new', start: 0, end: 0, lines: [], before: [], after: [], hunk: null });
+    assert.deepEqual(placed.body.threads[0].at, { start: 0, end: 0, context: [] });
+    assert.equal(gone.body.threads[0].at, null);
+    assert.equal(claude.status, 200);
+    assert.equal((await api('POST', `/api/sessions/${id}/threads`, { author: 'me', base: shown.base, tree: shown.tree, path: 'a.txt', side: 'new', start: 0, end: 1, body: 'x' })).status, 400);
+});

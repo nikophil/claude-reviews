@@ -59,3 +59,8 @@
 .hljs-strong { font-weight: bold; }
 .hljs-addition { color: var(--color-prettylights-syntax-markup-inserted-text); background-color: var(--color-prettylights-syntax-markup-inserted-bg); }
 .hljs-deletion { color: var(--color-prettylights-syntax-markup-deleted-text); background-color: var(--color-prettylights-syntax-markup-deleted-bg); }
+
+/* The thread j or k went to. */
+.thread-current { box-shadow: 0 0 0 2px var(--borderColor-accent-emphasis); }
+.conversations { width: 360px; max-height: 60vh; overflow: auto; }
+.conversations::before, .conversations::after { display: none; }

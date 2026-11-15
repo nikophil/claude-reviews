@@ -165,17 +165,57 @@ async function lookup(path: unknown, lock: typeof exclusive = exclusive): Promis
 /** The open sessions of all worktrees, for Reviews: Waiting for Claude first, then the rest, the latest active first at a tie. */
 export async function listSessions() {
     const list = await Promise.all((await openSessions()).map(async session => {
+        const { repo, branch, updatedAt } = await summary(session);
         return {
             id: session.id,
             worktree: session.worktree,
-            repo: repository(session.commonDir ?? join(session.worktree, '.git')),
-            // Empty on a detached HEAD.
-            branch: (await git(session.worktree, ['symbolic-ref', '--short', '-q', 'HEAD']).catch(() => '')).trim(),
+            repo,
+            branch,
             waitingForClaude: session.threads.filter(thread => status(thread) === 'waiting-for-claude').length,
-            updatedAt: [session.createdAt, ...session.threads.flatMap(thread => thread.messages.map(message => message.date ?? ''))].sort().at(-1)!,
+            updatedAt,
         };
     }));
     return list.sort((a, b) => Number(b.waitingForClaude > 0) - Number(a.waitingForClaude > 0) || b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/** The repository, the branch (empty on a detached HEAD) and the last activity of a session. */
+async function summary(session: Session) {
+    return {
+        repo: repository(session.commonDir ?? join(session.worktree, '.git')),
+        branch: (await git(session.worktree, ['symbolic-ref', '--short', '-q', 'HEAD']).catch(() => '')).trim(),
+        updatedAt: [session.createdAt, ...session.threads.flatMap(thread => thread.messages.map(message => message.date ?? ''))].sort().at(-1)!,
+    };
+}
+
+/** The open sessions as gh-notif reads them, among its local sources: an entry each, whose URL is on `origin`. */
+export async function inbox(origin: string) {
+    return Promise.all((await openSessions()).map(async session => {
+        const { repo, branch, updatedAt } = await summary(session);
+        const statuses = session.threads.map(status);
+        const last = session.threads.flatMap(thread => thread.messages.filter(message => message.date)).sort((a, b) => a.date!.localeCompare(b.date!)).at(-1);
+        return {
+            repo, branch, title: branch || basename(session.worktree), url: `${origin}/s/${session.id}`,
+            openThreads: statuses.filter(status => status === 'waiting-for-claude' || status === 'open').length,
+            // The threads Claude spoke last in: the BRIEF's contract names them so, though no client shows a status for them.
+            awaitingMe: statuses.filter(status => status === 'open').length,
+            lastActor: last?.author ?? null,
+            updatedAt,
+        };
+    }));
+}
+
+/** The closed sessions, approved or with their worktree gone, the latest closed first; an unreadable file is left out, logged. */
+// ponytail: every archived file read at each call; keep an index if the archive grows to thousands.
+export async function closedSessions() {
+    const dir = join(dataDir(), 'archive');
+    const names = (await readdir(dir).catch(() => [])).filter(name => name.endsWith('.json'));
+    const sessions = await Promise.all(names.map(name => readFile(join(dir, name), 'utf8').then(content => JSON.parse(content) as Session).catch(error => {
+        console.error(`claude-reviews: ${join(dir, name)} is left out, unreadable: ${(error as Error).message}`);
+        return null;
+    })));
+    return sessions.filter(session => session?.approvedAt)
+        .map(session => ({ id: session!.id, worktree: session!.worktree, repo: repository(session!.commonDir ?? join(session!.worktree, '.git')), approvedAt: session!.approvedAt!, closedBecause: session!.closedBecause ?? null }))
+        .sort((a, b) => b.approvedAt.localeCompare(a.approvedAt));
 }
 
 /** The name of a repository from its common directory: app for app/.git, a bare app.git, or the submodule app under .git/modules/. */
@@ -416,8 +456,10 @@ export async function placed(answer: unknown, query: URLSearchParams): Promise<u
             const { path, side } = thread.anchor;
             if (!read.has(`${side} ${path}`)) read.set(`${side} ${path}`, fileLines(worktree, side === 'new' ? shown.tree : shown.base, path));
             const lines = await read.get(`${side} ${path}`)!;
-            const at = reanchor(thread.anchor, lines);
-            return { ...thread, at: at && (forClaude ? at : { ...at, context: context(files.find(file => file.path === path)?.hunks ?? [], side, at, lines!) }) };
+            // A thread on a whole file stays while its file is there.
+            const whole = thread.anchor.end === 0;
+            const at = whole ? lines && { start: 0, end: 0 } : reanchor(thread.anchor, lines);
+            return { ...thread, at: at && (forClaude ? at : { ...at, context: whole ? [] : context(files.find(file => file.path === path)?.hunks ?? [], side, at, lines!) }) };
         })),
     };
 }
@@ -465,8 +507,8 @@ export async function openThread(id: string, input: Record<string, unknown>) {
     const { path, side } = input;
     const [from, to] = [input.start, input.end];
     if (typeof path !== 'string' || (side !== 'old' && side !== 'new') || typeof from !== 'number' || typeof to !== 'number'
-        || !Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from) {
-        throw httpError(400, 'A thread needs a path, a side ("old" or "new") and a range of lines from start to end');
+        || !Number.isInteger(from) || !Number.isInteger(to) || (from === 0 ? to !== 0 : from < 1 || to < from)) {
+        throw httpError(400, 'A thread needs a path, a side ("old" or "new") and a range of lines from start to end, or 0 and 0 for the whole file');
     }
     checkPath(path);
     const shown = first.author === 'me' ? {
@@ -485,8 +527,9 @@ export async function openThread(id: string, input: Record<string, unknown>) {
         }
     }
     session.threads.push({
-        id: session.threads.length + 1,
-        anchor: {
+        // A thread deleted with its only message leaves its id unused.
+        id: Math.max(0, ...session.threads.map(thread => thread.id)) + 1,
+        anchor: to === 0 ? { path, side, start: 0, end: 0, lines: [], before: [], after: [], hunk: null } : {
             path, side, start: from, end: to,
             lines: lines.slice(from - 1, to), before: lines.slice(Math.max(0, from - 4), from - 1), after: lines.slice(to, to + 3), hunk,
         },
@@ -542,6 +585,32 @@ export async function addMessage(id: string, threadId: number, input: Record<str
     }
     if (added.author === 'me' && thread.resolved) throw httpError(409, `Thread ${threadId} is Resolved: Unresolve it to reply`);
     thread.messages.push(added);
+    await save(session);
+    return view(session);
+}
+
+/** My Pending message at `index` in the thread: the only kind of message that can still change. */
+function pending(thread: Thread, index: number): Message {
+    const message = thread.messages[index];
+    if (!message) throw httpError(404, `No message ${index} in thread ${thread.id}`);
+    if (message.author !== 'me' || message.date) throw httpError(409, `Message ${index} of thread ${thread.id} is published: only a Pending message of mine can change`);
+    return message;
+}
+
+export async function editMessage(id: string, threadId: number, index: number, { body }: Record<string, unknown>) {
+    const session = await writable(id);
+    pending(findThread(session, threadId), index).body = message('me', body).body;
+    await save(session);
+    return view(session);
+}
+
+/** Deletes a Pending message of mine; a thread left without any message goes with it. */
+export async function deleteMessage(id: string, threadId: number, index: number) {
+    const session = await writable(id);
+    const thread = findThread(session, threadId);
+    pending(thread, index);
+    thread.messages.splice(index, 1);
+    if (!thread.messages.length) session.threads = session.threads.filter(other => other !== thread);
     await save(session);
     return view(session);
 }

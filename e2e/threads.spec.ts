@@ -325,3 +325,107 @@ test('a page left open on a session learns at its next poll that the worktree is
     await expect(page.getByText('Closed', { exact: true })).toBeVisible({ timeout: 5000 });
     await expect(page.getByRole('button', { name: 'Send' })).toHaveCount(0);
 });
+
+/** Opens a thread of mine on the first added line of the page, through the page. */
+async function myThread(page: Page, body: string) {
+    await page.locator('.diff-line-add .diff-num').nth(1).click();
+    await page.getByRole('textbox').fill(body);
+    await page.getByRole('button', { name: 'Add message' }).click();
+    await expect(page.locator('.thread')).toContainText(body);
+}
+
+test('a Pending message of mine can be edited, then deleted, which deletes a thread left without message', async ({ page }) => {
+    await open(page, changed());
+    await myThread(page, 'Typo hree');
+    const thread = page.locator('.thread');
+
+    await thread.getByRole('button', { name: 'Edit' }).click();
+    await thread.getByRole('textbox').fill('Typo here');
+    await thread.getByRole('button', { name: 'Save' }).click();
+    await expect(thread.locator('.markdown-body')).toHaveText('Typo here');
+    await expect(thread).toContainText('Pending');
+    page.once('dialog', dialog => dialog.accept());
+    await thread.getByRole('button', { name: 'Delete' }).click();
+
+    await expect(page.locator('.thread')).toHaveCount(0);
+});
+
+test('Suggest change puts the selected lines in a suggestion block, shown as the change it proposes', async ({ page }) => {
+    await open(page, changed());
+    await page.locator('.diff-line-add .diff-num').nth(1).click();
+
+    await page.getByRole('button', { name: 'Suggest change' }).click();
+
+    await expect(page.getByRole('textbox')).toHaveValue('```suggestion\n2\n```\n');
+    await page.getByRole('textbox').fill('```suggestion\ntwo\n```\n');
+    await page.getByRole('button', { name: 'Add message' }).click();
+    const suggestion = page.locator('.thread .suggestion');
+    await expect(suggestion).toContainText('Suggested change');
+    await expect(suggestion.locator('.diff-line-del')).toHaveText('2');
+    await expect(suggestion.locator('.diff-line-add')).toHaveText('two');
+});
+
+test('Comment on file opens a thread on the whole file, above its diff', async ({ page }) => {
+    await open(page, changed());
+    const file = page.locator('section[data-path="a.txt"]');
+
+    await file.getByRole('button', { name: 'Comment on file' }).click();
+    await file.getByRole('textbox').fill('Split this file');
+    await file.getByRole('button', { name: 'Add message' }).click();
+
+    const thread = file.locator('.thread');
+    await expect(thread.locator('summary')).toContainText('File');
+    await page.reload();
+    await expect(thread).toContainText('Split this file');
+});
+
+test('Copy threads copies the published messages of every thread as markdown', async ({ page, request }) => {
+    const dir = changed();
+    const { id, thread } = await claudeThread(request, dir, 2, 'Is this right?');
+    await request.post(`/api/sessions/${id}/threads/${thread}/messages`, { data: { author: 'me', body: 'Not sent' } });
+    await claudeThread(request, dir, 3, 'And this?');
+    await request.post(`/api/sessions/${id}/threads/2/resolve`, { data: {} });
+    await open(page, dir);
+    await page.evaluate(() => { navigator.clipboard.writeText = async text => { (window as any).copied = text; }; });
+
+    await page.getByRole('button', { name: 'Copy threads' }).click();
+
+    expect(await page.evaluate(() => (window as any).copied)).toBe('### `a.txt` line +2\n\n**Claude**: Is this right?\n\n### `a.txt` line +3 · Resolved\n\n**Claude**: And this?\n');
+});
+
+test('without a Claude session in the worktree, the page says a Send wakes no one, until one reads the session', async ({ page, request }) => {
+    const dir = changed();
+    await open(page, dir);
+    const warning = page.getByText('No Claude session runs in this worktree');
+    await expect(warning).toBeVisible();
+
+    await request.get(`/api/sessions?worktree=${encodeURIComponent(dir)}&claude`);
+
+    await expect(warning).toBeHidden({ timeout: 5000 });
+});
+
+test('j and k go from thread to thread, the Conversations menu lists them and marks those Claude replied in since my last Send', async ({ page, request }) => {
+    const dir = repo({ 'a.txt': 'one\n', 'b.txt': 'one\n' });
+    write(dir, { 'a.txt': 'ONE\n', 'b.txt': 'ONE\n' });
+    const { id } = await (await request.post('/api/sessions', { data: { worktree: dir } })).json();
+    for (const path of ['a.txt', 'b.txt']) await request.post(`/api/sessions/${id}/threads`, { data: { author: 'claude', path, side: 'new', start: 1, end: 1, body: `About ${path}` } });
+    const { tree } = await (await request.get(`/api/sessions/${id}/tree`)).json();
+    await request.post(`/api/sessions/${id}/send`, { data: { tree } });
+    await request.post(`/api/sessions/${id}/threads/2/messages`, { data: { author: 'claude', body: 'Later' } });
+    await request.post(`/api/sessions/${id}/viewed`, { data: { path: 'b.txt', tree, viewed: true } });
+    await open(page, dir);
+    await expect(page.locator('section[data-path="a.txt"] .thread')).toBeVisible();
+    await expect(page.locator('section[data-path="b.txt"] .thread')).toBeHidden();
+
+    await page.keyboard.press('j');
+    await expect(page).toHaveURL(/#thread-1$/);
+    await page.keyboard.press('j');
+    await expect(page).toHaveURL(/#thread-2$/);
+    await expect(page.locator('#thread-2')).toBeVisible();
+    await page.keyboard.press('k');
+    await expect(page).toHaveURL(/#thread-1$/);
+
+    await page.getByRole('button', { name: '2 conversations' }).click();
+    const menu = page.locator('.conversations');
+    await expect(menu.getByRole('button')).toHaveText([/a\.txt/, /b\.txt.*Replied/]);
+});

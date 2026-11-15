@@ -161,10 +161,10 @@ Fait le 14 novembre 2026 sur Claude Code 2.1.325, avec un mod jetable (`wake-pro
 ## Questions ouvertes
 
 - **Deux Claude sessions dans le même worktree** répondraient toutes deux aux mêmes threads ; le MVP l'accepte, c'est rare avec Orca.
-- Vue côte à côte, threads de fichier entier et blocs `suggestion` : après le MVP.
+- Vue côte à côte, threads de fichier entier et blocs `suggestion` : faits ; Claude applique une suggestion, le serveur n'écrit jamais dans le worktree.
 
 ## Prochaines étapes
 
 1. Écrire le MVP : serveur, diff avec sélecteur de base et snapshots, threads, stockage JSON et ré-ancrage ;
    puis le mod (outils, réveil, relance, premier message) ; puis `notify-send`.
-2. Ensuite seulement : vue côte à côte, `/api/inbox` et la PR gh-notif.
+2. Ensuite seulement : vue côte à côte et `/api/inbox` (faits), puis la PR gh-notif.

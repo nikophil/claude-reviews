@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { extname, join } from 'node:path';
-import { addMessage, approve, bases, checkPlacement, chooseBase, currentTree, exclusive, file, findSession, getSession, httpError, listSessions, markViewed, openSession, openThread, placed, replies, resolve, send, sessionDiff, show, treeLines } from './sessions.ts';
+import { addMessage, approve, bases, checkPlacement, chooseBase, closedSessions, currentTree, deleteMessage, editMessage, exclusive, file, findSession, getSession, httpError, inbox, listSessions, markViewed, openSession, openThread, placed, replies, resolve, send, sessionDiff, show, treeLines } from './sessions.ts';
 
 const UI = join(import.meta.dirname, '..', 'ui');
 const TYPES: Record<string, string> = {
@@ -79,6 +79,7 @@ export function start(port: number, notify = (argv: string[]) => { execFile(argv
         }
         try {
             if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { app: 'claude-reviews', version });
+            if (url.pathname === '/api/inbox' && req.method === 'GET') return json(res, 200, await inbox(`http://${req.headers.host}`));
             if (url.pathname === '/api/me' && req.method === 'GET') {
                 const [login, name] = await Promise.all([githubLogin(), userName()]);
                 return json(res, 200, { login, name });
@@ -136,10 +137,13 @@ export function start(port: number, notify = (argv: string[]) => { execFile(argv
 /** The session API; its contract is written in CLAUDE.md. */
 async function route(method: string, { pathname: path, searchParams }: URL, body: Record<string, unknown>, notify: (argv: string[]) => void): Promise<unknown> {
     // Each takes the queue of the writes itself, only when it writes: the mod's 2 s poll must not wait for a long Send.
-    if (path === '/api/sessions' && method === 'GET') return searchParams.has('worktree') ? findSession(searchParams.get('worktree'), searchParams.has('claude')) : listSessions();
+    if (path === '/api/sessions' && method === 'GET') {
+        return searchParams.has('worktree') ? findSession(searchParams.get('worktree'), searchParams.has('claude')) : searchParams.has('closed') ? closedSessions() : listSessions();
+    }
     if (path === '/api/sessions' && method === 'POST') return openSession(body.worktree);
-    const [, id, action = '', thread, threadAction = ''] = path.match(/^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|tree|file|lines|bases|base|threads|send|approve|viewed|show|turn-complete))?(?:\/(\d+)\/(messages|resolve|unresolve))?$/) ?? [];
-    switch (id && `${method} ${action}/${threadAction}`) {
+    const [, id, action = '', thread, threadAction = '', index, messageAction = 'edit'] = path.match(
+        /^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|tree|file|lines|bases|base|threads|send|approve|viewed|show|turn-complete))?(?:\/(\d+)\/(messages|resolve|unresolve)(?:\/(\d+)(?:\/(delete))?)?)?$/) ?? [];
+    switch (id && `${method} ${action}/${threadAction}${index === undefined ? '' : `/${messageAction}`}`) {
         case 'GET /': return getSession(id);
         case 'GET diff/': return sessionDiff(id, searchParams);
         case 'GET tree/': return currentTree(id);
@@ -149,6 +153,8 @@ async function route(method: string, { pathname: path, searchParams }: URL, body
         case 'POST base/': return exclusive(() => chooseBase(id, body.base));
         case 'POST threads/': return exclusive(() => openThread(id, body));
         case 'POST threads/messages': return exclusive(() => addMessage(id, Number(thread), body));
+        case 'POST threads/messages/edit': return exclusive(() => editMessage(id, Number(thread), Number(index), body));
+        case 'POST threads/messages/delete': return exclusive(() => deleteMessage(id, Number(thread), Number(index)));
         case 'POST threads/resolve': return exclusive(() => resolve(id, Number(thread)));
         case 'POST threads/unresolve': return exclusive(() => resolve(id, Number(thread), false));
         case 'POST send/': return exclusive(() => send(id, body.tree, body.threads));
