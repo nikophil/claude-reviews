@@ -68,6 +68,16 @@ const silent = () => `claude-reviews does not answer${base ? ` on ${base}` : ''}
  * None reaches a port another account took since the mod adopted it: a squatter of a dead server's port must not feed Claude its threads.
  */
 async function api($: EngineInterface, method: string, path: string, body?: object): Promise<{ status: number; body: any }> {
+    const res = await call($, method, path, body);
+    if (res.status !== 0) return res;
+    // A newer mod of another Claude session restarts the server on another port, and writes it to the endpoint file.
+    const ep = await endpoint($);
+    if (!ep || `http://127.0.0.1:${ep.port}` === base) return res;
+    adopt(ep);
+    return call($, method, path, body);
+}
+
+async function call($: EngineInterface, method: string, path: string, body?: object): Promise<{ status: number; body: any }> {
     if (!base) return { status: 0, body: { error: silent() } };
     // ponytail: the mod starts a server of its own at session.start only; start one from the poll if squatters ever show mid-session.
     if (await foreign($, Number(new URL(base).port))) return { status: 0, body: { error: `${base} is held by another account: start the Claude session again for a server of your own` } };
