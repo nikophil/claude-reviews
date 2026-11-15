@@ -8,16 +8,21 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.ui.EditorTextField;
+import com.intellij.ui.components.JBScrollPane;
 import com.intellij.util.ui.JBUI;
 
 import javax.swing.Action;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
+import javax.swing.Scrollable;
 import java.awt.BorderLayout;
+import java.awt.Dimension;
+import java.awt.Rectangle;
 
 /** An Outdated thread, whose lines no code shows any more: the code it was opened on, its discussion and its field, kept up to date by the poll. */
 final class OutdatedThread extends DialogWrapper {
     private final JPanel panel = new JPanel(new BorderLayout(0, JBUI.scale(12)));
+    private final JPanel column = new Column();
     private final Project project;
     private final ReviewService service;
     private final int id;
@@ -39,6 +44,7 @@ final class OutdatedThread extends DialogWrapper {
         setTitle("Thread #" + id + " · " + anchor.get("path").getAsString() + " · Outdated");
         // A thread on the whole file has no lines to show.
         if (anchor.get("end").getAsInt() > 0) panel.add(code(project, anchor), BorderLayout.NORTH);
+        panel.add(new JBScrollPane(column), BorderLayout.CENTER);
         show(thread);
         service.listen(state -> {
             if (state.session() == null) return;
@@ -58,12 +64,12 @@ final class OutdatedThread extends DialogWrapper {
         Disposer.register(getDisposable(), view);
         if (previous != null) {
             view.resume(previous);
-            panel.remove(previous);
+            column.remove(previous);
             Disposer.dispose(previous);
         }
-        panel.add(view, BorderLayout.CENTER);
-        panel.revalidate();
-        panel.repaint();
+        column.add(view, BorderLayout.CENTER);
+        column.revalidate();
+        column.repaint();
     }
 
     /** The diff the thread was opened on, down to its last line, else the lines of its Anchor when they were out of the diff. */
@@ -91,6 +97,42 @@ final class OutdatedThread extends DialogWrapper {
                 : FileTypeManager.getInstance().getFileTypeByFileName(anchor.get("path").getAsString()), true, false);
         code.setFontInheritedFromLAF(false);
         return code;
+    }
+
+    /** The thread at the width of the window, scrolled once it outgrows it: its texts wrap rather than scroll sideways. */
+    private static final class Column extends JPanel implements Scrollable {
+        private static final long serialVersionUID = 1L;
+
+        Column() {
+            super(new BorderLayout());
+        }
+
+        @Override
+        public Dimension getPreferredScrollableViewportSize() {
+            Dimension size = getPreferredSize();
+            // A long thread opens the window at most this high.
+            return new Dimension(size.width, Math.min(size.height, JBUI.scale(600)));
+        }
+
+        @Override
+        public int getScrollableUnitIncrement(Rectangle visible, int orientation, int direction) {
+            return JBUI.scale(16);
+        }
+
+        @Override
+        public int getScrollableBlockIncrement(Rectangle visible, int orientation, int direction) {
+            return visible.height;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportWidth() {
+            return true;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportHeight() {
+            return false;
+        }
     }
 
     @Override

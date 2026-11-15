@@ -56,7 +56,7 @@ final class Placement {
         return claude == null || claude.getAsBoolean();
     }
 
-    private static boolean approved(JsonObject session) {
+    static boolean approved(JsonObject session) {
         return session.get("approvedAt") instanceof JsonPrimitive;
     }
 

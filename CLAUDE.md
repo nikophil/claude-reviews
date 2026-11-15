@@ -49,6 +49,7 @@ Read `BRIEF.md`, `GLOSSARY.md` and `docs/adr/` before changing the code, and nam
 - `phpstorm/`: the PhpStorm plugin, in Java and Swing: the "Claude Reviews" tool window (base, Send, Approve, changed files and their threads), the threads in the editor and in the diff of the IDE;
   its Editor view opens a file in the editor, its Diff view in the diff of the IDE, with the Viewed checkbox of each file in the tree and in the bar of the diff;
   it edits and deletes my Pending messages, moves from one thread not Resolved to the next (Next Thread and Previous Thread, Alt+Shift+Page Down and Page Up), marks "Replied" those, not Resolved, where Claude replied since my last Send,
+  resolves or reopens a thread from its context menu in the tree, opens an Outdated thread in a window of its own, scrolled when long,
   and offers Suggest Change, Comment on File and Copy Threads as Markdown, in the same format as the web UI; it only talks to the API, like any client ([ADR 0004](docs/adr/0004-clients-and-mod-separated-by-the-api.md)).
 - `phpstorm/ui-test/`: the UI tests of the plugin, in Kotlin, with JetBrains' Starter and Driver, under Gradle in Docker ([ADR 0005](docs/adr/0005-phpstorm-ui-tests-with-gradle-in-docker.md));
   there, `run.sh` runs in sequence `build.sh`, the Plugin Verifier, which fails on any verdict other than "Compatible", and `gradle test`.

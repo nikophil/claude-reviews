@@ -46,7 +46,7 @@ import kotlin.time.Duration.Companion.minutes
 
 /**
  * The plugin in a PhpStorm that Starter runs on Xvfb, against a claude-reviews server on its own port and data directory:
- * one PhpStorm for the four steps of a review, in order, on a repository whose a.php changes.
+ * one PhpStorm for the steps of a review, in order, on a repository whose a.php changes.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
 class ReviewTest {
@@ -206,5 +206,30 @@ class ReviewTest {
             x("//div[@text='Viewed']").click()
         }
         awaitSession("a.php is viewed") { it.getAsJsonObject("viewed")?.has("a.php") == true }
+    }
+
+    @Test
+    @Order(5)
+    fun `an Outdated thread opens in its own window, the thread in a scroll pane`() {
+        // Line 4 changes again: the thread of step 2 no longer finds its line.
+        Files.writeString(Path.of(worktree, "a.php"), "<?php\n\necho 1;\necho 4;\n")
+        frame {
+            tree("//div[@class='Tree']").apply {
+                // The double-click of step 4 collapsed a.php, and a collapsed file stays so.
+                expandPath("a.php", fullMatch = false)
+                waitOneContainsText("Outdated")
+                doubleClickPath("a.php", "#1", fullMatch = false)
+            }
+        }
+        driver.ui.x("//div[@class='JBScrollPane']//div[@class='ThreadView']").shouldBe(enabled)
+        driver.ui.button("Close").click()
+    }
+
+    @Test
+    @Order(6)
+    fun `Resolve in the context menu of a thread of the tree resolves it`() {
+        frame { tree("//div[@class='Tree']").rightClickPath("a.php", "#1", fullMatch = false) }
+        driver.ui.x("//div[@class='ActionMenuItem' and @text='Resolve']").click()
+        awaitSession("the thread is Resolved") { it.getAsJsonArray("threads")[0].asJsonObject["resolved"].asBoolean }
     }
 }
