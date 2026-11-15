@@ -10,6 +10,7 @@
     "test": "node --test",
     "test:e2e": "playwright test",
     "build:phpstorm": "sh phpstorm/build.sh",
+    "readme": "README=1 playwright test e2e/readme.spec.ts",
     "test:mod": "mkdir -p var/mod/.claude-plugin var/mod/hooks && cp .claude-plugin/plugin.json var/mod/.claude-plugin/ && cp hooks/hooks.json hooks/register.ts hooks/watch.ts hooks/register.test.tsx var/mod/hooks/ && claude plugin test var/mod"
   },
   "devDependencies": {

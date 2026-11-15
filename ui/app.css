@@ -64,3 +64,8 @@
 .thread-current { box-shadow: 0 0 0 2px var(--borderColor-accent-emphasis); }
 .conversations { width: 360px; max-height: 60vh; overflow: auto; }
 .conversations::before, .conversations::after { display: none; }
+/* A suggestion is a diff, not a markdown table: as wide as its message, its long lines wrapped. */
+.markdown-body .suggestion table { display: table; width: 100%; margin: 0; }
+.markdown-body .suggestion td { padding: 0 10px 0 22px; border: 0; }
+/* The path of the worktree gives way to the buttons of the toolbar, cut with an ellipsis. */
+.worktree-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

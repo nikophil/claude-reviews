@@ -424,7 +424,10 @@ function App() {
                 <div class="d-flex flex-items-center mb-3">
                     ${!fileTreeOpen && toggle}
                     <a class="mr-3" href="/">Reviews</a>
-                    <h1 class="h4 flex-1">${diff.files.length} files changed <span class="text-mono text-normal color-fg-muted f6">${session.worktree}</span></h1>
+                    <h1 class="h4 flex-1 min-width-0 d-flex flex-items-baseline">
+                        <span class="flex-shrink-0">${diff.files.length} files changed</span>
+                        <span class="worktree-path text-mono text-normal color-fg-muted f6 ml-2" title=${session.worktree}>${session.worktree}</span>
+                    </h1>
                     ${conversations.length > 0 && html`
                         <details class="details-reset details-overlay position-relative mr-3">
                             <summary class="btn btn-sm" role="button">${conversations.length} conversation${conversations.length === 1 ? '' : 's'}</summary>
