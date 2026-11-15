@@ -2,7 +2,7 @@
   "name": "local-reviews",
   "displayName": "Local Reviews",
   "description": "Reviews with Claude the changes of the worktree: its files and their threads in a view, the threads in the editor and in the diff.",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "publisher": "nikophil",
   "engines": {
     "vscode": "^1.100.0"
