@@ -27,9 +27,11 @@ Read `BRIEF.md`, `GLOSSARY.md` and `docs/adr/` before changing the code, and nam
 - `npm run test:phpstorm`: in the container of `docker-compose.yml`, builds the plugin against PhpStorm 2026.2.5, runs it through the Plugin Verifier, then runs its UI tests;
   PhpStorm, the Gradle dependencies and the Plugin Verifier are downloaded once into the `phpstorm-cache` volume, or into the folder that `PHPSTORM_CACHE` names.
 - `npm run build:vscode`: builds `var/vscode/local-reviews.vsix` with `zip`, at the version of `.claude-plugin/plugin.json` (the one of `vscode/package.json` is not used), to install with `code --install-extension var/vscode/local-reviews.vsix --force`.
-- A release: bump `.claude-plugin/plugin.json`, merge, then push the tag `v<version>` on main.
-  `.github/workflows/release.yml` checks that the tag names this version, builds the PhpStorm zip (Plugin Verifier and UI tests included) and the `.vsix` at this version, then attaches them to the GitHub release of the tag, with the `updatePlugins.xml` that points to this zip:
+- A release: merge a PR that bumps `.claude-plugin/plugin.json`.
+  On each push to main, `.github/workflows/release.yml` publishes the version of `plugin.json` that has no tag `v<version>` yet: it builds the PhpStorm zip (Plugin Verifier and UI tests included) and the `.vsix` at this version,
+  then creates the tag on the merged commit and its GitHub release, with the zip, the `.vsix` and the `updatePlugins.xml` that points to this zip;
   PhpStorm reads the one of the latest release (`releases/latest/download/updatePlugins.xml`) to offer the update.
+  A release that fails leaves no tag: a re-run of the job, or the next push to main, tries again.
 - `npm run test:vscode`: tests of the VS Code extension, `e2e/vscode.spec.ts`, in openvscode-server 1.109.5 (`~/.cache/claude-reviews/openvscode-server-v1.109.5-linux-x64`, otherwise `OPENVSCODE_SERVER`), on a server started on port 7781;
   openvscode-server is downloaded once from the releases of `gitpod-io/openvscode-server`, as the CI does.
 
@@ -43,7 +45,7 @@ Read `BRIEF.md`, `GLOSSARY.md` and `docs/adr/` before changing the code, and nam
 - `ui/vendor/`: front-end libraries copied as is, not to be modified or reviewed.
 - `e2e/`: Playwright tests.
 - `.claude-plugin/`: the `local-reviews` plugin (the `claude-` prefix is reserved for Anthropic) and the marketplace of this repository; the version of the plugin is the one of the server, of the PhpStorm plugin and of the VS Code extension.
-  Any change to `server/` or `ui/` bumps it: the mod keeps an already running server of the same version.
+  Any change to `server/` or `ui/` bumps it, and its merge releases it: the mod keeps an already running server of the same version.
 - `hooks/register.ts`: the mod, which registers the tools and `/review-local`, starts the server, polls the session every 2 s and wakes Claude; `$` is only passed there to functions declared at the top of the file.
 - `hooks/watch.ts`: the decisions of the mod (wake, relaunch, stay silent, resume after a `{ drop }`), and the sockets listening on a port read from `/proc/net/tcp`, as pure functions.
 - `phpstorm/`: the PhpStorm plugin, in Java and Swing: the "Claude Reviews" tool window (base, Send, Approve, changed files and their threads), the threads in the editor and in the diff of the IDE;

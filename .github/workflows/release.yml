@@ -1,28 +1,49 @@
 name: Release
 
-# A tag v<version> publishes that version: the Claude Code plugin is this repository at the tag,
-# and the release of the tag carries the zip of the PhpStorm plugin and the .vsix of the VS Code extension, built at that version,
+# A push to main whose .claude-plugin/plugin.json names a version without its tag v<version> publishes that version:
+# the Claude Code plugin is this repository at that commit, which the release tags v<version>,
+# and the release carries the zip of the PhpStorm plugin and the .vsix of the VS Code extension, built at that version,
 # with the updatePlugins.xml that PhpStorm reads from the latest release to offer it as an update.
+# A release that fails leaves no tag: the next push to main, or a re-run, tries again.
 on:
   push:
-    tags: ['v*']
+    branches: [main]
 
 permissions:
   contents: write
 
+# Two merges in a row release one after the other: the second finds the tag of the first.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  release:
+  version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: version
+        name: The version of .claude-plugin/plugin.json, unless it has its tag already
+        run: |
+          VERSION=$(node -p 'require("./.claude-plugin/plugin.json").version')
+          [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null; then exit 0; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: version
+    if: needs.version.outputs.version
+    runs-on: ubuntu-latest
+    env:
+      PLUGIN_VERSION: ${{ needs.version.outputs.version }}
+      PLUGIN_URL: https://github.com/${{ github.repository }}/releases/download/v${{ needs.version.outputs.version }}/local-reviews.zip
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 25
-      - name: The tag names the version of .claude-plugin/plugin.json
-        run: |
-          test "$GITHUB_REF_NAME" = "v$(node -p 'require("./.claude-plugin/plugin.json").version')"
-          echo "PLUGIN_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-          echo "PLUGIN_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/local-reviews.zip" >> "$GITHUB_ENV"
       # PhpStorm, the Gradle dependencies and the Plugin Verifier, as in the phpstorm job of ci.yml.
       - uses: actions/cache@v6
         with:
@@ -34,6 +55,7 @@ jobs:
         env:
           PHPSTORM_CACHE: ${{ runner.temp }}/phpstorm-cache
       - run: npm run build:vscode
-      - run: gh release create "$GITHUB_REF_NAME" var/phpstorm/local-reviews.zip var/phpstorm/updatePlugins.xml var/vscode/local-reviews.vsix --verify-tag --generate-notes
+      # The tag is born with the release, on the commit it builds.
+      - run: gh release create "v$PLUGIN_VERSION" var/phpstorm/local-reviews.zip var/phpstorm/updatePlugins.xml var/vscode/local-reviews.vsix --target "$GITHUB_SHA" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
