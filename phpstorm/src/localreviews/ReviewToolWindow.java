@@ -698,7 +698,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                 if (counts[2] > 0 && service.resolvedToo()) append("  " + counts[2] + " resolved", SimpleTextAttributes.GRAYED_ATTRIBUTES);
             }
 
-            /** « #12 · Line -5 · Pending · old code », the status, if any, in the color of the file's counts; « Replied » once Claude wrote since my last Send. */
+            /** « #12 · Line -5 · Pending · old code », the status, if any, in the color of the file's counts; « Replied » on a thread not Resolved where Claude wrote since my last Send. */
             private void thread(JsonObject thread) {
                 String status = ThreadView.status(thread);
                 setIcon(status.equals("Resolved") ? AllIcons.Actions.Checked : AllIcons.Toolwindows.ToolWindowMessages);

@@ -79,9 +79,9 @@ final class Placement {
             && fromClaude(after) > fromClaude(before);
     }
 
-    /** Whether Claude wrote in the thread since my last Send: a message of his dated at `sentAt` or later. */
+    /** Whether Claude wrote in the thread, not Resolved, since my last Send: a message of his dated at `sentAt` or later. */
     static boolean replied(JsonObject session, JsonObject thread) {
-        if (!(session.get("sentAt") instanceof JsonPrimitive sentAt)) return false;
+        if (thread.get("resolved").getAsBoolean() || !(session.get("sentAt") instanceof JsonPrimitive sentAt)) return false;
         for (JsonElement element : thread.getAsJsonArray("messages")) {
             JsonObject message = element.getAsJsonObject();
             if (message.get("author").getAsString().equals("claude") && message.get("date").getAsString().compareTo(sentAt.getAsString()) >= 0) return true;
