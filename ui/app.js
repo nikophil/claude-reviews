@@ -92,6 +92,31 @@ async function api(path, body) {
     return json;
 }
 
+// Claude's star, drawn here: rays of alternating length around a center, in its orange, square as a GitHub app's avatar.
+const CLAUDE_AVATAR = html`
+    <svg class="avatar mr-2 flex-shrink-0" width="40" height="40" viewBox="-12 -12 24 24" role="img" aria-label="Claude">
+        <path stroke="#D97757" stroke-width="2.6" stroke-linecap="round" fill="none" d=${Array.from({ length: 12 }, (_, i) => {
+            const angle = (i * 30 + 15) * Math.PI / 180;
+            const length = i % 2 ? 6.5 : 9.5;
+            return `M0 0L${(Math.cos(angle) * length).toFixed(2)} ${(Math.sin(angle) * length).toFixed(2)}`;
+        }).join('')} />
+    </svg>`;
+
+/**
+ * My avatar, as in a GitHub timeline: my GitHub avatar, or my initials without login, or once the image failed on the page.
+ * `me` is `{ login, name, broken }`, undefined until `/api/me` answers.
+ */
+function myAvatar(me) {
+    if (me?.login) {
+        return html`<img class="avatar circle mr-2 flex-shrink-0" width="40" height="40" alt=${`@${me.login}`}
+            src=${`https://github.com/${encodeURIComponent(me.login)}.png?size=80`} onError=${me.broken} />`;
+    }
+    const words = me?.name?.match(/\S+/g) ?? [];
+    // Spread, so an initial outside the BMP (an emoji) stays whole.
+    const initials = words.length ? ([...words[0]][0] + (words.length > 1 ? [...words.at(-1)][0] : '')).toUpperCase() : '';
+    return html`<span class="avatar circle avatar-initials mr-2 flex-shrink-0" aria-hidden="true">${me && (initials || '?')}</span>`;
+}
+
 function App() {
     const [session, setSession] = useState();
     const [diff, setDiff] = useState();
@@ -109,6 +134,15 @@ function App() {
     // Since my last review, put forward after a Refresh that a Snapshot came before.
     const [forward, setForward] = useState(false);
     const [busy, setBusy] = useState(false);
+    // Who I am: read again at each poll until it gives my login, which gh may give later; a failed image holds for the page.
+    const [me, setMe] = useState();
+    const [avatarBroken, setAvatarBroken] = useState(false);
+    const login = useRef();
+    login.current = me?.login;
+    const readMe = () => {
+        if (!login.current) api('/api/me').then(fresh => setMe(current => JSON.stringify(current) === JSON.stringify(fresh) ? current : fresh), () => {});
+    };
+    useEffect(readMe, []);
     const [fileTreeOpen, setFileTreeOpen] = useState(() => preference('file-tree', 'open') !== 'collapsed');
     // Unified or Split.
     const [split, setSplit] = useState(() => preference('diff-view', 'unified') === 'split');
@@ -150,6 +184,7 @@ function App() {
         let stopped = false;
         let timer;
         const poll = () => {
+            readMe();
             const at = writes.current;
             const loaded = shown.current;
             Promise.allSettled([
@@ -231,7 +266,8 @@ function App() {
             return null;
         }
     };
-    const review = { readOnly: !!session.approvedAt, busy, selection, setSelection, draft, message, fold, act, diff, now, split, lines };
+    const avatar = me && { ...me, login: avatarBroken ? null : me.login, broken: () => setAvatarBroken(true) };
+    const review = { readOnly: !!session.approvedAt, busy, selection, setSelection, draft, message, fold, act, diff, now, split, lines, avatar };
     // As GitHub's, the menu closes once a view is chosen, and on Escape; the focus goes back to its button.
     const closeSettings = () => {
         settings.current.open = false;
@@ -513,8 +549,8 @@ function gaps(hunks, lineCount) {
     });
 }
 
-function threadBox(thread, { message, fold, readOnly, busy, act }) {
-    return html`<${Thread} thread=${thread} draft=${message(thread.id)} fold=${fold(thread)} readOnly=${readOnly} busy=${busy} act=${act} />`;
+function threadBox(thread, { message, fold, readOnly, busy, act, avatar }) {
+    return html`<${Thread} thread=${thread} draft=${message(thread.id)} fold=${fold(thread)} readOnly=${readOnly} busy=${busy} act=${act} avatar=${avatar} />`;
 }
 
 function language(path) {
@@ -646,7 +682,7 @@ function rows(file, threads, review) {
         .filter(Boolean);
 }
 
-function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act }) {
+function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act, avatar }) {
     const [label, color] = STATUS[thread.status] ?? [];
     const { side } = thread.anchor;
     const { start, end } = thread.at ?? thread.anchor;
@@ -661,13 +697,16 @@ function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act }) {
             </summary>
             ${!thread.at && html`<${Excerpt} anchor=${thread.anchor} />`}
             ${thread.messages.map(message => html`
-                <div class="Box-row">
-                    <div class="mb-1">
-                        <span class="text-bold mr-2">${message.author === 'me' ? 'You' : 'Claude'}</span>
-                        ${message.date ? html`<span class="color-fg-muted f6">${new Date(message.date).toLocaleString()}</span>`
-                            : html`<span class="Label Label--attention">Pending</span>`}
+                <div class="Box-row d-flex">
+                    ${message.author === 'claude' ? CLAUDE_AVATAR : myAvatar(avatar)}
+                    <div class="flex-auto min-width-0">
+                        <div class="mb-1">
+                            <span class="text-bold mr-2">${message.author === 'me' ? 'You' : 'Claude'}</span>
+                            ${message.date ? html`<span class="color-fg-muted f6">${new Date(message.date).toLocaleString()}</span>`
+                                : html`<span class="Label Label--attention">Pending</span>`}
+                        </div>
+                        <div class="markdown-body" dangerouslySetInnerHTML=${{ __html: marked.parse(message.body) }}></div>
                     </div>
-                    <div class="markdown-body" dangerouslySetInnerHTML=${{ __html: marked.parse(message.body) }}></div>
                 </div>`)}
             ${!readOnly && html`
                 <div class="Box-footer">

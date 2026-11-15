@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { connect, type AddressInfo } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { after, before, test } from 'node:test';
@@ -167,4 +168,94 @@ test('a second server on the same port exits on EADDRINUSE, and the first keeps 
     assert.notEqual(second.status, 0);
     assert.match(second.stderr, /EADDRINUSE/);
     assert.equal((await fetch(`http://127.0.0.1:${port}/api/health`)).status, 200);
+});
+
+const MONA = '[user]\n\tname = Mona Lisa\n';
+
+/**
+ * A server started with `gh` running `script` (or no `gh` at all) and the global git config `files.config`, in `bin`;
+ * `log` gets each call of gh.
+ */
+async function withMe(script: string | null, use: (url: string, log: string, bin: string) => Promise<void>, files: Record<string, string> = { config: MONA }): Promise<void> {
+    const bin = join(repo({}), 'bin');
+    const log = join(bin, 'log');
+    write(bin, { ...files, log: '' });
+    if (script !== null) {
+        write(bin, { gh: `#!/bin/sh\necho "$*" >> '${log}'\n${script}\n` });
+        chmodSync(join(bin, 'gh'), 0o755);
+    }
+    const { PATH, GIT_CONFIG_GLOBAL } = process.env;
+    // A directory holding a gh installed on the machine (/usr/bin in the CI) is mirrored without it:
+    // git, the commands of the fake gh and the shell of a git shim (asdf, mise) are still found.
+    const path = PATH!.split(':').map((dir, i) => {
+        if (!existsSync(join(dir, 'gh'))) return dir;
+        const mirror = join(bin, `path-${i}`);
+        mkdirSync(mirror);
+        for (const name of readdirSync(dir)) if (name !== 'gh') symlinkSync(join(dir, name), join(mirror, name));
+        return mirror;
+    });
+    Object.assign(process.env, { PATH: [bin, ...path].join(':'), GIT_CONFIG_GLOBAL: join(bin, 'config') });
+    const other = await start(0);
+    try {
+        await use(`http://127.0.0.1:${(other.address() as AddressInfo).port}`, log, bin);
+    } finally {
+        Object.assign(process.env, { PATH, GIT_CONFIG_GLOBAL });
+        if (GIT_CONFIG_GLOBAL === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+        other.close();
+    }
+}
+
+async function me(url: string): Promise<unknown> {
+    return (await fetch(`${url}/api/me`)).json();
+}
+
+test('GET /api/me answers the github.com login gh reads, once, and the name of git config user.name', async () => {
+    await withMe('echo octocat', async (url, log) => {
+        const first = await fetch(`${url}/api/me`);
+        const second = await fetch(`${url}/api/me`);
+
+        assert.equal(first.status, 200);
+        assert.deepEqual(await first.json(), { login: 'octocat', name: 'Mona Lisa' });
+        assert.deepEqual(await second.json(), { login: 'octocat', name: 'Mona Lisa' });
+        assert.equal(readFileSync(log, 'utf8'), 'api --hostname github.com user --jq .login\n', 'gh ran once, on github.com');
+    });
+});
+
+test('without gh, or with a gh that fails or answers after 2 s, GET /api/me answers a null login and the name of git config user.name', async () => {
+    // exec, so the 2 s timeout kills the sleep itself and not a shell that would leave it holding the output.
+    for (const script of [null, 'exit 1', 'exec sleep 4']) {
+        await withMe(script, async url => {
+            const started = Date.now();
+            const answer = await me(url);
+
+            assert.deepEqual(answer, { login: null, name: 'Mona Lisa' }, String(script));
+            assert.ok(Date.now() - started < 3000, `${script} answered within 2 s`);
+        });
+    }
+});
+
+test('GET /api/me reads the name from a file the global git config includes', async () => {
+    await withMe('exit 1', async url => {
+        assert.deepEqual(await me(url), { login: null, name: 'Mona Lisa' });
+    }, { config: '[include]\n\tpath = named\n', named: MONA });
+});
+
+test('GET /api/me keeps a failure of gh or of the name 60 s, then reads them again, and keeps them once read', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    // gh fails on its first call only.
+    await withMe(`[ -e "$0.ran" ] && echo octocat && exit; touch "$0.ran"; exit 1`, async (url, log, bin) => {
+        const calls = () => readFileSync(log, 'utf8').split('\n').filter(Boolean).length;
+        assert.deepEqual(await me(url), { login: null, name: null });
+        write(bin, { config: MONA });
+
+        t.mock.timers.tick(59_000);
+        assert.deepEqual(await me(url), { login: null, name: null });
+        assert.equal(calls(), 1);
+        t.mock.timers.tick(1_000);
+        assert.deepEqual(await me(url), { login: 'octocat', name: 'Mona Lisa' });
+        assert.equal(calls(), 2);
+        t.mock.timers.tick(60_000);
+        assert.deepEqual(await me(url), { login: 'octocat', name: 'Mona Lisa' });
+        assert.equal(calls(), 2);
+    }, { config: '' });
 });

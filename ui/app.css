@@ -17,6 +17,8 @@
 .file-viewed:has(:checked) { background-color: var(--bgColor-accent-muted); border-color: var(--borderColor-accent-muted); }
 .file-viewed input { margin: 0; }
 
+.avatar-initials { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; font-size: 14px; font-weight: 600; color: var(--fgColor-muted); background-color: var(--bgColor-neutral-muted); }
+
 .diff-table { width: 100%; border-collapse: collapse; font-family: var(--fontStack-monospace); font-size: 12px; line-height: 20px; }
 .diff-table tr { height: 20px; }
 .diff-num { width: 1%; min-width: 50px; padding: 0 10px; text-align: right; color: var(--fgColor-muted); user-select: none; vertical-align: top; }

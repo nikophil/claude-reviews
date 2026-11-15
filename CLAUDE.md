@@ -51,6 +51,7 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 | Route | Rôle |
 | --- | --- |
 | `GET /api/health` | `{ app: "claude-reviews", version }`, la version de `.claude-plugin/plugin.json`. |
+| `GET /api/me` | `{ login, name }`, pour les avatars de mes messages : mon login sur github.com (`gh api --hostname github.com user --jq .login`) et `git config --global --includes user.name`, chacun `null` en échec ou au-delà de 2 s. |
 | `POST /api/shutdown` `{}` | Arrête le serveur : il cesse d'écouter avant de répondre. |
 | `GET /api/sessions` | Les sessions ouvertes, pour Reviews : `[{ id, worktree, repo, branch, awaitingYou, waitingForClaude, updatedAt }]`, Awaiting you d'abord, puis Waiting for Claude, puis le reste, la plus récemment active d'abord à égalité. |
 | `GET /api/sessions?worktree=<chemin>` | La session ouverte du worktree, sans en créer : 404 sans session ouverte. |
@@ -81,6 +82,7 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - Avec `?w=1` en plus de `?base=&tree=`, `context` se calcule sur le diff qui cache les espaces : un thread sur une ligne qui ne change que par ses espaces sort du diff, et reçoit ses lignes de contexte.
 - `context` liste, quand aucun hunk du diff de ce code ne montre la dernière ligne de la plage, les lignes de 3 au-dessus à 3 au-dessous de la plage, hors celles des hunks, inchangées et numérotées des deux côtés ; l'UI les affiche comme un hunk de plus.
 - Placée par `?base=&tree=`, la session ne garde dans `viewed` que les fichiers dont le contenu dans `tree` a toujours l'id enregistré : un fichier qui change n'est plus vu, un changement de base qui ne le touche pas le laisse vu.
+- Le serveur garde en mémoire `login` et `name` de `/api/me` dès qu'ils répondent ; un échec, il le garde 60 s, puis l'appel suivant relance sa commande ; le mod n'appelle pas `/api/me`.
 - `author` vaut `me` ou `claude` : un message de `me` naît Pending, un message de `claude` est publié sur-le-champ.
 - Un message de `me` rouvre un thread Resolved au Send qui le publie, pas un message de `claude`.
 - Les bases sont `HEAD` (Uncommitted changes), `last-review` (Since my last review, le Snapshot du dernier Send, grisé avant le premier), `origin/HEAD`, puis les branches locales `refs/heads/<nom>` hors celle du worktree, de la plus proche du merge-base à la plus lointaine.
@@ -176,6 +178,8 @@ Le dossier de données est `$XDG_DATA_HOME/claude-reviews`, sinon `~/.local/shar
 
 Primer 21.5.1 nomme ses variables de diff `--diffBlob-addition-bgColor-line` et non `--diffBlob-additionLine-bgColor` comme en 22.
 Le markdown des messages passe par marked, avec le HTML brut échappé, les images remplacées par leur texte, et seuls les liens `http`, `https` et `mailto` cliquables (`ui/app.js`).
+Mes messages montrent `https://github.com/<login>.png`, et sans login, ou une fois l'image en échec sur la page, mes initiales tirées de `name` ; ceux de Claude, son étoile en SVG inline, carrée comme l'avatar d'une app GitHub.
+La page relit `/api/me` à chaque poll tant qu'il ne donne pas de `login`.
 La coloration syntaxique passe par les variables `--color-prettylights-syntax-*` de Primer (`ui/app.css`), pas par un thème highlight.js.
 
 ## Langues
@@ -196,5 +200,6 @@ La coloration syntaxique passe par les variables `--color-prettylights-syntax-*`
 - `node --test` couvre le serveur et les fonctions pures, dans des fichiers `*.test.ts` à côté du code.
 - Les dépôts de test se créent avec `repo()` et `write()` de `server/fixture.ts`, dans un dossier temporaire, à l'abri de la config git globale ; `removeRepos()` les supprime en fin de fichier de test.
 - Playwright (Chromium) couvre l'UI, dans `e2e/*.spec.ts`, sur les mêmes fixtures ; chaque test ouvre `/?worktree=<fixture>`.
+- Le serveur de Playwright a un `gh` qui échoue en tête du `PATH`, pour que mon vrai login n'atteigne pas les tests ; un test qui en a besoin répond lui-même à `/api/me`.
 - La CI (`.github/workflows/ci.yml`) lance les deux suites sur chaque PR, sous Node 25.
 - Une PR ajoute au plus 1000 lignes, hors lockfile et fichiers vendorisés.

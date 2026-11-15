@@ -28,8 +28,34 @@ export function notification(text: string, platform = process.platform): string[
         : ['notify-send', 'claude-reviews', text];
 }
 
+/** The output of a command, trimmed, or null when it fails, prints nothing, or takes more than 2 s. */
+function output(file: string, args: string[]): Promise<string | null> {
+    return new Promise(resolve => execFile(file, args, { timeout: 2000 }, (error, stdout) => resolve(error ? null : stdout.trim() || null)));
+}
+
+/** `output` of a command, kept once it answers; a failure is kept 60 s, then the next call runs the command again. */
+function remembered(file: string, args: string[]): () => Promise<string | null> {
+    let answer: Promise<string | null> | undefined;
+    let until = Infinity;
+    return () => {
+        if (!answer || Date.now() >= until) {
+            until = Infinity;
+            answer = output(file, args).then(value => {
+                if (value === null) until = Date.now() + 60_000;
+                return value;
+            });
+        }
+        return answer;
+    };
+}
+
 /** `notify` runs a notification command; the tests record it instead. */
 export function start(port: number, notify = (argv: string[]) => { execFile(argv[0], argv.slice(1), () => {}); }): Promise<Server> {
+    // Kept: gh can take a second, and the login does not change while the server runs.
+    // ponytail: a login or name changed while the server runs shows after its restart only.
+    // The avatar is on github.com, so the login is that of github.com, whichever host gh has active.
+    const githubLogin = remembered('gh', ['api', '--hostname', 'github.com', 'user', '--jq', '.login']);
+    const userName = remembered('git', ['config', '--global', '--includes', 'user.name']);
     const server = createServer(async (req, res) => {
         const { port } = server.address() as AddressInfo;
         // Against DNS rebinding: a page on another name resolving to 127.0.0.1 must not read the diffs.
@@ -53,6 +79,10 @@ export function start(port: number, notify = (argv: string[]) => { execFile(argv
         }
         try {
             if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { app: 'claude-reviews', version });
+            if (url.pathname === '/api/me' && req.method === 'GET') {
+                const [login, name] = await Promise.all([githubLogin(), userName()]);
+                return json(res, 200, { login, name });
+            }
             if (url.pathname === '/api/shutdown' && req.method === 'POST') {
                 // Stops listening first, so a server started right after the answer gets the port.
                 server.close();
