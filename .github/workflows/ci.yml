@@ -9,8 +9,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 25
           cache: npm
@@ -24,9 +24,9 @@ jobs:
   phpstorm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # PhpStorm, the Gradle dependencies and the Plugin Verifier, as run.sh and build.gradle.kts pin them.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/phpstorm-cache
           key: phpstorm-${{ hashFiles('phpstorm/ui-test/run.sh', 'phpstorm/ui-test/build.gradle.kts') }}
@@ -35,7 +35,7 @@ jobs:
         env:
           PHPSTORM_CACHE: ${{ runner.temp }}/phpstorm-cache
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: phpstorm-ui-test
           path: |
