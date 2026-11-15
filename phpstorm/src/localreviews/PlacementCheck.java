@@ -105,14 +105,16 @@ final class PlacementCheck {
 
         JsonObject sent = JsonParser.parseString("""
             { "sentAt": "2026-11-14T10:05:00.000Z", "threads": [
-              { "id": 1, "messages": [{ "author": "me", "date": "2026-11-14T10:05:00.000Z" }, { "author": "claude", "date": "2026-11-14T10:06:00.000Z" }] },
-              { "id": 2, "messages": [{ "author": "claude", "date": "2026-11-14T10:04:00.000Z" }, { "author": "me", "date": "2026-11-14T10:05:00.000Z" }] },
-              { "id": 3, "messages": [{ "author": "claude", "date": "2026-11-14T10:05:00.000Z" }] }
+              { "id": 1, "resolved": false, "messages": [{ "author": "me", "date": "2026-11-14T10:05:00.000Z" }, { "author": "claude", "date": "2026-11-14T10:06:00.000Z" }] },
+              { "id": 2, "resolved": false, "messages": [{ "author": "claude", "date": "2026-11-14T10:04:00.000Z" }, { "author": "me", "date": "2026-11-14T10:05:00.000Z" }] },
+              { "id": 3, "resolved": false, "messages": [{ "author": "claude", "date": "2026-11-14T10:05:00.000Z" }] },
+              { "id": 4, "resolved": true, "messages": [{ "author": "me", "date": "2026-11-14T10:05:00.000Z" }, { "author": "claude", "date": "2026-11-14T10:06:00.000Z" }] }
             ] }""").getAsJsonObject();
         JsonArray sentThreads = sent.getAsJsonArray("threads");
         check(Placement.replied(sent, sentThreads.get(0).getAsJsonObject()), "Claude replied after my last Send");
         check(!Placement.replied(sent, sentThreads.get(1).getAsJsonObject()), "Claude wrote before my last Send only");
         check(Placement.replied(sent, sentThreads.get(2).getAsJsonObject()), "Claude wrote at the date of my last Send");
+        check(!Placement.replied(sent, sentThreads.get(3).getAsJsonObject()), "no Replied on a Resolved thread, as in the web page");
         JsonObject neverSent = sent.deepCopy();
         neverSent.remove("sentAt");
         check(!Placement.replied(neverSent, sentThreads.get(0).getAsJsonObject()), "nothing replied before the first Send");

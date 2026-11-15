@@ -80,7 +80,7 @@ Un thread non Resolved dont le dernier message envoyé est le mien.
 _Avoid_: unread, watermark
 
 **Replied**:
-Se dit d'un thread où Claude a écrit depuis mon dernier Send ; avant mon premier Send, aucun ne l'est.
+Se dit d'un thread non Resolved où Claude a écrit depuis mon dernier Send ; avant mon premier Send, aucun ne l'est.
 C'est une marque pour retrouver ses réponses, pas un statut du thread.
 _Avoid_: Awaiting you, unread
 
