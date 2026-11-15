@@ -13,6 +13,7 @@ import com.intellij.diff.editor.DiffEditorTabFilesManager;
 import com.intellij.diff.editor.DiffEditorViewerFileEditor;
 import com.intellij.diff.impl.CacheDiffRequestChainProcessor;
 import com.intellij.diff.tools.fragmented.UnifiedDiffViewer;
+import com.intellij.diff.tools.util.side.OnesideTextDiffViewer;
 import com.intellij.diff.tools.util.side.TwosideTextDiffViewer;
 import com.intellij.openapi.fileEditor.FileEditor;
 import com.intellij.openapi.fileEditor.FileEditorManager;
@@ -166,9 +167,11 @@ public final class ReviewDiffAction extends DumbAwareAction {
             DiffRequest active = processor.getActiveRequest();
             if (active != null && active == target.made) {
                 // Already shown: its viewer scrolls; a viewer made for a file reads SCROLL_TO_LINE once only.
-                // ponytail: the viewers of text only, side by side or unified; an added or deleted file stays where it is.
+                // ponytail: the viewers of text only; another stays where it is.
                 if (scroll != null && processor.getActiveViewer() instanceof TwosideTextDiffViewer twoside) twoside.scrollToLine(scroll.first, scroll.second);
                 if (scroll != null && processor.getActiveViewer() instanceof UnifiedDiffViewer unified) unified.scrollToLine(scroll.first, scroll.second);
+                // An added or a deleted file shows its one side alone.
+                if (scroll != null && processor.getActiveViewer() instanceof OnesideTextDiffViewer oneside && oneside.getSide() == scroll.first) oneside.scrollToLine(scroll.second);
             } else {
                 target.line = scroll;
                 if (target.made != null) target.made.putUserData(DiffUserDataKeys.SCROLL_TO_LINE, scroll);
