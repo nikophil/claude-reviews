@@ -1,132 +1,132 @@
-# claude-reviews : brief
+# claude-reviews: brief
 
-Un outil local de review de code au look de l'onglet « Files changed » de GitHub,
-pour relire ce que Claude Code a écrit, **sans GitHub**.
-La fonction qui manque partout ailleurs : de vrais **threads sous la ligne**,
-où Claude répond dans le thread plutôt que dans la conversation.
+A local code review tool that looks like GitHub's "Files changed" tab,
+to review what Claude Code wrote, **without GitHub**.
+The feature missing everywhere else: real **threads under the line**,
+where Claude replies in the thread rather than in the conversation.
 
-Vocabulaire : [GLOSSARY.md](GLOSSARY.md).
-Décisions structurantes : [docs/adr/](docs/adr/).
+Vocabulary: [GLOSSARY.md](GLOSSARY.md).
+Structural decisions: [docs/adr/](docs/adr/).
 
-## Pourquoi
+## Why
 
-- Claude Desktop permet de commenter une ligne du diff, mais à sens unique :
-  Claude répond dans la conversation, pas sous la ligne, et on ne peut pas répondre à ses commentaires de « Review code ».
-- Codex app, Conductor, Warp et Vibe Kanban fonctionnent pareil : on envoie des commentaires groupés, l'agent corrige.
-- Aucun outil existant ne se forke raisonnablement, d'où le départ de zéro :
-  - **wyrd-diff** : un seul auteur, rien depuis le 22 mai 2026, pas de fichier LICENSE, UI Svelte sans Primer ;
-    l'agent y résout les threads, et le diff part du bout de la base plutôt que du merge-base.
-    On lui reprend deux idées : les fichiers non suivis dans le diff, et les threads livrés à l'agent seulement à l'envoi ;
-  - **tuicr** : une TUI, avec des commentaires plats, sans thread ;
-  - **Plannotator** : des commentaires ancrés sur le diff, mais ni réponse en thread ni état résolu en review, et 778k lignes.
-    Son mod Claude Code sert de modèle pour réveiller une session (voir [ADR 0001](docs/adr/0001-mod-claude-code-plutot-que-mcp.md)).
+- Claude Desktop lets you comment on a line of the diff, but one way only:
+  Claude replies in the conversation, not under the line, and you cannot reply to its "Review code" comments.
+- Codex app, Conductor, Warp and Vibe Kanban work the same way: you send a batch of comments, and the agent makes the fixes.
+- No existing tool is reasonable to fork, hence starting from scratch:
+  - **wyrd-diff**: a single author, nothing since May 22, 2026, no LICENSE file, a Svelte UI without Primer;
+    the agent resolves the threads there, and the diff starts from the tip of the base rather than from the merge-base.
+    We take two ideas from it: untracked files in the diff, and threads delivered to the agent only when sent;
+  - **tuicr**: a TUI, with flat comments, no threads;
+  - **Plannotator**: comments anchored on the diff, but neither threaded replies nor a resolved state in review, and 778k lines.
+    Its Claude Code mod serves as the model for waking a session (see [ADR 0001](docs/adr/0001-claude-code-mod-rather-than-mcp.md)).
 
-## Décisions
+## Decisions
 
-- **UI web locale**, pas de TUI.
-- **Look GitHub** avec **Primer CSS** (design system open source de GitHub, MIT), pas un CSS recopié ;
-  thème sombre automatique (`data-color-mode="auto"`).
-- **Une session par worktree** : la relecture d'un worktree comparé à une base, de son ouverture à son Approve ou à la disparition du worktree.
-  Un worktree a au plus une session ouverte, et un checkout ou un rebase ne la clôt pas.
-- **Une review est un envoi** : Send livre mes messages Pending à Claude et le réveille, Approve clôt la session.
-  Un Send sans message reste possible : il prend un Snapshot, et ne réveille Claude que si des threads l'attendent encore.
-  Pas de verdict Comment ou Request changes : Claude répond aux questions, et modifie le code quand un thread le demande.
-- **Seul l'utilisateur résout un thread.**
-  Claude répond dans chaque thread qui l'attend, et n'ouvre un thread que quand on le lui demande (« relis ton diff et ouvre des threads »).
-- **Claude passe par un mod Claude Code**, pas par un serveur MCP et un hook `Stop` ([ADR 0001](docs/adr/0001-mod-claude-code-plutot-que-mcp.md)) :
-  un Send réveille la Claude session même inactive, au prix de Claude Desktop, où le mod ne tourne pas ;
-  le réveil est vérifié (voir [Test du mod](#test-du-mod)).
-- **Deux outils séparés** pour claude-reviews et gh-notif, reliés par un petit contrat HTTP (voir plus bas).
+- **Local web UI**, not a TUI.
+- **GitHub look** with **Primer CSS** (GitHub's open source design system, MIT), not copied CSS;
+  automatic dark theme (`data-color-mode="auto"`).
+- **One session per worktree**: reviewing a worktree against a base, from its opening to its Approve or to the worktree's disappearance.
+  A worktree has at most one open session, and a checkout or a rebase does not close it.
+- **A review is a send**: Send delivers my Pending messages to Claude and wakes it, Approve closes the session.
+  A Send without a message is still possible: it takes a Snapshot, and wakes Claude only if threads are still waiting for it.
+  No Comment or Request changes verdict: Claude answers the questions, and changes the code when a thread asks for it.
+- **Only the user resolves a thread.**
+  Claude replies in each thread waiting for it, and opens a thread only when asked to ("review your diff and open threads").
+- **Claude goes through a Claude Code mod**, not through an MCP server and a `Stop` hook ([ADR 0001](docs/adr/0001-claude-code-mod-rather-than-mcp.md)):
+  a Send wakes the Claude session even when idle, at the cost of Claude Desktop, where the mod does not run;
+  the wake-up is verified (see [Mod test](#mod-test)).
+- **Two separate tools** for claude-reviews and gh-notif, linked by a small HTTP contract (see below).
 
 ## Architecture
 
-1. **Un serveur local par compte**, pour tous ses worktrees : il sert l'UI et une API JSON, sur un port éphémère, derrière un token ([ADR 0006](docs/adr/0006-un-serveur-et-un-token-par-compte.md)).
-   Le mod le démarre à la demande quand le fichier `endpoint` ne nomme aucun serveur, sans service systemd.
-2. **Stockage** : un fichier JSON par session ouverte sous `~/.local/share/claude-reviews/sessions/`, rangé sous son id et retrouvé par le chemin de son worktree ;
-   une session close part sous `~/.local/share/claude-reviews/archive/`, rangée sous son id ;
-   seul le serveur écrit ces fichiers, par remplacement atomique ([ADR 0003](docs/adr/0003-stockage-hors-du-depot.md)).
-3. **Snapshots** : à chaque calcul du diff, le serveur écrit un tree du working tree (suivis et non suivis, hors ignorés) avec un index temporaire ;
-   à chaque Send, il commite le tree que l'UI affichait sous `refs/claude-reviews/<session>/<n>` ;
-   l'Approve, ou la disparition du worktree, supprime ces refs ([ADR 0002](docs/adr/0002-snapshots-dans-des-refs-cachees.md)).
-4. **Le mod Claude Code**, livré en plugin (`hooks/hooks.json` → `"modules"`) :
-   - il enregistre les outils `list_open_threads()`, qui renvoie en entier les threads non Resolved, Waiting for Claude ou où Claude a parlé en dernier,
-     `reply_to_thread(id, body)` et `open_thread(file, side, lines, body)`, ainsi que la commande `/review-local`,
-     qui ouvre la session du worktree dans PhpStorm, VS Code ou le navigateur, et demande lequel quand un de ces IDE est installé ;
-   - il relie la Claude session à sa session de relecture par le chemin du worktree (`git rev-parse --show-toplevel` sur le `cwd`) ;
-   - sans session ouverte, `open_thread` en ouvre une ; une session close refuse les messages de Claude, et le mod cesse alors de le relancer ;
-   - il interroge le serveur, et sur un Send injecte « N threads t'attendent » avec `$.prompt.submit` ;
-   - il n'attend jamais `$.prompt.submit` dans un hook, car l'appel ne se résout qu'une fois la session inactive, et un hook n'a que 10 s ;
-     un `{ drop }` (après un Esc, tant que personne n'a tapé) laisse les threads en attente, et le mod retente au prochain prompt ou début de tour ;
-   - si Claude finit son tour alors que des threads l'attendent encore, il le relance une seule fois par Send :
-     la relance compte quand son prompt ouvre un tour, un `{ drop }` ne compte pas, et un nouveau Send en permet une autre ;
-   - au démarrage d'une Claude session dans un worktree où des threads attendent, il ajoute « N threads t'attendent » au premier message.
-5. **Notification** : à la fin du tour de Claude qui suit un Send, ou sa relance s'il y en a une, `notify-send` annonce « Claude replied in N threads »,
-   suivi de « M still waiting » s'il en reste ; Claude a pu modifier du code après sa dernière réponse, d'où la fin du tour plutôt que la dernière réponse.
-   Le mod voit la fin du tour et appelle le serveur, qui envoie la notification (`notify-send` ou `osascript`).
-6. **Stack** : Node 25, TypeScript exécuté sans build (type stripping), `node:http`, aucune dépendance npm.
-   Front en Preact + htm, avec Primer CSS et marked, chacun vendorisé en un fichier ;
-   il interroge le serveur toutes les 2 s, sans perdre un message en cours de frappe ;
-   le diff, lui, ne se recharge qu'au Refresh, que propose un bandeau quand le working tree diffère du code affiché.
+1. **One local server per account**, for all its worktrees: it serves the UI and a JSON API, on an ephemeral port, behind a token ([ADR 0006](docs/adr/0006-one-server-and-one-token-per-account.md)).
+   The mod starts it on demand when the `endpoint` file names no server, without a systemd service.
+2. **Storage**: one JSON file per open session under `~/.local/share/claude-reviews/sessions/`, filed under its id and found by its worktree's path;
+   a closed session moves under `~/.local/share/claude-reviews/archive/`, filed under its id;
+   only the server writes these files, by atomic replacement ([ADR 0003](docs/adr/0003-storage-outside-the-repository.md)).
+3. **Snapshots**: on each diff computation, the server writes a tree of the working tree (tracked and untracked files, ignored ones excluded) with a temporary index;
+   on each Send, it commits the tree the UI was showing under `refs/claude-reviews/<session>/<n>`;
+   the Approve, or the worktree's disappearance, deletes these refs ([ADR 0002](docs/adr/0002-snapshots-in-hidden-refs.md)).
+4. **The Claude Code mod**, shipped as a plugin (`hooks/hooks.json` → `"modules"`):
+   - it registers the tools `list_open_threads()`, which returns in full the threads not Resolved, Waiting for Claude or where Claude spoke last,
+     `reply_to_thread(id, body)` and `open_thread(file, side, lines, body)`, as well as the `/review-local` command,
+     which opens the worktree's session in PhpStorm, VS Code or the browser, and asks which one when one of these IDEs is installed;
+   - it links the Claude session to its Session by the worktree's path (`git rev-parse --show-toplevel` on the `cwd`);
+   - without an open session, `open_thread` opens one; a closed session refuses Claude's messages, and the mod then stops relaunching Claude;
+   - it polls the server, and on a Send injects "N threads are waiting for you" with `$.prompt.submit`;
+   - it never awaits `$.prompt.submit` in a hook, because the call resolves only once the session is idle, and a hook has only 10 s;
+     a `{ drop }` (after an Esc, as long as nobody has typed) leaves the threads waiting, and the mod retries at the next prompt or turn start;
+   - if Claude ends its turn while threads are still waiting for it, the mod relaunches it only once per Send:
+     the relaunch counts when its prompt opens a turn, a `{ drop }` does not count, and a new Send allows another one;
+   - when a Claude session starts in a worktree where threads are waiting, it adds "N threads are waiting for you" to the first message.
+5. **Notification**: at the end of Claude's turn that follows a Send, or of its relaunch if there is one, `notify-send` announces "Claude replied in N threads",
+   followed by "M still waiting" if any remain; Claude may have changed code after its last reply, hence the end of the turn rather than the last reply.
+   The mod sees the end of the turn and calls the server, which sends the notification (`notify-send` or `osascript`).
+6. **Stack**: Node 25, TypeScript run without a build (type stripping), `node:http`, no npm dependency.
+   Front end in Preact + htm, with Primer CSS and marked, each vendored as a single file;
+   it polls the server every 2 s, without losing a message being typed;
+   the diff, however, reloads only on Refresh, which a banner offers when the working tree differs from the displayed code.
 
-## Diff et base
+## Diff and base
 
-- La base se choisit dans l'UI, et le diff va toujours jusqu'au working tree, changements non commités et fichiers non suivis compris :
-  - **Uncommitted changes** : HEAD, le choix par défaut ;
-  - **Since my last review** : le Snapshot du dernier Send, ce qui remplace les « vues par tour » ; grisée avant le premier Send ;
-  - **la branche par défaut** (origin/HEAD) : depuis le merge-base ;
-  - **la branche de base** : la base de la PR de la branche, sinon la branche locale la plus proche ;
-  - **une PR ouverte**, par sa branche sur origin, pour relire depuis la PR sur laquelle la branche s'empile ;
-  - **les autres branches**, locales puis distantes, triées par distance au merge-base, la branche parente d'une pile de PR en tête.
-- Chaque session garde la dernière base choisie.
+- The base is chosen in the UI, and the diff always goes up to the working tree, uncommitted changes and untracked files included:
+  - **Uncommitted changes**: HEAD, the default choice;
+  - **Since my last review**: the Snapshot of the last Send, which replaces the "per-turn views"; grayed out before the first Send;
+  - **the default branch** (origin/HEAD): from the merge-base;
+  - **the base branch**: the base of the branch's PR, otherwise the closest local branch;
+  - **an open PR**, by its branch on origin, to review from the PR the branch stacks on;
+  - **the other branches**, local then remote, sorted by distance to the merge-base, the parent branch of a PR stack first.
+- Each session keeps the last chosen base.
 
-## Modèle d'un thread
+## Thread model
 
-- **Anchor** : fichier, côté (ancien ou nouveau), plage de lignes, contenu de ces lignes et de leurs voisines,
-  et l'extrait de diff d'origine (comme le `diff_hunk` de GitHub), sans SHA.
-  Elle se capture sur le code que voit son auteur : la base et le code affiché pour moi, la base de la session et le working tree pour Claude.
-- **Messages** : auteur (`me` | `claude`), corps en markdown, date, et pour les miens la review qui l'a publié ; sans review, mon message est Pending.
-  Un message de Claude est publié dès qu'il l'écrit, hors de toute review : un thread que Claude ouvre est publié sur-le-champ, sans attendre de Send.
-  Un message prend sa date et sa place dans le thread à sa publication, donc mon message Pending passe après une réponse de Claude arrivée entre-temps.
-- Trois faits indépendants, qui se combinent :
-  - **à qui le tour**, déduit du dernier message envoyé : **Waiting for Claude** si c'est le mien ; si c'est celui de Claude, le thread n'affiche pas de statut ;
-  - **Resolved**, que moi seul change, sur-le-champ, sans review ; un thread Resolved n'attend plus Claude, même si mon message est le dernier,
-    et seul un message que j'y écris le rouvre, pas une réponse de Claude ;
-  - **Outdated**, calculé quand l'ancre ne se retrouve plus dans le code qu'on regarde.
-- **Ré-ancrage, dès le MVP** : chercher les lignes par leur contenu exact, au plus près de leur position d'origine, et départager par les voisines ;
-  sinon le thread est Outdated et s'affiche avec son extrait d'origine.
-  L'UI ré-ancre sur le code affiché, et `list_open_threads()` sur la base de la session et le working tree courant.
-- **Thread hors du diff affiché** (Claude a commité, ou la base a changé) : il s'affiche dans son fichier, à sa ligne, avec quelques lignes de contexte,
-  comme un hunk de plus.
-- **Approve** reste grisé tant qu'un thread non Resolved porte un message Pending.
-  Il passe la session en lecture seule, n'envoie rien à Claude, et laisse commit, push et PR à la conversation.
-  La session approuvée reste consultable à son URL, mais quitte l'écran Reviews.
-  On peut approuver avec des threads ouverts : la boîte de dialogue les compte.
-  Un `/review-local` après un Approve ouvre une nouvelle session.
-- **Worktree disparu** (`git worktree remove`, ou Orca qui le nettoie) : dès qu'il le constate, le serveur clôt sa session comme un Approve,
-  pour qu'un nouveau worktree au même chemin n'en hérite pas.
+- **Anchor**: file, side (old or new), line range, content of these lines and of their neighbors,
+  and the original diff excerpt (like GitHub's `diff_hunk`), without a SHA.
+  It is captured on the code its author sees: the base and the displayed code for me, the session's base and the working tree for Claude.
+- **Messages**: author (`me` | `claude`), markdown body, date, and for mine the review that published it; without a review, my message is Pending.
+  A message from Claude is published as soon as Claude writes it, outside any review: a thread that Claude opens is published immediately, without waiting for a Send.
+  A message takes its date and its place in the thread when it is published, so my Pending message goes after a reply from Claude that arrived in the meantime.
+- Three independent facts, which combine:
+  - **whose turn it is**, inferred from the last sent message: **Waiting for Claude** if it is mine; if it is Claude's, the thread shows no status;
+  - **Resolved**, which only I change, immediately, without a review; a Resolved thread no longer waits for Claude, even if my message is the last,
+    and only a message I write in it reopens it, not a reply from Claude;
+  - **Outdated**, computed when the anchor can no longer be found in the code being looked at.
+- **Re-anchoring, from the MVP on**: look for the lines by their exact content, as close as possible to their original position, and break ties with the neighbors;
+  otherwise the thread is Outdated and is shown with its original excerpt.
+  The UI re-anchors on the displayed code, and `list_open_threads()` on the session's base and the current working tree.
+- **Thread outside the displayed diff** (Claude committed, or the base changed): it is shown in its file, at its line, with a few lines of context,
+  as one more hunk.
+- **Approve** stays grayed out as long as a thread not Resolved holds a Pending message.
+  It makes the session read-only, sends nothing to Claude, and leaves commit, push and PR to the conversation.
+  The approved session stays viewable at its URL, but leaves the Reviews screen.
+  You can approve with open threads: the dialog counts them.
+  A `/review-local` after an Approve opens a new session.
+- **Worktree gone** (`git worktree remove`, or Orca cleaning it up): as soon as it notices, the server closes its session like an Approve,
+  so that a new worktree at the same path does not inherit it.
 
-## Écrans (maquette)
+## Screens (mockup)
 
-Maquette cliquable : https://claude.ai/artifact/Vx1yLU9aWnA8HujQPUSWBP
-(contenu d'exemple, antérieure à ces décisions : elle montre encore Comment / Request changes).
+Clickable mockup: https://claude.ai/artifact/Vx1yLU9aWnA8HujQPUSWBP
+(sample content, predating these decisions: it still shows Comment / Request changes).
 
-- **Files changed** : arbre des fichiers, diff unifié, threads dans le diff, sélecteur de base,
-  bandeau « The code changed since it was loaded » et son Refresh, qui met en avant Since my last review après un Send, et boutons Send et Approve.
-- **Reviews** : la liste des sessions ouvertes sur tous les worktrees, triées par qui doit agir ;
-  l'écran garde le nom du produit, bien qu'il liste des sessions.
-- **gh-notif · Local reviews** : la section proposée côté gh-notif.
+- **Files changed**: file tree, unified diff, threads in the diff, base selector,
+  the "The code changed since it was loaded" banner and its Refresh, which highlights Since my last review after a Send, and the Send and Approve buttons.
+- **Reviews**: the list of open sessions across all worktrees, sorted by who must act;
+  the screen keeps the product's name, although it lists sessions.
+- **gh-notif · Local reviews**: the section proposed on the gh-notif side.
 
-## Intégration avec gh-notif
+## Integration with gh-notif
 
-gh-notif : extension `gh`, Node ESM sans dépendance npm, page web locale sur `:7777` au look GitHub,
-notifications bureau (`src/notify.js`, `notify-send` ou `osascript`).
-Il tourne aussi en multi-utilisateur.
-Son `CLAUDE.md` impose de lire `docs/ARCHITECTURE.md` avant toute modification, et des fonctions pures testées sur fixtures.
+gh-notif: a `gh` extension, Node ESM without npm dependencies, a local web page on `:7777` with a GitHub look,
+desktop notifications (`src/notify.js`, `notify-send` or `osascript`).
+It also runs multi-user.
+Its `CLAUDE.md` requires reading `docs/ARCHITECTURE.md` before any change, and pure functions tested on fixtures.
 
-L'intérêt : une seule boîte de réception « où est-ce qu'on m'attend », de la review locale jusqu'à la PR mergeable.
-Ça vaut surtout avec plusieurs Claude sessions en parallèle ; avec une seule, le `notify-send` du MVP suffit.
+The point: a single "where am I needed" inbox, from the local review to the mergeable PR.
+It pays off mostly with several Claude sessions in parallel; with only one, the MVP's `notify-send` is enough.
 
-Contrat proposé, après le MVP : claude-reviews expose une entrée par session ouverte, sur le port et avec le token du fichier `endpoint` (plus de port fixe depuis l'ADR 0006)
+Proposed contract, after the MVP: claude-reviews exposes one entry per open session, on the port and with the token of the `endpoint` file (no fixed port since ADR 0006)
 
 ```
 GET http://127.0.0.1:<port>/api/inbox
@@ -135,36 +135,36 @@ Authorization: Bearer <token>
    "openThreads": 2, "awaitingMe": 2, "lastActor": "claude", "updatedAt": "…" }]
 ```
 
-Côté gh-notif, une PR **générique** (« sources locales » : n'importe quel outil qui expose ce JSON) :
-- le flux est lu dans la boucle de poll, seulement s'il est configuré ;
-- une section « Local reviews » et un compteur par onglet ;
-- une nouvelle catégorie de notification (« Claude replied in N threads ») ;
-- rien sur l'instance multi-utilisateur.
+On the gh-notif side, a **generic** PR ("local sources": any tool that exposes this JSON):
+- the feed is read in the poll loop, only if it is configured;
+- a "Local reviews" section and a counter per tab;
+- a new notification category ("Claude replied in N threads");
+- nothing on the multi-user instance.
 
-## Effort estimé
+## Estimated effort
 
-- MVP utilisable : 4 à 6 jours, plus que les 2 à 4 jours du premier brief,
-  car il absorbe le ré-ancrage, les snapshots, le sélecteur de base, les plages de lignes et le mod.
-- Côté gh-notif : une demi-journée à une journée, tests compris.
+- Usable MVP: 4 to 6 days, more than the 2 to 4 days of the first brief,
+  because it absorbs re-anchoring, snapshots, the base selector, line ranges and the mod.
+- gh-notif side: half a day to a day, tests included.
 
-## Test du mod
+## Mod test
 
-Fait le 14 novembre 2026 sur Claude Code 2.1.325, avec un mod jetable (`wake-probe`) où un fichier tient lieu de serveur :
-- `$.prompt.submit` réveille une Claude session inactive en 0,1 s, sans que personne tape ;
-  le prompt arrive comme un message du plugin (`origin.kind: 'plugin'`).
-- Appelé pendant un tour, il attend la fin du tour, puis ouvre un tour à lui ; l'appel ne se résout qu'à ce moment.
-- Appelé depuis un hook `turn.complete`, il ouvre le tour suivant : la relance marche.
-- Le mod lit le `cwd` (`e.cwd` au `session.start`, `$.session.cwd()`, `$.session.root()`) et lance `git` avec `$.process.run`.
-- Non testé, mais décrit par Plannotator (`~/.claude/plugins/marketplaces/plannotator/docs/agent-guides/claude-code-mod.md`) :
-  le `{ drop }` après un Esc ;
-  et leur réveil arrivé seulement à la frappe suivante venait de leur instance détruite au `session.end` d'un `/clear`, pas du moteur.
+Done on November 14, 2026 on Claude Code 2.1.325, with a throwaway mod (`wake-probe`) where a file stands in for the server:
+- `$.prompt.submit` wakes an idle Claude session in 0.1 s, without anyone typing;
+  the prompt arrives as a message from the plugin (`origin.kind: 'plugin'`).
+- Called during a turn, it waits for the end of the turn, then opens a turn of its own; the call resolves only at that moment.
+- Called from a `turn.complete` hook, it opens the next turn: the relaunch works.
+- The mod reads the `cwd` (`e.cwd` at `session.start`, `$.session.cwd()`, `$.session.root()`) and runs `git` with `$.process.run`.
+- Not tested, but described by Plannotator (`~/.claude/plugins/marketplaces/plannotator/docs/agent-guides/claude-code-mod.md`):
+  the `{ drop }` after an Esc;
+  and their wake-up that arrived only at the next keystroke came from their instance destroyed at the `session.end` of a `/clear`, not from the engine.
 
-## Questions ouvertes
+## Open questions
 
-- **Deux Claude sessions dans le même worktree** répondraient toutes deux aux mêmes threads ; le MVP l'accepte, c'est rare avec Orca.
-- Vue côte à côte, threads de fichier entier et blocs `suggestion` : faits ; Claude applique une suggestion, le serveur n'écrit jamais dans le worktree ([ADR 0007](docs/adr/0007-claude-applique-les-suggestions.md)).
+- **Two Claude sessions in the same worktree** would both reply to the same threads; the MVP accepts it, it is rare with Orca.
+- Side-by-side view, whole-file threads and `suggestion` blocks: done; Claude applies a suggestion, the server never writes to the worktree ([ADR 0007](docs/adr/0007-claude-applies-suggestions.md)).
 
-## Prochaines étapes
+## Next steps
 
-Le MVP, la vue côte à côte, les clients PhpStorm et VS Code, `/api/inbox` et un serveur par compte sont faits.
-Reste la PR gh-notif, qui lira `/api/inbox` comme une source locale.
+The MVP, the side-by-side view, the PhpStorm and VS Code clients, `/api/inbox` and one server per account are done.
+What remains is the gh-notif PR, which will read `/api/inbox` as a local source.
