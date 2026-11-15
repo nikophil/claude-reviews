@@ -17,6 +17,8 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 - `claude --plugin-dir .` : une Claude session avec le mod de ce dossier.
 - `/plugin install local-reviews --marketplace nikophil/claude-reviews` : installe le mod ; il lance le serveur avec le `node` du `PATH`, en version 25 au moins.
 - `npx playwright install chromium` une fois, puis `npx playwright test` : tests de l'UI, sur un serveur lancé sur le port 7779, avec un `XDG_DATA_HOME` temporaire.
+- `npm run build:phpstorm` : construit `var/phpstorm/local-reviews.zip` avec le `javac` et les jars du PhpStorm installé (`PHPSTORM_HOME`, sinon celui de Toolbox) et `zip`, avec une version `0.1.<epoch>` par build, et écrit `var/phpstorm/updatePlugins.xml` ;
+  ce dépôt de plugins, ajouté une fois par Settings › Plugins › ⚙ › Manage Plugin Repositories (`file://…/updatePlugins.xml`), propose ensuite chaque build en mise à jour.
 
 ## Structure
 
@@ -30,6 +32,7 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 - `.claude-plugin/` : le plugin `local-reviews` (le préfixe `claude-` est réservé à Anthropic) et la marketplace de ce dépôt ; la version du plugin est celle du serveur.
 - `hooks/register.ts` : le mod, qui enregistre les outils et `/review-local`, démarre le serveur, sonde la session toutes les 2 s et réveille Claude ; `$` n'y passe qu'à des fonctions déclarées en tête de fichier.
 - `hooks/watch.ts` : les décisions du mod (réveiller, relancer, se taire, reprendre après un `{ drop }`), en fonctions pures.
+- `phpstorm/` : le plugin PhpStorm, en Java et Swing : la tool window « Claude Reviews » (base, Send, Approve, fichiers changés et leurs threads), les threads dans l'éditeur et dans le diff de l'IDE ; il ne parle qu'à l'API, comme tout client ([ADR 0004](docs/adr/0004-clients-et-mod-separes-par-l-api.md)).
 - Aucune dépendance npm au runtime : ce qui manque s'écrit, ou se vendorise en un fichier dans `ui/vendor/`.
 
 ## Contrat HTTP
@@ -60,12 +63,14 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 | `GET /api/sessions/<id>/diff[?base=&tree=][&w=1]` | Le diff du working tree de la session contre sa base : `{ ref, base, tree, files }`, où `ref` est la base choisie, ou `HEAD` quand elle ne désigne plus rien, et `base` et `tree` les ids de la base et du tree affichés ; avec `?base=&tree=`, `{ base, tree, files }`, le diff de ces ids ; avec `w=1` (Hide whitespace), `git diff -w`. |
 | `GET /api/sessions/<id>/tree` | `{ ref, base, tree }` comme `/diff`, sans calculer le diff : le poll de l'UI le compare au diff affiché. |
 | `GET /api/sessions/<id>/lines?path=<chemin>&tree=<id>&from=<n>&to=<m>` | `{ lines }`, les lignes `from` à `to` du fichier dans le tree affiché, que le diff cache et qu'« Expand » montre. |
+| `GET /api/sessions/<id>/file?object=<id>&path=<chemin>` | `{ text }`, le texte de `path` dans le commit ou le tree `object` du dépôt de la session : 404 sans ce fichier, 400 pour un objet que le dépôt n'a pas. |
 | `GET /api/sessions/<id>/bases` | Les bases du sélecteur, dans son ordre : `[{ ref, name, disabled? }]`. |
 | `POST /api/sessions/<id>/base` `{ base }` | Choisit la base de la session parmi les `ref` non grisées de `/bases`. |
 | `POST /api/sessions/<id>/threads` `{ author, path, side, start, end, body, base?, tree? }` | Ouvre un thread avec son premier message (`open_thread` pour Claude). |
 | `POST /api/sessions/<id>/threads/<n>/messages` `{ author, body }` | Ajoute un message (`reply_to_thread` pour Claude). |
 | `POST /api/sessions/<id>/threads/<n>/resolve` `{}` | Résout le thread. |
 | `POST /api/sessions/<id>/viewed` `{ path, tree, viewed }` | Marque le fichier Viewed sur le tree affiché, ou le démarque. |
+| `POST /api/sessions/<id>/threads/<n>/unresolve` `{}` | Rouvre le thread Resolved. |
 | `POST /api/sessions/<id>/send` `{ tree }` | Send : Snapshot du tree affiché, puis publication des messages Pending. |
 | `POST /api/sessions/<id>/approve` `{}` | Approve : archive la session, puis supprime ses refs. |
 | `POST /api/sessions/<id>/turn-complete` `{}` | Notifie « Claude replied in N threads », suivi de « , M still waiting » s'il en reste, par `notify-send` (Linux) ou `osascript` (macOS). |
@@ -84,7 +89,8 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - Placée par `?base=&tree=`, la session ne garde dans `viewed` que les fichiers dont le contenu dans `tree` a toujours l'id enregistré : un fichier qui change n'est plus vu, un changement de base qui ne le touche pas le laisse vu.
 - Le serveur garde en mémoire `login` et `name` de `/api/me` dès qu'ils répondent ; un échec, il le garde 60 s, puis l'appel suivant relance sa commande ; le mod n'appelle pas `/api/me`.
 - `author` vaut `me` ou `claude` : un message de `me` naît Pending, un message de `claude` est publié sur-le-champ.
-- Un message de `me` rouvre un thread Resolved au Send qui le publie, pas un message de `claude`.
+- Un thread Resolved refuse un message de `me` avec 409 jusqu'à son Unresolve ; il accepte un message de `claude`, qui ne le rouvre pas.
+- Un Send ne publie pas les messages Pending d'un thread Resolved : ils attendent son Unresolve.
 - Les bases sont `HEAD` (Uncommitted changes), `last-review` (Since my last review, le Snapshot du dernier Send, grisé avant le premier), `origin/HEAD`, puis les branches locales `refs/heads/<nom>` hors celle du worktree, de la plus proche du merge-base à la plus lointaine.
 - Une branche et `origin/HEAD` comparent depuis leur merge-base avec HEAD.
 - Le diff se garde en mémoire par paire (`base`, `tree`) et par `?w=1` : le redemander sans changement ne relance pas `git diff`.

@@ -77,7 +77,7 @@ test('Send is active without Pending message, and Approve is grayed out with one
     await expect(approve).toBeEnabled();
 });
 
-test('a Resolved thread folds, and opens again on a click', async ({ page, request }) => {
+test('a Resolved thread folds, opens again on a click, takes no message, and takes them again once Unresolved', async ({ page, request }) => {
     const dir = changed();
     await claudeThread(request, dir, 2, 'Is this right?');
     await open(page, dir);
@@ -89,6 +89,12 @@ test('a Resolved thread folds, and opens again on a click', async ({ page, reque
     await expect(thread.getByText('Is this right?')).toBeHidden();
     await thread.getByText('Line +2').click();
     await expect(thread.getByText('Is this right?')).toBeVisible();
+    await expect(thread.getByLabel('Message')).toHaveCount(0);
+
+    await thread.getByRole('button', { name: 'Unresolve' }).click();
+    await expect(thread).not.toContainText('Resolved');
+    await expect(thread.getByLabel('Message')).toBeVisible();
+    await expect(thread.getByRole('button', { name: 'Resolve' })).toBeVisible();
 });
 
 test('the Approve dialog counts the open threads, and the approved session turns read-only', async ({ page, request }) => {

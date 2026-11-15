@@ -227,6 +227,15 @@ export async function currentTree(id: string) {
     return current(await load(id));
 }
 
+/** The text of `path` in a commit or tree of the session's repository: the base side of a diff an IDE shows. */
+export async function file(id: string, object: unknown, path: unknown) {
+    checkPath(path);
+    const { worktree } = await load(id);
+    const text = await fileText(worktree, await checkObject(worktree, object, 'object', ['commit', 'tree']), path);
+    if (text === null) throw httpError(404, `No ${path} in ${object}`);
+    return { text };
+}
+
 /** The diff of the ids the UI would display now, or, with `?base=&tree=`, of the displayed ones again; whitespace hidden with `w=1`. */
 export async function sessionDiff(id: string, query: URLSearchParams) {
     const session = await load(id);
@@ -285,15 +294,21 @@ async function checkObject(worktree: string, id: unknown, name: string, types: s
     return id;
 }
 
-/** The lines of the file at `path` in a commit or tree, null without such a file; any other failure of git throws. */
-async function fileLines(worktree: string, object: string, path: string): Promise<string[] | null> {
+/** The text of the file at `path` in a commit or tree, null without such a file; any other failure of git throws. */
+async function fileText(worktree: string, object: string, path: string): Promise<string | null> {
     // --batch answers "<name> missing" for a path the object lacks, in any locale, and fails only when git does.
     const answer = await git(worktree, ['cat-file', '--batch'], undefined, `${object}:${path}\n`);
     const header = answer.slice(0, answer.indexOf('\n'));
     // A directory is no file either.
     if (!/ blob \d+$/.test(header)) return null;
     // The content follows the header, then one more newline.
-    const content = answer.slice(header.length + 1, -1);
+    return answer.slice(header.length + 1, -1);
+}
+
+/** The lines of the file at `path` in a commit or tree, null without such a file. */
+async function fileLines(worktree: string, object: string, path: string): Promise<string[] | null> {
+    const content = await fileText(worktree, object, path);
+    if (content === null) return null;
     const lines = content.split('\n');
     if (content.endsWith('\n')) lines.pop();
     return lines;
@@ -452,14 +467,15 @@ export async function addMessage(id: string, threadId: number, input: Record<str
     if (added.author === 'claude' && !thread.messages.some(message => message.date)) {
         throw httpError(409, `Thread ${threadId} has no published message to reply to`);
     }
+    if (added.author === 'me' && thread.resolved) throw httpError(409, `Thread ${threadId} is Resolved: Unresolve it to reply`);
     thread.messages.push(added);
     await save(session);
     return view(session);
 }
 
-export async function resolve(id: string, threadId: number) {
+export async function resolve(id: string, threadId: number, resolved = true) {
     const session = await writable(id);
-    findThread(session, threadId).resolved = true;
+    findThread(session, threadId).resolved = resolved;
     await save(session);
     return view(session);
 }
@@ -467,7 +483,7 @@ export async function resolve(id: string, threadId: number) {
 // The commit only carries the tree, so it must not depend on the user's identity.
 const SNAPSHOT_AUTHOR = { GIT_AUTHOR_NAME: 'claude-reviews', GIT_AUTHOR_EMAIL: 'claude-reviews@localhost', GIT_COMMITTER_NAME: 'claude-reviews', GIT_COMMITTER_EMAIL: 'claude-reviews@localhost' };
 
-/** Takes a Snapshot of the displayed `tree`, then publishes the Pending messages, dated now, after the messages already published. */
+/** Takes a Snapshot of the displayed `tree`, then publishes the Pending messages of the threads not Resolved, dated now, after the messages already published. */
 export async function send(id: string, tree: unknown) {
     const session = await writable(id);
     const shown = await checkObject(session.worktree, tree, 'tree', ['tree']);
@@ -475,10 +491,9 @@ export async function send(id: string, tree: unknown) {
     const review = session.sends + 1;
     await git(session.worktree, ['update-ref', `refs/claude-reviews/${id}/${review}`, commit.trim()]);
     const date = new Date().toISOString();
-    for (const thread of session.threads) {
+    // A Pending message of a Resolved thread waits for its Unresolve.
+    for (const thread of session.threads.filter(thread => !thread.resolved)) {
         const pending = thread.messages.filter(message => !message.date);
-        // Only a message of mine reopens a Resolved thread, once Claude can read it.
-        if (pending.length) thread.resolved = false;
         thread.messages = [...thread.messages.filter(message => message.date), ...pending.map(message => ({ ...message, date, review }))];
     }
     session.sends = review;

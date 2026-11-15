@@ -710,8 +710,12 @@ function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act, ava
                 </div>`)}
             ${!readOnly && html`
                 <div class="Box-footer">
-                    <${Composer} draft=${draft} busy=${busy} onSubmit=${body => act(`/threads/${thread.id}/messages`, { author: 'me', body })} />
-                    ${!thread.resolved && html`<button class="btn btn-sm mt-2" disabled=${busy} onClick=${() => act(`/threads/${thread.id}/resolve`, {})}>Resolve</button>`}
+                    ${thread.resolved
+                        // A Resolved thread takes no message until its Unresolve.
+                        ? html`<button class="btn btn-sm" disabled=${busy} onClick=${() => act(`/threads/${thread.id}/unresolve`, {})}>Unresolve</button>`
+                        : html`
+                            <${Composer} draft=${draft} busy=${busy} onSubmit=${body => act(`/threads/${thread.id}/messages`, { author: 'me', body })} />
+                            <button class="btn btn-sm mt-2" disabled=${busy} onClick=${() => act(`/threads/${thread.id}/resolve`, {})}>Resolve</button>`}
                 </div>`}
         </details>`;
 }

@@ -232,7 +232,7 @@ test('a Send without Pending message creates the next ref and publishes no messa
     assert.equal(git(dir, 'for-each-ref', '--format=%(refname)', `refs/claude-reviews/${id}/`), `refs/claude-reviews/${id}/1\nrefs/claude-reviews/${id}/2\n`);
 });
 
-test('a Resolved thread no longer waits for Claude, a reply of Claude does not reopen it, a message of mine does at its Send', async () => {
+test('a Resolved thread no longer waits for Claude, a reply of Claude does not reopen it, a message of mine is refused until its Unresolve', async () => {
     const { id, path } = await sessionWithThread();
     await api('POST', `${path}/messages`, { author: 'me', body: 'Thanks' });
     await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id) });
@@ -244,11 +244,30 @@ test('a Resolved thread no longer waits for Claude, a reply of Claude does not r
     const replied = await api('POST', `${path}/messages`, { author: 'claude', body: 'You are welcome' });
     assert.equal(replied.body.threads[0].status, 'resolved');
 
-    const written = await api('POST', `${path}/messages`, { author: 'me', body: 'One more thing' });
-    assert.equal(written.body.threads[0].status, 'resolved', 'Claude cannot read it before the Send');
+    const refused = await api('POST', `${path}/messages`, { author: 'me', body: 'One more thing' });
+    assert.equal(refused.status, 409);
+    assert.match(refused.body.error, /Resolved/);
+
+    const unresolved = await api('POST', `${path}/unresolve`, {});
+    assert.equal(unresolved.status, 200);
+    assert.equal(unresolved.body.threads[0].resolved, false);
+    assert.equal(unresolved.body.threads[0].status, 'awaiting-you');
+    assert.equal((await api('POST', `${path}/messages`, { author: 'me', body: 'One more thing' })).status, 200);
+});
+
+test('a Pending message of a Resolved thread waits for its Unresolve: the Send leaves it Pending, and the thread Resolved', async () => {
+    const { id, path } = await sessionWithThread();
+    await api('POST', `${path}/messages`, { author: 'me', body: 'Written, then resolved' });
+    await api('POST', `${path}/resolve`, {});
+
     const sent = await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id) });
-    assert.equal(sent.body.threads[0].resolved, false);
-    assert.equal(sent.body.threads[0].status, 'waiting-for-claude');
+    assert.equal(sent.body.threads[0].resolved, true);
+    assert.equal(sent.body.threads[0].messages[1].date, null);
+
+    await api('POST', `${path}/unresolve`, {});
+    const resent = await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id) });
+    assert.equal(resent.body.threads[0].messages[1].review, 2);
+    assert.equal(resent.body.threads[0].status, 'waiting-for-claude');
 });
 
 test('an Approve with a Pending message is refused', async () => {
@@ -926,4 +945,19 @@ test('a git grep that fails leaves the diff whole, without the line counts', asy
     } finally {
         restore();
     }
+});
+
+test('/file gives the text of a path in a commit or tree of the repository, 404 without such a file, 400 for an object it lacks', async () => {
+    const dir = repo({ 'a.txt': 'one\ntwo\n', 'b.txt': 'no newline' });
+    write(dir, { 'a.txt': 'one\n2\n' });
+    const { body: { id } } = await api('POST', '/api/sessions', { worktree: dir });
+    const { body: shown } = await api('GET', `/api/sessions/${id}/tree`);
+    const file = (object: string, path: string) => api('GET', `/api/sessions/${id}/file?object=${object}&path=${encodeURIComponent(path)}`);
+
+    assert.deepEqual((await file(shown.base, 'a.txt')).body, { text: 'one\ntwo\n' });
+    assert.deepEqual((await file(shown.tree, 'a.txt')).body, { text: 'one\n2\n' });
+    assert.deepEqual((await file(shown.base, 'b.txt')).body, { text: 'no newline' });
+    assert.equal((await file(shown.base, 'missing.txt')).status, 404);
+    assert.equal((await file('0'.repeat(40), 'a.txt')).status, 400);
+    assert.equal((await file('nope', 'a.txt')).status, 400);
 });

@@ -1,0 +1,27 @@
+<idea-plugin>
+  <id>local-reviews</id>
+  <name>Local Reviews</name>
+  <version>0.1.0</version>
+  <vendor>nikophil</vendor>
+  <description>Reviews with Claude the changes of the worktree: its files and their threads in a tool window, the threads in the editor and in the diff.</description>
+  <idea-version since-build="262"/>
+  <!-- Without a dependency on a module, PhpStorm takes a plugin for one of IntelliJ IDEA only, and disables it. -->
+  <depends>com.intellij.modules.platform</depends>
+  <extensions defaultExtensionNs="com.intellij">
+    <toolWindow id="Claude Reviews" anchor="left" factoryClass="localreviews.ReviewToolWindow" icon="AllIcons.Toolwindows.ToolWindowMessages"/>
+    <projectService serviceImplementation="localreviews.ReviewService"/>
+    <diff.DiffExtension implementation="localreviews.ThreadsInDiff"/>
+    <notificationGroup id="Local Reviews" displayType="BALLOON"/>
+  </extensions>
+  <actions>
+    <action id="localreviews.ReviewDiff" class="localreviews.ReviewDiffAction">
+      <add-to-group group-id="ToolsMenu" anchor="last"/>
+      <!-- Free in the keymaps and plugins of PhpStorm 2026.2: Ctrl+Alt+Shift+D shows the diagram of the changes, Ctrl+Alt+Shift+R starts the screencast of GNOME. -->
+      <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift K"/>
+    </action>
+    <action id="localreviews.OpenThread" class="localreviews.OpenThreadAction">
+      <add-to-group group-id="Diff.EditorPopupMenu" anchor="first"/>
+      <add-to-group group-id="EditorPopupMenu" anchor="first"/>
+    </action>
+  </actions>
+</idea-plugin>

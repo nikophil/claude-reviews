@@ -44,6 +44,11 @@ _Avoid_: lu, relu
 Une conversation Claude Code qui tourne dans un worktree.
 _Avoid_: session (seul, qui désigne la Session de relecture)
 
+**Client**:
+Ce qui m'affiche une session et y écrit pour moi : la page dans un navigateur, ou embarquée par un IDE (PhpStorm, plus tard VS Code).
+Un client ne parle qu'à l'API HTTP du serveur ; le côté Claude, lui, passe par le mod.
+_Avoid_: front, outil
+
 ### Fils
 
 **Thread**:
@@ -70,8 +75,13 @@ _Avoid_: unread, watermark
 Un thread dont le dernier message est de Claude.
 
 **Resolved**:
-Un thread que j'ai clos ; seul moi le résous, et seul un message que j'y écris le rouvre.
+Un thread que j'ai clos ; seul moi le résous, et seul mon Unresolve le rouvre.
 Il n'attend plus Claude, même si mon message est le dernier, et une réponse de Claude ne le rouvre pas.
+Je n'y écris plus avant son Unresolve, et un Send garde Pending les messages que j'y avais écrits avant de le résoudre.
+
+**Unresolve**:
+Rouvrir un thread Resolved : je peux de nouveau y écrire, et le Send suivant publie ses messages Pending.
+_Avoid_: reopen, réouverture
 
 **Outdated**:
 Un thread dont la ligne d'ancrage ne se retrouve plus dans le code qu'on regarde : le code affiché pour moi, le working tree pour Claude.
