@@ -37,7 +37,8 @@ final class OutdatedThread extends DialogWrapper {
         this.id = thread.get("id").getAsInt();
         JsonObject anchor = thread.getAsJsonObject("anchor");
         setTitle("Thread #" + id + " · " + anchor.get("path").getAsString() + " · Outdated");
-        panel.add(code(project, anchor), BorderLayout.NORTH);
+        // A thread on the whole file has no lines to show.
+        if (anchor.get("end").getAsInt() > 0) panel.add(code(project, anchor), BorderLayout.NORTH);
         show(thread);
         service.listen(state -> {
             if (state.session() == null) return;
@@ -53,7 +54,7 @@ final class OutdatedThread extends DialogWrapper {
         shown = thread;
         claude = Placement.claude(service.state().session());
         ThreadView previous = view;
-        view = new ThreadView(project, service.state().session(), thread, service::refresh);
+        view = new ThreadView(project, service.state().session(), thread, null, service::refresh);
         Disposer.register(getDisposable(), view);
         if (previous != null) {
             view.resume(previous);

@@ -22,6 +22,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Key;
+import com.intellij.openapi.util.TextRange;
 import com.intellij.ui.ColorUtil;
 import com.intellij.ui.JBColor;
 import com.intellij.util.ui.JBUI;
@@ -41,6 +42,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /** The threads of one side of one file, each after its lines in an editor. Runs on the EDT. */
 final class Threads {
@@ -148,8 +150,9 @@ final class Threads {
         for (JsonObject thread : Placement.threads(session, review.path(), side)) {
             int n = thread.get("id").getAsInt();
             int[] range = range(n, thread.getAsJsonObject("at"));
-            int end = lines.toEditor(range[1]);
-            if (end > 0 && end <= editor.getDocument().getLineCount()) {
+            int end = toEditor(range[1]);
+            // A thread on the whole file, 0 to 0, goes above the first line.
+            if (range[1] == 0 || end > 0 && end <= editor.getDocument().getLineCount()) {
                 placed.put(n, thread);
                 ranges.put(n, range);
             }
@@ -171,16 +174,18 @@ final class Threads {
             Shown old = shown.get(n);
             boolean pill = collapsed && !opened.contains(n);
             if (!all && old != null && old.thread().equals(thread) && old.claude() == claude && (old.pill() != null) == pill) return;
-            int end = lines.toEditor(ranges.get(n)[1]);
+            int end = toEditor(ranges.get(n)[1]);
             if (pill) {
                 if (old != null) old.dispose();
-                Inlay<?> inlay = editor.getInlayModel().addAfterLineEndElement(editor.getDocument().getLineEndOffset(end - 1), true, new Pill(this, n, "Thread #" + n + (ThreadView.status(thread).isEmpty() ? "" : " · " + ThreadView.status(thread))));
+                // At the end of the first line for a thread on the whole file.
+                Inlay<?> inlay = editor.getInlayModel().addAfterLineEndElement(editor.getDocument().getLineEndOffset(Math.max(end, 1) - 1), true, new Pill(this, n, "Thread #" + n + (ThreadView.status(thread).isEmpty() ? "" : " · " + ThreadView.status(thread))));
                 if (inlay != null) Disposer.register(parent, inlay);
                 shown.put(n, new Shown(thread, claude, null, inlay));
                 return;
             }
-            ThreadView view = new ThreadView(project, session, thread, refresh);
-            int start = lines.toEditor(ranges.get(n)[0]);
+            Supplier<String> suggested = side.equals("new") && end > 0 ? () -> text(range(n, thread.getAsJsonObject("at"))) : null;
+            ThreadView view = new ThreadView(project, session, thread, suggested, refresh);
+            int start = toEditor(ranges.get(n)[0]);
             add(start > 0 ? start : end, end, thread.get("resolved").getAsBoolean(), view::hovered, view);
             // Only the hovered thread shows its lines: the marks of threads on the same lines would pile up.
             view.onHover(() -> editor.getComponent().repaint());
@@ -210,25 +215,42 @@ final class Threads {
             anchor = new Anchor(at, document.createRangeMarker(document.getLineStartOffset(start - 1), document.getLineEndOffset(end - 1)));
             anchors.put(n, anchor);
         }
-        RangeMarker marker = anchor.marker();
-        if (!marker.isValid()) return new int[] {start, end};
+        int[] moved = span(anchor.marker());
+        return moved[0] == 0 ? new int[] {start, end} : moved;
+    }
+
+    /** The lines of the side a marker spans now, from 1; {0, 0} once its text is gone. */
+    private int[] span(RangeMarker marker) {
+        if (!marker.isValid()) return new int[] {0, 0};
         return new int[] {document.getLineNumber(marker.getStartOffset()) + 1, document.getLineNumber(marker.getEndOffset()) + 1};
     }
 
-    /** A new thread on lines `start` to `end` of the side, from 1, with its field focused; its lines follow the edits of the document until it is sent. */
+    /** The text of the lines `range` of the side, from 1, as the document has them now. */
+    private String text(int[] range) {
+        if (range[0] < 1 || range[1] > document.getLineCount()) return "";
+        return document.getText(new TextRange(document.getLineStartOffset(range[0] - 1), document.getLineEndOffset(range[1] - 1)));
+    }
+
+    /** A line of the side in the editor, 0 staying 0: the line of a thread on the whole file. */
+    private int toEditor(int line) {
+        return line == 0 ? 0 : lines.toEditor(line);
+    }
+
+    /**
+     * A new thread on lines `start` to `end` of the side, from 1, or on the whole file for 0 and 0, with its field focused;
+     * its lines follow the edits of the document until it is sent.
+     */
     void draft(int start, int end) {
         closeDraft();
         ModalityState modality = ModalityState.stateForComponent(editor.getComponent());
-        RangeMarker marked = document.createRangeMarker(document.getLineStartOffset(start - 1), document.getLineEndOffset(end - 1));
+        RangeMarker marked = end == 0 ? null : document.createRangeMarker(document.getLineStartOffset(start - 1), document.getLineEndOffset(end - 1));
         ThreadView view = new ThreadView(project, body -> {
             int[] range = new int[2];
             ApplicationManager.getApplication().invokeAndWait(() -> {
                 FileDocumentManager.getInstance().saveAllDocuments();
-                if (!marked.isValid()) return;
-                range[0] = document.getLineNumber(marked.getStartOffset()) + 1;
-                range[1] = document.getLineNumber(marked.getEndOffset()) + 1;
+                if (marked != null) System.arraycopy(span(marked), 0, range, 0, 2);
             }, modality);
-            if (range[0] == 0) throw new IOException("The lines of the thread are gone");
+            if (marked != null && range[0] == 0) throw new IOException("The lines of the thread are gone");
             JsonObject thread = new JsonObject();
             thread.addProperty("author", "me");
             thread.addProperty("path", review.path());
@@ -239,13 +261,15 @@ final class Threads {
             thread.addProperty("base", review.base());
             thread.add("tree", Server.get("/api/sessions/" + review.session() + "/tree").get("tree"));
             Server.post("/api/sessions/" + review.session() + "/threads", thread);
-        }, this::closeDraft, () -> {
+        }, marked != null && side.equals("new") ? () -> text(span(marked)) : null, this::closeDraft, () -> {
             closeDraft();
             refresh.run();
         });
-        Disposer.register(view, marked::dispose);
-        add(lines.toEditor(start), lines.toEditor(end), false, () -> true, view);
+        if (marked != null) Disposer.register(view, marked::dispose);
+        add(toEditor(start), toEditor(end), false, () -> true, view);
         draft = view;
+        // Above the first line, out of sight once the editor scrolled down.
+        if (end == 0) editor.getScrollingModel().scrollVertically(0);
         view.focus();
     }
 
@@ -254,13 +278,16 @@ final class Threads {
         draft = null;
     }
 
-    /** Puts the view in the editor after its lines `start` to `end` of the editor, from 1; disposing the view removes it. */
+    /**
+     * Puts the view in the editor after its lines `start` to `end` of the editor, from 1, or above the first line, unmarked, for 0 and 0;
+     * disposing the view removes it.
+     */
     private void add(int start, int end, boolean resolved, BooleanSupplier marked, ThreadView view) {
         Disposer.register(parent, view);
         Document document = editor.getDocument();
-        mark(document.getLineStartOffset(start - 1), document.getLineEndOffset(end - 1), resolved, marked, view);
+        if (end > 0) mark(document.getLineStartOffset(start - 1), document.getLineEndOffset(end - 1), resolved, marked, view);
         // Above the next line rather than under the last one: the diff stretches the band of a change over the inlays under its last line.
-        boolean last = end >= document.getLineCount();
+        boolean last = end > 0 && end >= document.getLineCount();
         int offset = last ? document.getLineEndOffset(end - 1) : document.getLineStartOffset(end);
         InlayProperties properties = new InlayProperties().relatesToPrecedingText(last).showAbove(!last);
         Inlay<?> inlay = ComponentInlayKt.addComponentInlay(editor, offset, properties, view, ComponentInlayAlignment.FIT_VIEWPORT_WIDTH);

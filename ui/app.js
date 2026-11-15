@@ -389,7 +389,8 @@ function App() {
     // The threads not Resolved, file by file in the order of the page, then by line: what j and k go through.
     const conversations = files.flatMap(file => session.threads.filter(thread => thread.anchor.path === file.path && !thread.resolved)
         .sort((a, b) => (a.at ?? a.anchor).start - (b.at ?? b.anchor).start));
-    const replied = thread => thread.messages.some(message => message.author === 'claude' && message.date && message.date >= (session.sentAt ?? ''));
+    // Before any Send, Claude replied to nothing.
+    const replied = thread => !!session.sentAt && thread.messages.some(message => message.author === 'claude' && message.date && message.date >= session.sentAt);
     const go = thread => {
         setCurrent(thread.id);
         setReveal({ path: thread.anchor.path, id: thread.id, at: Date.now() });

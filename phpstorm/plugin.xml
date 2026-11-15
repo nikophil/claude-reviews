@@ -27,5 +27,19 @@
       <add-to-group group-id="EditorGutterPopupMenu" anchor="first"/>
       <add-to-group group-id="Diff.EditorGutterPopupMenu" anchor="first"/>
     </action>
+    <action id="localreviews.CommentOnFile" class="localreviews.CommentOnFileAction">
+      <add-to-group group-id="EditorPopupMenu" anchor="after" relative-to-action="localreviews.OpenThread"/>
+      <add-to-group group-id="Diff.EditorPopupMenu" anchor="after" relative-to-action="localreviews.OpenThread"/>
+      <add-to-group group-id="EditorTabPopupMenu" anchor="first"/>
+    </action>
+    <!-- Free in the keymaps and plugins of PhpStorm 2026.2, and in GNOME: Alt+Shift+Up and Down move the line, Ctrl+Alt+Shift+Up and Down go from change to change. -->
+    <action id="localreviews.NextThread" class="localreviews.ReviewToolWindow$NextThread" text="Next Thread"
+            description="Open the next thread not resolved, in the order of the Claude Reviews tool window" icon="AllIcons.Actions.NextOccurence">
+      <keyboard-shortcut keymap="$default" first-keystroke="alt shift PAGE_DOWN"/>
+    </action>
+    <action id="localreviews.PreviousThread" class="localreviews.ReviewToolWindow$PreviousThread" text="Previous Thread"
+            description="Open the previous thread not resolved, in the order of the Claude Reviews tool window" icon="AllIcons.Actions.PreviousOccurence">
+      <keyboard-shortcut keymap="$default" first-keystroke="alt shift PAGE_UP"/>
+    </action>
   </actions>
 </idea-plugin>

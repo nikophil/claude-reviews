@@ -34,7 +34,9 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 - `hooks/register.ts` : le mod, qui enregistre les outils et `/review-local`, démarre le serveur, sonde la session toutes les 2 s et réveille Claude ; `$` n'y passe qu'à des fonctions déclarées en tête de fichier.
 - `hooks/watch.ts` : les décisions du mod (réveiller, relancer, se taire, reprendre après un `{ drop }`), en fonctions pures.
 - `phpstorm/` : le plugin PhpStorm, en Java et Swing : la tool window « Claude Reviews » (base, Send, Approve, fichiers changés et leurs threads), les threads dans l'éditeur et dans le diff de l'IDE ;
-  sa vue Editor ouvre un fichier dans l'éditeur, sa vue Diff dans le diff de l'IDE, avec la case Viewed de chaque fichier dans l'arbre et dans la barre du diff ; il ne parle qu'à l'API, comme tout client ([ADR 0004](docs/adr/0004-clients-et-mod-separes-par-l-api.md)).
+  sa vue Editor ouvre un fichier dans l'éditeur, sa vue Diff dans le diff de l'IDE, avec la case Viewed de chaque fichier dans l'arbre et dans la barre du diff ;
+  il modifie et supprime mes messages Pending, passe d'un thread non Resolved à l'autre (Next Thread et Previous Thread, Alt+Shift+Page Down et Page Up), marque « Replied » ceux où Claude a répondu depuis mon dernier Send,
+  et propose Suggest Change, Comment on File et Copy Threads as Markdown, au même format que l'UI web ; il ne parle qu'à l'API, comme tout client ([ADR 0004](docs/adr/0004-clients-et-mod-separes-par-l-api.md)).
 - Aucune dépendance npm au runtime : ce qui manque s'écrit, ou se vendorise en un fichier dans `ui/vendor/`.
 
 ## Contrat HTTP

@@ -1,11 +1,15 @@
 package localreviews;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import java.util.List;
 
-/** Run by build.sh: fails the build when Placement leaves out or lets in the wrong threads, or when raw HTML gets through a message. */
+/**
+ * Run by build.sh: fails the build when Placement leaves out or lets in the wrong threads, when raw HTML gets through a message,
+ * or when the navigation, the Replied mark, a suggestion or the Markdown copy of the threads goes wrong.
+ */
 final class PlacementCheck {
     private PlacementCheck() {}
 
@@ -88,6 +92,72 @@ final class PlacementCheck {
         check(ThreadView.withoutLoads("<span style=\"color:#0033b3;background-color:#fff\">url(a)</span>").equals("<span style=\"color:#0033b3;background-color:#fff\">url(a)</span>"), "the colors of the code and its text kept");
         check(ThreadView.withoutLoads("<object classid=\"javax.swing.JButton\"></object><link rel=stylesheet href=http://h/><p>a</p>")
             .equals("&lt;object classid=\"javax.swing.JButton\">&lt;/object>&lt;link rel=stylesheet href=http://h/><p>a</p>"), "a tag the converter never writes shows as text");
+
+        JsonObject wholeFile = JsonParser.parseString("""
+            { "threads": [
+              { "id": 1, "resolved": false, "anchor": { "path": "a.php", "side": "new", "start": 0, "end": 0 }, "at": { "start": 0, "end": 0 } },
+              { "id": 2, "resolved": false, "anchor": { "path": "a.php", "side": "old", "start": 0, "end": 0 }, "at": null }
+            ] }""").getAsJsonObject();
+        check(ids(Placement.threads(wholeFile, "a.php", "new")).equals(List.of(1)), "a thread on the whole file placed while its file is there");
+        check(ThreadView.lines(wholeFile.getAsJsonArray("threads").get(0).getAsJsonObject()).equals("File"), "a thread on the whole file reads File");
+        check(ThreadView.lines(wholeFile.getAsJsonArray("threads").get(1).getAsJsonObject()).equals("File"), "an Outdated thread on the whole file reads File too");
+
+        JsonObject sent = JsonParser.parseString("""
+            { "sentAt": "2026-11-14T10:05:00.000Z", "threads": [
+              { "id": 1, "messages": [{ "author": "me", "date": "2026-11-14T10:05:00.000Z" }, { "author": "claude", "date": "2026-11-14T10:06:00.000Z" }] },
+              { "id": 2, "messages": [{ "author": "claude", "date": "2026-11-14T10:04:00.000Z" }, { "author": "me", "date": "2026-11-14T10:05:00.000Z" }] },
+              { "id": 3, "messages": [{ "author": "claude", "date": "2026-11-14T10:05:00.000Z" }] }
+            ] }""").getAsJsonObject();
+        JsonArray sentThreads = sent.getAsJsonArray("threads");
+        check(Placement.replied(sent, sentThreads.get(0).getAsJsonObject()), "Claude replied after my last Send");
+        check(!Placement.replied(sent, sentThreads.get(1).getAsJsonObject()), "Claude wrote before my last Send only");
+        check(Placement.replied(sent, sentThreads.get(2).getAsJsonObject()), "Claude wrote at the date of my last Send");
+        JsonObject neverSent = sent.deepCopy();
+        neverSent.remove("sentAt");
+        check(!Placement.replied(neverSent, sentThreads.get(0).getAsJsonObject()), "nothing replied before the first Send");
+
+        List<Boolean> stops = List.of(false, true, false, true, true, false);
+        check(Placement.step(stops, -1, true) == 1 && Placement.step(stops, -1, false) == 4, "from no selection, the first or the last thread");
+        check(Placement.step(stops, 1, true) == 3 && Placement.step(stops, 3, false) == 1, "the next and the previous thread");
+        check(Placement.step(stops, 4, true) == 1 && Placement.step(stops, 1, false) == 4, "around at the ends");
+        check(Placement.step(stops, 2, true) == 3 && Placement.step(stops, 2, false) == 1, "from a file, the thread after or before it");
+        check(Placement.step(List.of(false, true), 1, true) == 1, "the only thread stays");
+        check(Placement.step(List.of(false, false), -1, true) == -1, "no thread to go to");
+
+        check(ThreadView.suggestion("", "a\n  b").equals("```suggestion\na\n  b\n```"), "a suggestion of the lines of the thread");
+        check(ThreadView.suggestion("Rather:", "a").equals("Rather:\n```suggestion\na\n```"), "a suggestion on its own lines, after the text typed");
+        check(ThreadView.suggestion("Rather:\n", "a").equals("Rather:\n```suggestion\na\n```"), "no blank line added after a line break");
+        check(ThreadView.suggestion("", "```php\n````").equals("`````suggestion\n```php\n````\n`````"), "a fence longer than the backticks of the lines");
+
+        JsonObject copied = JsonParser.parseString("""
+            { "threads": [
+              { "id": 1, "resolved": false, "status": "waiting-for-claude", "anchor": { "path": "a.txt", "side": "new", "start": 2, "end": 2 }, "at": { "start": 2, "end": 2 },
+                "messages": [{ "author": "me", "body": "Why?", "date": "x" }, { "author": "me", "body": "Not sent", "date": null }] },
+              { "id": 2, "resolved": false, "status": null, "anchor": { "path": "a.txt", "side": "new", "start": 5, "end": 5 }, "at": { "start": 5, "end": 5 },
+                "messages": [{ "author": "me", "body": "Pending only", "date": null }] },
+              { "id": 3, "resolved": true, "status": "resolved", "anchor": { "path": "src/b.php", "side": "old", "start": 3, "end": 4 }, "at": { "start": 3, "end": 4 },
+                "messages": [{ "author": "me", "body": "Gone?\\n\\n- yes", "date": "x" }] },
+              { "id": 4, "resolved": false, "status": "open", "anchor": { "path": "c.md", "side": "new", "start": 0, "end": 0 }, "at": { "start": 0, "end": 0 },
+                "messages": [{ "author": "me", "body": "Split it", "date": "x" }, { "author": "claude", "body": "Because…", "date": "y" }] }
+            ] }""").getAsJsonObject();
+        check(ThreadView.markdown(copied).equals("""
+            ### `a.txt` line +2 · Waiting for Claude
+
+            **You**: Why?
+
+            ### `src/b.php` lines -3 to -4 · Resolved
+
+            **You**: Gone?
+
+            - yes
+
+            ### `c.md` file
+
+            **You**: Split it
+
+            **Claude**: Because…
+            """), "the threads with a sent message as Markdown, Pending messages left out, ended by a newline as in the web page");
+        check(ThreadView.markdown(JsonParser.parseString("{ \"threads\": [] }").getAsJsonObject()).isEmpty(), "no thread, no Markdown");
         System.out.println("PlacementCheck: ok");
     }
 

@@ -1,5 +1,6 @@
 package localreviews;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.intellij.icons.AllIcons;
@@ -20,6 +21,7 @@ import com.intellij.openapi.fileTypes.FileTypes;
 import com.intellij.openapi.keymap.KeymapUtil;
 import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.IconLoader;
 import com.intellij.ui.AnimatedIcon;
@@ -32,6 +34,7 @@ import com.intellij.ui.JBColor;
 import com.intellij.ui.RoundedLineBorder;
 import com.intellij.ui.components.JBHtmlPane;
 import com.intellij.ui.components.JBLabel;
+import com.intellij.ui.components.panels.HorizontalLayout;
 import com.intellij.ui.components.panels.VerticalLayout;
 import com.intellij.ui.hover.HoverStateListener;
 import com.intellij.util.IconUtil;
@@ -79,10 +82,14 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -113,8 +120,12 @@ final class ThreadView extends JPanel implements Disposable {
     private final JPanel content = new JPanel(new VerticalLayout(JBUI.scale(10)));
     private final JBLabel title = new JBLabel();
     private final EditorTextField field;
-    private final JBLabel error = new JBLabel();
+    private final JBLabel error = failure();
     private final JButton other;
+    /** Opens the edit of my Pending message at an index of the thread, with a text. */
+    private final transient Map<Integer, Consumer<String>> edits = new HashMap<>();
+    private EditorTextField editing;
+    private int editingIndex;
     private static final Color PENDING = new JBColor(new Color(0xB86E00), new Color(0xD9A343));
     private final JButton add = button("Add pending", null);
     private JButton send;
@@ -123,8 +134,8 @@ final class ThreadView extends JPanel implements Disposable {
     private boolean resolved;
     private volatile boolean hovered;
 
-    /** An open thread of the session. */
-    ThreadView(Project project, JsonObject session, JsonObject thread, Runnable written) {
+    /** An open thread of the session; `lines` gives its lines as the document has them, for « Suggest Change », null without them. */
+    ThreadView(Project project, JsonObject session, JsonObject thread, Supplier<String> lines, Runnable written) {
         super(null);
         int id = thread.get("id").getAsInt();
         String sessionId = session.get("id").getAsString();
@@ -135,15 +146,15 @@ final class ThreadView extends JPanel implements Disposable {
         // Without a Claude session in the worktree, nobody answers: no spinner, but how to start one.
         boolean waiting = status.equals("Waiting for Claude");
         card.add(header("Thread #" + id + " · " + lines(thread), waiting && !claude ? "No Claude session" : status));
-        messages(project, thread.getAsJsonArray("messages"));
+        messages(project, route, thread.getAsJsonArray("messages"), written);
         // At the bottom too: the header of a long thread is out of sight.
         if (waiting && claude) content.add(hint("Waiting for Claude…"));
         if (waiting && !claude) content.add(startClaude(session));
-        field = field(project, "Reply");
+        field = field(project, "Reply", "");
         // A Resolved thread takes no message until its Unresolve.
         other = resolved ? button("Unresolve", AllIcons.Actions.Rollback) : button("Resolve", AllIcons.Actions.Checked);
         String toggle = route + (resolved ? "/unresolve" : "/resolve");
-        other.addActionListener(e -> write(body -> Server.post(toggle, new JsonObject()), written));
+        other.addActionListener(e -> write(field, error, List.of(other, add), body -> Server.post(toggle, new JsonObject()), written));
         // Sends this thread alone, without the Pending messages of the others; it spins, the only spinner, until Claude answers the thread.
         boolean spinning = ReviewService.get(project).spinning("thread:" + id, thread);
         if (!resolved && claude && (pending(thread) || spinning)) {
@@ -162,7 +173,7 @@ final class ThreadView extends JPanel implements Disposable {
                 }));
             });
         }
-        finish(body -> Server.post(route + "/messages", reply(body)), written);
+        finish(body -> Server.post(route + "/messages", reply(body)), resolved ? null : lines, written);
         if (resolved) {
             field.setVisible(false);
             add.setVisible(false);
@@ -172,15 +183,15 @@ final class ThreadView extends JPanel implements Disposable {
         if (resolved) fold();
     }
 
-    /** A new thread, saved by `create` with its first message. */
-    ThreadView(Project project, ThrowableConsumer<String, IOException> create, Runnable cancel, Runnable written) {
+    /** A new thread, saved by `create` with its first message; `lines` as for an open thread. */
+    ThreadView(Project project, ThrowableConsumer<String, IOException> create, Supplier<String> lines, Runnable cancel, Runnable written) {
         super(null);
         card.add(header("New thread", ""));
-        field = field(project, "Comment");
+        field = field(project, "Comment", "");
         other = button("Cancel", null);
         // Removing the inlay changes the editor: a bare Swing listener needs the write-intent lock for it.
         other.addActionListener(e -> WriteIntentReadAction.run(cancel));
-        finish(create, written);
+        finish(create, lines, written);
         // A new thread left empty closes once the focus goes elsewhere, the IDE losing it aside.
         field.addFocusListener(new FocusAdapter() {
             @Override
@@ -195,15 +206,20 @@ final class ThreadView extends JPanel implements Disposable {
         });
     }
 
-    /** Takes over the text being typed in the view this one replaces, its focus, and whether it is folded unless it got resolved or reopened. */
+    /**
+     * Takes over the text being typed in the view this one replaces, that of a message being edited while it is still Pending,
+     * their focus, and whether it is folded unless it got resolved or reopened.
+     */
     void resume(ThreadView previous) {
         field.setText(previous.field.getText());
+        if (previous.editing != null && edits.containsKey(previous.editingIndex)) edits.get(previous.editingIndex).accept(previous.editing.getText());
         if (previous.resolved == resolved && previous.folded != folded) fold();
         // No focus owner while the IDE is in the background.
         Component owner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
         if (owner != null && SwingUtilities.isDescendingFrom(owner, previous.field)) {
             field.requestFocusInWindow();
         }
+        if (owner != null && editing != null && SwingUtilities.isDescendingFrom(owner, previous.editing)) editing.requestFocusInWindow();
     }
 
     void focus() {
@@ -260,7 +276,7 @@ final class ThreadView extends JPanel implements Disposable {
     }
 
     /** The messages, a turn per run of messages of the same author: its avatar, its name, then each message; a line between turns. */
-    private void messages(Project project, Iterable<JsonElement> messages) {
+    private void messages(Project project, String route, JsonArray messages, Runnable written) {
         List<List<JsonObject>> turns = new ArrayList<>();
         for (JsonElement element : messages) {
             JsonObject message = element.getAsJsonObject();
@@ -269,6 +285,7 @@ final class ThreadView extends JPanel implements Disposable {
             if (last != null && author(last.get(0)).equals(author(message)) && unsent(last.get(0)) == unsent(message)) last.add(message);
             else turns.add(new ArrayList<>(List.of(message)));
         }
+        int index = 0; // of the message in the thread: the turns keep their order
         for (List<JsonObject> turn : turns) {
             if (content.getComponentCount() > 0) content.add(new JSeparator());
             String author = author(turn.get(0));
@@ -285,7 +302,9 @@ final class ThreadView extends JPanel implements Disposable {
             column.add(nameRow);
             for (JsonObject message : turn) {
                 if (!unsent) column.add(hint(when(message)));
-                column.add(body(project, message.get("body").getAsString()));
+                String markdown = message.get("body").getAsString();
+                column.add(unsent ? pending(project, route, index, markdown, messages.size() == 1, written) : body(project, markdown));
+                index++;
             }
             JPanel avatar = new JPanel(new BorderLayout());
             avatar.setOpaque(false);
@@ -299,19 +318,91 @@ final class ThreadView extends JPanel implements Disposable {
         }
     }
 
-    private void finish(ThrowableConsumer<String, IOException> addPending, Runnable written) {
+    /**
+     * My Pending message `index` of the thread: Edit swaps it for a field, until saved or cancelled; Delete asks first.
+     * `alone` when it is the only message of the thread, which goes with it.
+     */
+    private JPanel pending(Project project, String route, int index, String markdown, boolean alone, Runnable written) {
+        JPanel message = new JPanel(new VerticalLayout(JBUI.scale(4)));
+        message.setOpaque(false);
+        JPanel shown = new JPanel(new VerticalLayout(JBUI.scale(2)));
+        shown.setOpaque(false);
+        shown.add(body(project, markdown));
+        JPanel links = new JPanel(new HorizontalLayout(JBUI.scale(10)));
+        links.setOpaque(false);
+        links.add(link("Edit", e -> {
+            edits.get(index).accept(markdown);
+            editing.requestFocusInWindow();
+        }));
+        links.add(link("Delete", e -> delete(project, route + "/messages/" + index + "/delete", alone, written)));
+        shown.add(links);
+        message.add(shown);
+        edits.put(index, text -> {
+            EditorTextField edited = field(project, "Message", text);
+            JBLabel failed = failure();
+            JButton cancel = button("Cancel", null);
+            JButton save = button("Save", null);
+            ClientProperty.put(save, DarculaButtonUI.DEFAULT_STYLE_KEY, true);
+            JPanel buttons = row();
+            buttons.add(cancel);
+            buttons.add(save);
+            JPanel form = new JPanel(new VerticalLayout(JBUI.scale(4)));
+            form.setOpaque(false);
+            form.add(edited);
+            form.add(failed);
+            form.add(buttons);
+            Runnable close = () -> {
+                editing = null;
+                message.remove(form);
+                shown.setVisible(true);
+                revalidate();
+                repaint();
+            };
+            cancel.addActionListener(e -> close.run());
+            save.addActionListener(e -> {
+                if (edited.getText().isBlank()) return;
+                write(edited, failed, List.of(cancel, save), body -> {
+                    JsonObject edit = new JsonObject();
+                    edit.addProperty("body", body);
+                    Server.post(route + "/messages/" + index, edit);
+                }, () -> {
+                    close.run();
+                    written.run();
+                });
+            });
+            DumbAwareAction.create(e -> save.doClick()).registerCustomShortcutSet(CommonShortcuts.getCtrlEnter(), edited);
+            shown.setVisible(false);
+            message.add(form);
+            editing = edited;
+            editingIndex = index;
+            revalidate();
+            repaint();
+        });
+        return message;
+    }
+
+    /** Posts to `route`, once confirmed, then runs `written`; the failure shows in a dialog. */
+    private void delete(Project project, String route, boolean alone, Runnable written) {
+        String question = alone ? "Delete this pending message? Its thread goes with it." : "Delete this pending message?";
+        if (Messages.showYesNoDialog(project, question, "Delete Message", "Delete", "Cancel", null) != Messages.YES) return;
+        ModalityState modality = ModalityState.stateForComponent(this);
+        ReviewDiffAction.background(project, () -> {
+            Server.post(route, new JsonObject());
+            ApplicationManager.getApplication().invokeLater(written, modality);
+        });
+    }
+
+    private void finish(ThrowableConsumer<String, IOException> addPending, Supplier<String> lines, Runnable written) {
         add.addActionListener(e -> {
-            if (!field.getText().isBlank()) write(addPending, written);
+            if (!field.getText().isBlank()) write(field, error, List.of(other, add), addPending, written);
         });
         ClientProperty.put(add, DarculaButtonUI.DEFAULT_STYLE_KEY, true);
         DumbAwareAction.create(e -> add.doClick()).registerCustomShortcutSet(CommonShortcuts.getCtrlEnter(), field);
         content.add(field);
-        error.setForeground(JBColor.RED);
-        error.setVisible(false);
         content.add(error);
         // In a narrow column, the hint and the buttons wrap onto more rows rather than running out of the card.
-        JPanel footer = new JPanel(new WrapLayout(FlowLayout.RIGHT, JBUI.scale(6), JBUI.scale(4)));
-        footer.setOpaque(false);
+        JPanel footer = row();
+        if (lines != null) footer.add(suggest(lines));
         footer.add(shortcutHint);
         if (send != null) footer.add(send);
         footer.add(other);
@@ -325,11 +416,27 @@ final class ThreadView extends JPanel implements Disposable {
         add(card);
     }
 
-    /** Runs a write off the EDT: on success the field empties and `written` runs, on failure the error shows and the text stays. */
-    private void write(ThrowableConsumer<String, IOException> action, Runnable written) {
-        String body = field.getText().strip();
-        other.setEnabled(false);
-        add.setEnabled(false);
+    /** « Suggest Change »: a suggestion block of the lines of the thread after the text of the field, the caret at the end of the lines. */
+    private JButton suggest(Supplier<String> lines) {
+        JButton suggest = button("Suggest Change", null);
+        suggest.setToolTipText("Suggest new code for the lines of the thread: Claude applies it once he reads the thread");
+        // Setting the text of the field is a write: a bare Swing listener needs the write-intent lock for it.
+        suggest.addActionListener(e -> WriteIntentReadAction.run(() -> {
+            String text = suggestion(field.getText(), ReadAction.computeBlocking(lines::get));
+            field.setText(text);
+            field.setCaretPosition(text.lastIndexOf('\n'));
+            field.requestFocusInWindow();
+        }));
+        return suggest;
+    }
+
+    /**
+     * Runs a write of the text of `source` off the EDT, `buttons` greyed meanwhile:
+     * on success the field empties and `written` runs, on failure the error shows in `failed` and the text stays.
+     */
+    private void write(EditorTextField source, JBLabel failed, List<JButton> buttons, ThrowableConsumer<String, IOException> action, Runnable written) {
+        String body = source.getText().strip();
+        buttons.forEach(button -> button.setEnabled(false));
         ModalityState modality = ModalityState.stateForComponent(this);
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
             String failure = null;
@@ -343,12 +450,11 @@ final class ThreadView extends JPanel implements Disposable {
             }
             String shown = failure;
             ApplicationManager.getApplication().invokeLater(() -> {
-                other.setEnabled(true);
-                add.setEnabled(true);
-                error.setText(shown);
-                error.setVisible(shown != null);
+                buttons.forEach(button -> button.setEnabled(true));
+                failed.setText(shown);
+                failed.setVisible(shown != null);
                 if (shown == null) {
-                    field.setText("");
+                    source.setText("");
                     written.run();
                 }
                 revalidate();
@@ -391,13 +497,14 @@ final class ThreadView extends JPanel implements Disposable {
         return reply;
     }
 
-    /** The thread's place, else, Outdated, the lines of its Anchor. */
+    /** The thread's place, else, Outdated, the lines of its Anchor; « File » for a thread on the whole file. */
     static String lines(JsonObject thread) {
         JsonObject anchor = thread.getAsJsonObject("anchor");
         JsonObject at = thread.get("at") instanceof JsonObject placed ? placed : anchor;
         String sign = anchor.get("side").getAsString().equals("old") ? "-" : "+";
         int start = at.get("start").getAsInt();
         int end = at.get("end").getAsInt();
+        if (end == 0) return "File";
         return start == end ? "Line " + sign + start : "Lines " + sign + start + " to " + sign + end;
     }
 
@@ -422,6 +529,36 @@ final class ThreadView extends JPanel implements Disposable {
     /** The name of an author, as in the web page. */
     static String name(String author) {
         return author.equals("me") ? "You" : "Claude";
+    }
+
+    /** `text` followed by a suggestion block of `lines`, on lines of its own: Claude applies it once he reads the thread. */
+    static String suggestion(String text, String lines) {
+        String fence = "```";
+        while (lines.contains(fence)) fence += "`";
+        return text + (text.isEmpty() || text.endsWith("\n") ? "" : "\n") + fence + "suggestion\n" + lines + "\n" + fence;
+    }
+
+    /**
+     * The threads with a sent message, in the order of the session, as the web page copies them:
+     * a heading with the file, the place and the status, then each sent message, a blank line between all.
+     */
+    static String markdown(JsonObject session) {
+        List<String> threads = new ArrayList<>();
+        for (JsonElement element : session.getAsJsonArray("threads")) {
+            JsonObject thread = element.getAsJsonObject();
+            List<String> parts = new ArrayList<>();
+            for (JsonElement message : thread.getAsJsonArray("messages")) {
+                if (unsent(message.getAsJsonObject())) continue;
+                parts.add("**" + name(author(message.getAsJsonObject())) + "**: " + message.getAsJsonObject().get("body").getAsString());
+            }
+            if (parts.isEmpty()) continue;
+            String place = lines(thread);
+            String status = status(thread);
+            parts.add(0, "### `" + thread.getAsJsonObject("anchor").get("path").getAsString() + "` " + Character.toLowerCase(place.charAt(0)) + place.substring(1)
+                + (status.isEmpty() ? "" : " · " + status));
+            threads.add(String.join("\n\n", parts));
+        }
+        return threads.isEmpty() ? "" : String.join("\n\n", threads) + "\n";
     }
 
     private static String author(JsonObject message) {
@@ -647,13 +784,35 @@ final class ThreadView extends JPanel implements Disposable {
     private static final Set<String> TAGS = Set.of("a", "b", "blockquote", "br", "code", "del", "div", "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "li", "ol", "p",
         "pre", "s", "span", "strong", "sub", "sup", "table", "tbody", "td", "th", "thead", "tr", "u", "ul");
 
-    private static EditorTextField field(Project project, String placeholder) {
-        EditorTextField field = new EditorTextField("", project, FileTypes.PLAIN_TEXT);
+    private static EditorTextField field(Project project, String placeholder, String text) {
+        EditorTextField field = new EditorTextField(text, project, FileTypes.PLAIN_TEXT);
         field.setOneLineMode(false);
         field.setPlaceholder(placeholder);
         field.addSettingsProvider(editor -> editor.getSettings().setUseSoftWraps(true));
         field.setBorder(BorderFactory.createCompoundBorder(new RoundedLineBorder(JBColor.border(), JBUI.scale(6), 1), JBUI.Borders.empty(4, 6)));
         return field;
+    }
+
+    /** Buttons at the right, wrapped onto more rows in a narrow column. */
+    private static JPanel row() {
+        JPanel row = new JPanel(new WrapLayout(FlowLayout.RIGHT, JBUI.scale(6), JBUI.scale(4)));
+        row.setOpaque(false);
+        return row;
+    }
+
+    /** Where the failure of a write shows, hidden until one. */
+    private static JBLabel failure() {
+        JBLabel failure = new JBLabel();
+        failure.setForeground(JBColor.RED);
+        failure.setVisible(false);
+        return failure;
+    }
+
+    /** A link that leaves the focus where it is, as the buttons do. */
+    private static ActionLink link(String text, ActionListener listener) {
+        ActionLink link = new ActionLink(text, listener);
+        link.setFocusable(false);
+        return link;
     }
 
     private static JBLabel hint(String text) {

@@ -79,6 +79,26 @@ final class Placement {
             && fromClaude(after) > fromClaude(before);
     }
 
+    /** Whether Claude wrote in the thread since my last Send: a message of his dated at `sentAt` or later. */
+    static boolean replied(JsonObject session, JsonObject thread) {
+        if (!(session.get("sentAt") instanceof JsonPrimitive sentAt)) return false;
+        for (JsonElement element : thread.getAsJsonArray("messages")) {
+            JsonObject message = element.getAsJsonObject();
+            if (message.get("author").getAsString().equals("claude") && message.get("date").getAsString().compareTo(sentAt.getAsString()) >= 0) return true;
+        }
+        return false;
+    }
+
+    /** The index of the first of `stops` after `current`, -1 for none, or before it backward, around at the ends; -1 without any stop. */
+    static int step(List<Boolean> stops, int current, boolean forward) {
+        int from = current >= 0 ? current : forward ? -1 : stops.size();
+        for (int i = 1; i <= stops.size(); i++) {
+            int at = Math.floorMod(from + (forward ? i : -i), stops.size());
+            if (stops.get(at)) return at;
+        }
+        return -1;
+    }
+
     private static int fromClaude(JsonObject session) {
         int messages = 0;
         for (JsonElement thread : session.getAsJsonArray("threads")) {
