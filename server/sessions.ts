@@ -243,14 +243,14 @@ export function openSession(path: unknown) {
     });
 }
 
-type Pull = { number: number; title: string; headRefName: string; baseRefName: string; isCrossRepository: boolean };
+type Pull = { number: number; title: string; headRefName: string; baseRefName: string; isCrossRepository: boolean; headRepositoryOwner: { login: string } };
 
 /** The open pull requests of the worktree's GitHub repository, by gh, kept 60 s; none when gh fails or takes over 2 s. */
 const pulls = new Map<string, { at: number; list: Promise<Pull[]> }>();
 function openPulls(worktree: string): Promise<Pull[]> {
     const kept = pulls.get(worktree);
     if (kept && Date.now() - kept.at < 60_000) return kept.list;
-    const list = new Promise<Pull[]>(resolve => execFile('gh', ['pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,headRefName,baseRefName,isCrossRepository'],
+    const list = new Promise<Pull[]>(resolve => execFile('gh', ['pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,headRefName,baseRefName,isCrossRepository,headRepositoryOwner'],
         { cwd: worktree, timeout: 2000 }, (error, stdout) => {
             try {
                 resolve(error ? [] : JSON.parse(stdout));
@@ -267,16 +267,18 @@ type Base = { ref: string; name: string; disabled?: boolean; group?: string };
 /**
  * The bases of the selector, in its order: Uncommitted changes, Since my last review, the default branch, the base branch,
  * then, each in a group, the open pull requests by their head on origin, the local branches and the remote ones, from the nearest merge-base.
- * The base branch is the base of the branch's pull request, else the nearest local branch, none on the default branch.
+ * The base branch is the base of the branch's pull request, else the nearest local branch, none on the default branch;
+ * a pull request from a fork is the branch's when a remote of the fork's owner has the branch.
  */
 export async function bases(session: Session): Promise<Base[]> {
     const list: Base[] = [{ ref: 'HEAD', name: 'Uncommitted changes' }, { ref: 'last-review', name: 'Since my last review', disabled: session.sends === 0 }];
-    const [lines, branch, origin, prs] = await Promise.all([
+    const [lines, branch, origin, prs, remotes] = await Promise.all([
         // Each line: "*" on the checked-out branch, the ref, then its commits not in HEAD and HEAD's commits not in it, past their merge-base.
         git(session.worktree, ['for-each-ref', '--format=%(HEAD) %(refname) %(ahead-behind:HEAD)', 'refs/heads/', 'refs/remotes/']).catch(() => ''),
         git(session.worktree, ['symbolic-ref', '--short', '-q', 'HEAD']).then(name => name.trim(), () => ''),
         git(session.worktree, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']).then(ref => ref.trim(), () => ''),
         openPulls(session.worktree),
+        git(session.worktree, ['remote', '-v']).catch(() => ''),
     ]);
     const refs = lines.split('\n').filter(line => line.startsWith('  ')).map(line => line.slice(2).split(' '))
         .filter(([ref]) => !ref.endsWith('/HEAD'))
@@ -287,7 +289,10 @@ export async function bases(session: Session): Promise<Base[]> {
     const name = (ref: string) => ref.replace(/^refs\/(heads|remotes)\//, '');
 
     const defaultName = origin.replace(/^refs\/remotes\/origin\//, '');
-    const mine = prs.find(pr => !pr.isCrossRepository && pr.headRefName === branch);
+    // Another fork can have a branch of the same name: a remote line, "<name>\t<url> (fetch)", tells them apart by /<login>/ or :<login>/.
+    const forked = (pr: Pull) => remotes.split('\n').some(line => has(`refs/remotes/${line.split('\t')[0]}/${branch}`)
+        && new RegExp(`[/:]${pr.headRepositoryOwner.login}/`, 'i').test(line));
+    const mine = prs.find(pr => pr.headRefName === branch && (!pr.isCrossRepository || forked(pr)));
     // The default branch itself has no base branch.
     const baseRef = mine ? [`refs/remotes/origin/${mine.baseRefName}`, `refs/heads/${mine.baseRefName}`].find(has)
         // A branch that holds HEAD and commits of its own comes after it, as the next branch of a stack: never its base.
