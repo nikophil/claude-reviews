@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures.ts';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { removeRepos, repo, write } from '../server/fixture.ts';

@@ -446,7 +446,7 @@ public final class ReviewDiffAction extends DumbAwareAction {
 
     static String message(IOException e) {
         return e instanceof Server.Failure ? e.getMessage()
-            : "The claude-reviews server does not answer on " + Server.URL + ": start a Claude session with the local-reviews mod, or npm start.";
+            : "The claude-reviews server does not answer (no server at " + Server.ENDPOINT + "): start a Claude session with the local-reviews mod, or npm start.";
     }
 
     private static String path(JsonElement file) {

@@ -154,4 +154,13 @@ function noImages(/** @type {string} */ markdown) {
     return markdown.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1');
 }
 
-module.exports = { status, lines, label, pending, counts, waiting, replied, claude, startClaude, threadsOf, tree, firstLine, sent, viewed, baseItems, outdatedText, noImages };
+/** The uids of the sockets listening on `port`, from the text of /proc/net/tcp and /proc/net/tcp6. */
+function listeners(/** @type {string} */ text, /** @type {number} */ port) {
+    const local = `:${port.toString(16).toUpperCase().padStart(4, '0')}`;
+    // Each line: sl, local address:port, remote address:port, state (0A when listening), queues, timer, retransmits, uid…
+    return text.split('\n').map(line => line.trim().split(/\s+/))
+        .filter(fields => fields[1]?.endsWith(local) && fields[3] === '0A')
+        .map(fields => Number(fields[7]));
+}
+
+module.exports = { status, lines, label, pending, counts, waiting, replied, claude, startClaude, threadsOf, tree, firstLine, sent, viewed, baseItems, outdatedText, noImages, listeners };

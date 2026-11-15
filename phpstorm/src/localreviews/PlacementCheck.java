@@ -8,7 +8,8 @@ import java.util.List;
 
 /**
  * Run by build.sh: fails the build when Placement leaves out or lets in the wrong threads, when raw HTML gets through a message,
- * or when the navigation, the Replied mark, a suggestion or the Markdown copy of the threads goes wrong.
+ * or when the navigation, the Replied mark, a suggestion or the Markdown copy of the threads goes wrong,
+ * or when the listeners of a port, read in /proc/net/tcp to tell a server of another account, come out wrong.
  */
 final class PlacementCheck {
     private PlacementCheck() {}
@@ -158,6 +159,18 @@ final class PlacementCheck {
             **Claude**: Because…
             """), "the threads with a sent message as Markdown, Pending messages left out, ended by a newline as in the web page");
         check(ThreadView.markdown(JsonParser.parseString("{ \"threads\": [] }").getAsJsonObject()).isEmpty(), "no thread, no Markdown");
+        // /proc/net/tcp then /proc/net/tcp6: a listener of uid 1000 on 127.0.0.1:0xA609, a connection of uid 1001 from that port,
+        // a listener of 1001 on 0.0.0.0:7778, one of 1002 on [::ffff:127.0.0.1]:0xA609.
+        String proc = """
+              sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+               0: 0100007F:A609 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 84322 1 0000000000000000 100 0 0 10 0
+               1: 0100007F:A609 0100007F:C350 01 00000000:00000000 00:00000000 00000000  1001        0 0 1 0000000000000000 20 4 30 10 -1
+               2: 00000000:1E62 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1001        0 7964741 1 0000000000000000 100 0 0 10 0
+               0: 0000000000000000FFFF00000100007F:A609 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1002        0 10494914 1 0000000000000000 100 0 0 10 0
+            """;
+        check(Server.listeners(proc, 0xA609).equals(List.of(1000, 1002)), "the listeners of a port, IPv4 or IPv6, a connection from it left out");
+        check(Server.listeners(proc, 7778).equals(List.of(1001)), "a listener on any address");
+        check(Server.listeners(proc, 1234).isEmpty(), "no listener on a free port");
         System.out.println("PlacementCheck: ok");
     }
 

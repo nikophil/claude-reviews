@@ -56,6 +56,8 @@ class ReviewTest {
         private val repo: Path = Path.of(System.getProperty("repo"))
         private val http: HttpClient = HttpClient.newHttpClient()
         private lateinit var worktree: String
+        /** The token of the server, from its endpoint file: every call of the test carries it, as the plugin's do; health needs none. */
+        private var token = ""
         private lateinit var server: Process
         private lateinit var ide: BackgroundRun
         private val driver: Driver get() = ide.driver
@@ -74,6 +76,10 @@ class ReviewTest {
                 environment()["PATH"] = "$bin:${System.getenv("PATH")}"
             }.start()
             repeat(50) { if (runCatching { get("/api/health") }.isSuccess) return@repeat else Thread.sleep(100) }
+            // The server writes its port and token once it listens.
+            val endpoint = data.resolve("claude-reviews/endpoint")
+            repeat(50) { if (!Files.exists(endpoint)) Thread.sleep(100) }
+            token = JsonParser.parseString(Files.readString(endpoint)).asJsonObject["token"].asString
             worktree = node("phpstorm/ui-test/fixture.ts")
             // As the mod of a Claude session in the worktree: without it, the plugin greys Send.
             thread(isDaemon = true) {
@@ -91,7 +97,11 @@ class ReviewTest {
             })
             ide = Starter.newContext("review", TestCase(phpStorm, LocalProjectInfo(Path.of(worktree))))
                 .apply { pluginConfigurator.installPluginFromPath(Path.of(System.getProperty("plugin"))) }
-                .applyVMOptionsPatch { withEnv("CLAUDE_REVIEWS_PORT", PORT) }
+                // XDG_DATA_HOME so the plugin reads the endpoint file, port and token, the server wrote.
+                .applyVMOptionsPatch {
+                    withEnv("CLAUDE_REVIEWS_PORT", PORT)
+                    withEnv("XDG_DATA_HOME", data.toString())
+                }
                 .runIdeWithDriver()
             driver.waitForProjectOpen(3.minutes)
         }
@@ -113,6 +123,7 @@ class ReviewTest {
         private fun encode(value: String) = URLEncoder.encode(value, Charsets.UTF_8)
 
         private fun request(path: String) = HttpRequest.newBuilder(URI.create("http://127.0.0.1:$PORT$path"))
+            .apply { if (token.isNotEmpty()) header("Authorization", "Bearer $token") }
 
         private fun get(path: String): JsonObject {
             val response = http.send(request(path).GET().build(), HttpResponse.BodyHandlers.ofString())

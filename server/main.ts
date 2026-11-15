@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
-import { createServer, type Server, type ServerResponse } from 'node:http';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { extname, join } from 'node:path';
-import { addMessage, approve, bases, checkPlacement, chooseBase, closedSessions, currentTree, deleteMessage, editMessage, exclusive, file, findSession, getSession, httpError, inbox, listSessions, markViewed, openSession, openThread, placed, replies, resolve, send, sessionDiff, show, treeLines } from './sessions.ts';
+import { addMessage, approve, bases, checkPlacement, chooseBase, closedSessions, currentTree, dataDir, deleteMessage, editMessage, exclusive, file, findSession, getSession, httpError, inbox, listSessions, markViewed, openSession, openThread, placed, replies, resolve, send, sessionDiff, show, treeLines } from './sessions.ts';
 
 const UI = join(import.meta.dirname, '..', 'ui');
 const TYPES: Record<string, string> = {
@@ -50,7 +51,20 @@ function remembered(file: string, args: string[]): () => Promise<string | null> 
 }
 
 /** `notify` runs a notification command; the tests record it instead. */
-export function start(port: number, notify = (argv: string[]) => { execFile(argv[0], argv.slice(1), () => {}); }): Promise<Server> {
+export type ServerWithToken = Server & { token: string };
+
+/** Whether the request carries the server's token, in `Authorization: Bearer`; the clients read it from the endpoint file, the UI from `#token=`. */
+function authorized(req: IncomingMessage, token: string): boolean {
+    const header = req.headers.authorization;
+    const bearer = Buffer.from(header?.startsWith('Bearer ') ? header.slice(7) : '');
+    const expected = Buffer.from(token);
+    // timingSafeEqual needs equal lengths; it is only reached for a request that already passed the Host guard.
+    return bearer.length === expected.length && timingSafeEqual(bearer, expected);
+}
+
+export function start(port: number, notify = (argv: string[]) => { execFile(argv[0], argv.slice(1), () => {}); }): Promise<ServerWithToken> {
+    // One secret per server, per account: another account cannot read /diff, inject in a thread or shut it down without it.
+    const token = randomBytes(32).toString('hex');
     // Kept: gh can take a second, and the login does not change while the server runs.
     // ponytail: a login or name changed while the server runs shows after its restart only.
     // The avatar is on github.com, so the login is that of github.com, whichever host gh has active.
@@ -76,6 +90,10 @@ export function start(port: number, notify = (argv: string[]) => { execFile(argv
             if (type !== 'application/json') return json(res, 415, { error: 'A write needs Content-Type: application/json' });
             const origin = req.headers.origin;
             if (origin !== undefined && origin !== `http://${req.headers.host}`) return json(res, 403, { error: `Origin ${origin} is refused` });
+        }
+        // The token guards every API route but health: another local account reaches the loopback port, but gets nothing without it.
+        if (url.pathname.startsWith('/api/') && url.pathname !== '/api/health' && !authorized(req, token)) {
+            return json(res, 401, { error: 'unauthorized' });
         }
         try {
             if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { app: 'claude-reviews', version });
@@ -128,10 +146,82 @@ export function start(port: number, notify = (argv: string[]) => { execFile(argv
     });
     // Past the 30 s the JDK HTTP client of PhpStorm keeps an idle connection: closed by the server first, it would lose the answer of a write sent on it.
     server.keepAliveTimeout = 65_000;
+    const withToken = Object.assign(server, { token });
     return new Promise((resolve, reject) => {
         server.once('error', reject);
-        server.listen(port, '127.0.0.1', () => resolve(server));
+        server.listen(port, '127.0.0.1', () => resolve(withToken));
     });
+}
+
+/** The file the clients read for the port and token of this account's server, in its data directory, 0600. */
+function endpointPath(): string {
+    return join(dataDir(), 'endpoint');
+}
+
+/** Whether a claude-reviews server still answers on `port`: the singleton check of listen(). */
+async function alive(port: number): Promise<boolean> {
+    try {
+        const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2000) });
+        return res.ok && (await res.json() as { app?: string }).app === 'claude-reviews';
+    } catch {
+        return false;
+    }
+}
+
+/** The uids of the sockets listening on `port`, from the text of /proc/net/tcp and /proc/net/tcp6. */
+export function listeners(text: string, port: number): number[] {
+    const local = `:${port.toString(16).toUpperCase().padStart(4, '0')}`;
+    // Each line: sl, local address:port, remote address:port, state (0A when listening), queues, timer, retransmits, uid…
+    return text.split('\n').map(line => line.trim().split(/\s+/))
+        .filter(fields => fields[1]?.endsWith(local) && fields[3] === '0A')
+        .map(fields => Number(fields[7]));
+}
+
+/** Whether another account than `uid` listens on `port`, as /proc/net/tcp tells every account; false without /proc (macOS), a machine of one account. */
+async function foreign(port: number, uid: number | undefined): Promise<boolean> {
+    if (uid === undefined) return false;
+    const text = (await Promise.all(['/proc/net/tcp', '/proc/net/tcp6'].map(file => readFile(file, 'utf8').catch(() => '')))).join('\n');
+    return listeners(text, port).some(owner => owner !== uid);
+}
+
+/**
+ * Stops a server from before the token (0.6 and older) that an upgrade left on the legacy port: it serves the data directory to every account.
+ * A server of this version answers an unknown session 401 without the token, and stays.
+ */
+async function stopLegacy(port: number, uid: number | undefined): Promise<void> {
+    if (await foreign(port, uid) || !await alive(port)) return;
+    const url = `http://127.0.0.1:${port}`;
+    const unknown = await fetch(`${url}/api/sessions/0000000000000000`, { signal: AbortSignal.timeout(2000) }).then(res => res.status, () => 0);
+    if (unknown !== 404) return;
+    await fetch(`${url}/api/shutdown`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(2000) }).catch(() => {});
+}
+
+/**
+ * Starts the account's single server on an ephemeral port (or CLAUDE_REVIEWS_PORT), and writes its port and token to the endpoint file.
+ * Defers to a server of this account already serving the data directory, so two Claude sessions do not run two servers on the same files.
+ * `uid` is this account's, `legacy` the port where a server from before the token may still run.
+ */
+export async function listen({ notify, uid = process.getuid?.(), legacy = Number(process.env.CLAUDE_REVIEWS_PORT) || 7778 }: {
+    notify?: (argv: string[]) => void; uid?: number; legacy?: number;
+} = {}): Promise<ServerWithToken | null> {
+    await mkdir(dataDir(), { recursive: true, mode: 0o700 });
+    // An older version left the directory world-readable; tighten it.
+    await chmod(dataDir(), 0o700).catch(() => {});
+    // A corrupt file names no server.
+    const named = await readFile(endpointPath(), 'utf8').then(text => (JSON.parse(text) as { port?: unknown }).port).catch(() => undefined);
+    // Another account may take the port of a dead server, and answer as claude-reviews: only a listener of this account counts.
+    // ponytail: two listen() within the same instant may both start; atomic session writes make this a rare lost-update, not corruption; add an O_EXCL lock if it bites.
+    if (typeof named === 'number' && Number.isInteger(named) && !await foreign(named, uid) && await alive(named)) {
+        console.log(`claude-reviews already serving on http://127.0.0.1:${named}`);
+        return null;
+    }
+    await stopLegacy(legacy, uid);
+    const server = await start(Number(process.env.CLAUDE_REVIEWS_PORT) || 0, notify);
+    const port = (server.address() as AddressInfo).port;
+    const file = endpointPath();
+    await writeFile(`${file}.tmp`, JSON.stringify({ port, token: server.token }), { mode: 0o600 });
+    await rename(`${file}.tmp`, file);
+    return server;
 }
 
 /** The session API; its contract is written in CLAUDE.md. */
@@ -171,6 +261,7 @@ async function route(method: string, { pathname: path, searchParams }: URL, body
 }
 
 if (import.meta.main) {
-    const server = await start(Number(process.env.CLAUDE_REVIEWS_PORT || 7778));
+    const server = await listen();
+    if (!server) process.exit(0);
     console.log(`claude-reviews listening on http://127.0.0.1:${(server.address() as AddressInfo).port}`);
 }

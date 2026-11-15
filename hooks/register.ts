@@ -1,5 +1,5 @@
 import type { EngineInterface, Register } from 'claude-code';
-import { due, look, notified, prompt, resumed, sending, start, status, submitted, turnEnded, type Seen, type Watch } from './watch.ts';
+import { due, listeners, look, notified, prompt, resumed, sending, start, status, submitted, turnEnded, type Seen, type Watch } from './watch.ts';
 
 type Session = { id: string; sends: number; reanchoredOn?: { base: string; tree: string }; threads: { id: number; status: string | null; anchor: any; at?: { start: number; end: number } | null; messages: { author: string; body: string; date: string | null }[] }[] };
 
@@ -42,7 +42,9 @@ const TOOLS = [
     },
 ];
 
-let base = 'http://127.0.0.1:7778';
+let base = '';
+/** The token of this account's server, read from the endpoint file: every API call carries it, another account's server rejects it. */
+let token = '';
 /** The session's root at the last look, undefined while the mod is off: the Claude session did not start in a worktree. */
 let root: string | undefined;
 /** The worktree the root lies in, undefined once the root left every worktree. */
@@ -54,12 +56,25 @@ let watch = start;
 let greeted = false;
 /** The status line on screen, undefined for none. */
 let shown: string | undefined;
+/** This account's uid, from `id -u`; '' when unknown, undefined before the first look. */
+let uid: string | undefined;
+/** How many times the module registered: a launch from an earlier registration stops its probes. */
+let registered = 0;
 
-const silent = () => `claude-reviews does not answer on ${base}`;
+const silent = () => `claude-reviews does not answer${base ? ` on ${base}` : ''}`;
 
-/** A call to the server; one that does not answer within 2 s, or not in JSON, comes back as status 0 and an error. */
+/**
+ * A call to the server; one that does not answer within 2 s, or not in JSON, comes back as status 0 and an error.
+ * None reaches a port another account took since the mod adopted it: a squatter of a dead server's port must not feed Claude its threads.
+ */
 async function api($: EngineInterface, method: string, path: string, body?: object): Promise<{ status: number; body: any }> {
-    const init = body === undefined ? { method } : { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+    if (!base) return { status: 0, body: { error: silent() } };
+    // ponytail: the mod starts a server of its own at session.start only; start one from the poll if squatters ever show mid-session.
+    if (await foreign($, Number(new URL(base).port))) return { status: 0, body: { error: `${base} is held by another account: start the Claude session again for a server of your own` } };
+    const auth = token ? { authorization: `Bearer ${token}` } : {};
+    const init = body === undefined
+        ? { method, headers: auth }
+        : { method, headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify(body) };
     try {
         const res = await within($, 2000, $.http.fetch(`${base}${path}`, init));
         return { status: res.status, body: JSON.parse(res.text) };
@@ -85,6 +100,15 @@ async function vscode($: EngineInterface): Promise<string> {
 /** Runs `argv` detached, its output dropped; it outlives this Claude session, as the server does. */
 async function detach($: EngineInterface, argv: string[]): Promise<void> {
     await $.process.run(['/bin/sh', '-c', `trap '' HUP; nohup "$@" >/dev/null 2>&1 </dev/null &`, 'claude-reviews', ...argv], { cwd: $.plugin.root });
+}
+
+/** Whether another account listens on `port`, as /proc/net/tcp tells every account; false without /proc (macOS) or uid, a machine of one account. */
+async function foreign($: EngineInterface, port: number): Promise<boolean> {
+    uid ??= (await $.process.run(['id', '-u'], { cwd: $.plugin.root })).stdout.trim();
+    if (!uid) return false;
+    // cat rather than $.fs.read: a file of /proc has no size to read up to. tcp6 may be missing, tcp still prints.
+    const { stdout } = await $.process.run(['cat', '/proc/net/tcp', '/proc/net/tcp6'], { cwd: $.plugin.root });
+    return listeners(stdout, port).some(owner => String(owner) !== uid);
 }
 
 /** The top of the worktree `dir` lies in, undefined outside one. */
@@ -146,32 +170,62 @@ function older(a: unknown, b: string): boolean {
     return i !== -1 && !(x[i] > y[i]);
 }
 
+/** The data directory of this account, where the server writes the endpoint file. */
+async function dataDir($: EngineInterface): Promise<string> {
+    return `${await $.env.get('XDG_DATA_HOME') || `${await $.env.get('HOME')}/.local/share`}/claude-reviews`;
+}
+
 /**
- * Starts the server of this plugin when the port does not answer, or answers with an older version.
- * A newer one is used as it is, or two Claude sessions of different versions would stop each other's server.
+ * The port and token of this account's server, from its endpoint file; null when no server wrote it, when it is corrupt,
+ * or when another account listens on its port: a squatter of a dead server's port gets neither a call nor the trust of a prompt.
  */
-async function serve($: EngineInterface): Promise<void> {
-    // The port of this launch: a session.start of a module registered again changes `base` while the probes below still run.
-    const server = base;
-    const health = await within($, 2000, $.http.fetch(`${server}/api/health`).catch(() => null));
-    if (health) {
-        let app;
-        try { app = JSON.parse(health.text); } catch {}
-        if (app?.app !== 'claude-reviews') throw new Error(`${server} answers, but is not claude-reviews; no server started`);
-        const { version } = JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`));
-        if (!older(app.version, version)) return;
-        const stopped = await within($, 2000, $.http.fetch(`${server}/api/shutdown`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }));
-        if (stopped.status !== 200) throw new Error(`${server} did not stop its version ${app.version}: ${stopped.status}`);
+async function endpoint($: EngineInterface): Promise<{ port: number; token: string } | null> {
+    const ep = await $.fs.read(`${await dataDir($)}/endpoint`).then(text => JSON.parse(text)).catch(() => null);
+    if (!Number.isInteger(ep?.port) || typeof ep?.token !== 'string') return null;
+    return await foreign($, ep.port) ? null : ep;
+}
+
+/** Adopts the server the endpoint `ep` names, for every later call. */
+function adopt(ep: { port: number; token: string }): void {
+    [base, token] = [`http://127.0.0.1:${ep.port}`, ep.token];
+}
+
+/**
+ * Starts this account's server when its endpoint names no server, or an older one; a newer one is used as it is,
+ * or two Claude sessions of different versions would stop each other's server. The server picks its own port and token.
+ */
+async function serve($: EngineInterface, ep: { port: number; token: string } | null): Promise<void> {
+    if (ep) {
+        // base and token are already adopted at session.start; snapshot them (a module registered again changes them), and probe health first,
+        // synchronously recorded, so a poll running meanwhile does not see this health as its own request.
+        const server = base;
+        const bearer = token;
+        const health = await within($, 2000, $.http.fetch(`${server}/api/health`).catch(() => null));
+        if (health) {
+            let app;
+            try { app = JSON.parse(health.text); } catch {}
+            if (app?.app !== 'claude-reviews') throw new Error(`${server} answers, but is not claude-reviews; no server started`);
+            const { version } = JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`));
+            if (!older(app.version, version)) return;
+            const stopped = await within($, 2000, $.http.fetch(`${server}/api/shutdown`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${bearer}` }, body: '{}' }));
+            if (stopped.status !== 200) throw new Error(`${server} did not stop its version ${app.version}: ${stopped.status}`);
+        }
     }
-    const data = `${await $.env.get('XDG_DATA_HOME') || `${await $.env.get('HOME')}/.local/share`}/claude-reviews`;
-    // nohup and the redirections let the server outlive this Claude session, and the call return at once.
+    const data = await dataDir($);
+    // umask 077 keeps the data directory and server.log private; nohup and the redirections let the server outlive this Claude session.
     // ponytail: server.log grows without bound; rotate it if it ever gets big.
-    await $.process.run(['/bin/sh', '-c', `mkdir -p "$2"; trap '' HUP; nohup node "$1" >> "$2/server.log" 2>&1 </dev/null &`,
+    await $.process.run(['/bin/sh', '-c', `umask 077; mkdir -p "$2"; trap '' HUP; nohup node "$1" >> "$2/server.log" 2>&1 </dev/null &`,
         'claude-reviews', `${$.plugin.root}/server/main.ts`, data], { cwd: $.plugin.root });
     // A server that fails at once, on an old node or a port taken, would leave every call unanswered without a word.
+    const mine = registered;
     for (let probe = 0; probe < 10; probe++) {
         await $.clock.sleep(500);
-        if (await within($, 2000, $.http.fetch(`${server}/api/health`)).then(res => res.status === 200, () => false)) return;
+        const started = await endpoint($);
+        // The module registered again since, and starts its own server: this launch must neither probe nor adopt the endpoint it now reads.
+        if (registered !== mine) return;
+        if (started && await within($, 2000, $.http.fetch(`http://127.0.0.1:${started.port}/api/health`)).then(res => res.status === 200, () => false)) {
+            return adopt(started);
+        }
     }
     // ponytail: $.fs.read rejects a log over 4 MiB, which then comes without its last lines.
     const tail = await $.fs.read(`${data}/server.log`).then(text => `:\n${text.trimEnd().split('\n').slice(-10).join('\n')}`, () => '');
@@ -204,19 +258,21 @@ function excerpt(hunk: { header: string; lines: { type: 'context' | 'add' | 'del
 // ponytail: the matchers spell the plugin's name, local-reviews; renaming the plugin means renaming them.
 export const register: Register = on => {
     // Each register starts afresh, as a reloaded module does: the node tests register it several times.
-    [base, root, worktree, session, watch, greeted, shown] = ['http://127.0.0.1:7778', undefined, undefined, undefined, start, false, undefined];
+    [base, token, root, worktree, session, watch, greeted, shown, uid] = ['', '', undefined, undefined, undefined, start, false, undefined, undefined];
+    registered++;
 
     // ponytail: a Claude session that starts out of a worktree leaves the mod off, even once /cd takes it into one.
     on('session.start', async ($, e, next) => {
         worktree = await top($, e.cwd);
         if (!worktree) return next(e);
         root = e.cwd;
-        // An empty variable is no port.
-        base = `http://127.0.0.1:${await $.env.get('CLAUDE_REVIEWS_PORT') || 7778}`;
+        // The endpoint file, if a server already wrote it, so the poll and the first prompt have a server to call before serve() returns.
+        const ep = await endpoint($);
+        if (ep) adopt(ep);
         for (const tool of TOOLS) await $.tool.register({ ...tool, isDeferred: false });
         await $.command.register({ name: 'review-local', description: 'Opens the claude-reviews session of this worktree in PhpStorm, VS Code or the browser: phpstorm, vscode, browser, or a question', immediate: true });
         // Not awaited: a poll before the server is ready fails, and leaves the watch as it is.
-        serve($).catch(error => $.ui.log(`claude-reviews: ${(error as Error).message}`));
+        serve($, ep).catch(error => $.ui.log(`claude-reviews: ${(error as Error).message}`));
         // ponytail: an interval the engine ends (a refused period) is not armed again; re-arm at turn.complete if wakes go missing.
         $.clock.every(2000, async () => {
             await follow($);
@@ -313,7 +369,8 @@ export const register: Register = on => {
         const opened = await api($, 'POST', '/api/sessions', { worktree });
         if (opened.status !== 200) return { text: `claude-reviews: ${opened.body.error}` };
         session = opened.body.id as string;
-        const url = `${base}/s/${session}`;
+        // The token lets the browser authenticate; it rides in the fragment, which no request carries, and the UI drops it from the address bar.
+        const url = `${base}/s/${session}#token=${token}`;
         const arg = e.args.trim().toLowerCase();
         const ides = arg === 'browser' ? [] : [{ name: 'PhpStorm', arg: 'phpstorm', launcher: await phpstorm($) }, { name: 'VS Code', arg: 'vscode', launcher: await vscode($) }];
         const found = ides.filter(ide => ide.launcher);
@@ -328,8 +385,10 @@ export const register: Register = on => {
             await detach($, [ide.launcher, worktree!]);
             return { text: `claude-reviews: opened in ${ide.name}, ${url}` };
         }
+        // Over SSH no browser runs on this machine, and a launcher's argv would show the token to every account (/proc/<pid>/cmdline, ps): the URL is only printed.
+        const ssh = !!(await $.env.get('SSH_CONNECTION') || await $.env.get('SSH_CLIENT') || await $.env.get('SSH_TTY'));
         // Without a question, the browser, also for an IDE without its launcher; a dismissed question opens nothing.
-        if (!asked || where === 'browser' || ide) await detach($, ['/bin/sh', '-c', 'if command -v xdg-open >/dev/null 2>&1; then xdg-open "$1"; else open "$1"; fi', 'claude-reviews', url]);
+        if (!ssh && (!asked || where === 'browser' || ide)) await detach($, ['/bin/sh', '-c', 'if command -v xdg-open >/dev/null 2>&1; then xdg-open "$1"; else open "$1"; fi', 'claude-reviews', url]);
         return { text: ide ? `claude-reviews: ${ide.name} launcher not found, opened in the browser, ${url}` : `claude-reviews: ${url}` };
     });
 };

@@ -86,3 +86,12 @@ export function resumed(watch: Watch): Watch {
     // ponytail: the retry trusts the last look rather than reading the session again; the next poll corrects it within 2 s.
     return { ...watch, dropped: false };
 }
+
+/** The uids of the sockets listening on `port`, from the text of /proc/net/tcp and /proc/net/tcp6. */
+export function listeners(text: string, port: number): number[] {
+    const local = `:${port.toString(16).toUpperCase().padStart(4, '0')}`;
+    // Each line: sl, local address:port, remote address:port, state (0A when listening), queues, timer, retransmits, uid…
+    return text.split('\n').map(line => line.trim().split(/\s+/))
+        .filter(fields => fields[1]?.endsWith(local) && fields[3] === '0A')
+        .map(fields => Number(fields[7]));
+}

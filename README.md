@@ -41,8 +41,9 @@ Dans Claude Code :
 /plugin install local-reviews --marketplace nikophil/claude-reviews
 ```
 
-Le plugin démarre le serveur sur `127.0.0.1:7778` à l'ouverture d'une Claude session dans un dépôt git ;
-`CLAUDE_REVIEWS_PORT` change le port.
+Le plugin démarre le serveur de ton compte sur un port éphémère de `127.0.0.1` à l'ouverture d'une Claude session dans un dépôt git ;
+il écrit son port et son token dans `~/.local/share/claude-reviews/endpoint`, que seul ton compte lit, et chaque client envoie ce token.
+`CLAUDE_REVIEWS_PORT` fixe le port : sur une machine partagée où tu travailles en SSH, choisis le tien et forwarde le même numéro (`ssh -L <port>:127.0.0.1:<port>`).
 
 ## Utiliser
 
@@ -98,6 +99,6 @@ node --test
 npx playwright test
 ```
 
-`npm start` lance le serveur sur `127.0.0.1:7778` ; ouvre `http://127.0.0.1:7778/?worktree=<chemin absolu>`.
+`npm start` lance le serveur et écrit son port et son token dans `~/.local/share/claude-reviews/endpoint` ; ouvre `http://127.0.0.1:<port>/?worktree=<chemin absolu>#token=<token>`.
 `npm run readme` refait les images de ce README, sauf la capture de PhpStorm, prise à la main dans l'IDE.
 Les règles du dépôt, le contrat HTTP et le format des données sont dans [CLAUDE.md](CLAUDE.md), les décisions d'architecture dans [docs/adr/](docs/adr/).

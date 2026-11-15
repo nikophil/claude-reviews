@@ -40,8 +40,8 @@ Décisions structurantes : [docs/adr/](docs/adr/).
 
 ## Architecture
 
-1. **Un serveur local unique** sur `:7778`, pour tous les worktrees : il sert l'UI et une API JSON.
-   Le mod le démarre à la demande quand le port ne répond pas, sans service systemd.
+1. **Un serveur local par compte**, pour tous ses worktrees : il sert l'UI et une API JSON, sur un port éphémère, derrière un token ([ADR 0005](docs/adr/0005-un-serveur-et-un-token-par-compte.md)).
+   Le mod le démarre à la demande quand le fichier `endpoint` ne nomme aucun serveur, sans service systemd.
 2. **Stockage** : un fichier JSON par session ouverte sous `~/.local/share/claude-reviews/sessions/`, avec le chemin du worktree comme clé ;
    une session close part sous `~/.local/share/claude-reviews/archive/`, rangée sous son id ;
    seul le serveur écrit ces fichiers, par remplacement atomique ([ADR 0003](docs/adr/0003-stockage-hors-du-depot.md)).
@@ -126,11 +126,12 @@ Son `CLAUDE.md` impose de lire `docs/ARCHITECTURE.md` avant toute modification, 
 L'intérêt : une seule boîte de réception « où est-ce qu'on m'attend », de la review locale jusqu'à la PR mergeable.
 Ça vaut surtout avec plusieurs Claude sessions en parallèle ; avec une seule, le `notify-send` du MVP suffit.
 
-Contrat proposé, après le MVP : claude-reviews expose une entrée par session ouverte
+Contrat proposé, après le MVP : claude-reviews expose une entrée par session ouverte, sur le port et avec le token du fichier `endpoint` (plus de port fixe depuis l'ADR 0005)
 
 ```
-GET http://localhost:7778/api/inbox
-[{ "repo": "acme/shop", "branch": "invoice-pdf-footer", "title": "…", "url": "http://localhost:7778/s/…",
+GET http://127.0.0.1:<port>/api/inbox
+Authorization: Bearer <token>
+[{ "repo": "acme/shop", "branch": "invoice-pdf-footer", "title": "…", "url": "http://127.0.0.1:<port>/s/…",
    "openThreads": 2, "awaitingMe": 2, "lastActor": "claude", "updatedAt": "…" }]
 ```
 

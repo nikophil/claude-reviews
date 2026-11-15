@@ -1,20 +1,22 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { connect, type AddressInfo } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { after, before, test } from 'node:test';
-import { get, request as httpRequest, type IncomingHttpHeaders, type Server } from 'node:http';
+import { createServer, get, request as httpRequest, type IncomingHttpHeaders, type Server } from 'node:http';
 import { dataHome, git, removeRepos, repo, write } from './fixture.ts';
-import { start } from './main.ts';
+import { listen, listeners, start } from './main.ts';
 
-dataHome();
+const dataRoot = join(dataHome(), 'claude-reviews');
 let server: Server;
 let port: number;
+let token: string;
 before(async () => {
     server = await start(0);
     port = (server.address() as AddressInfo).port;
+    token = (server as unknown as { token: string }).token;
 });
 after(() => {
     server.close();
@@ -46,7 +48,7 @@ test('static files cannot escape the UI directory', async () => {
 
 /** A raw request, since fetch() would not send some of these headers as given. */
 function request(path: string, headers: Record<string, string>, method = 'GET', body = ''): Promise<{ status: number; body: string; headers: IncomingHttpHeaders }> {
-    return new Promise(resolve => httpRequest({ host: '127.0.0.1', port, path, headers, method }, res => {
+    return new Promise(resolve => httpRequest({ host: '127.0.0.1', port, path, headers: { authorization: `Bearer ${token}`, ...headers }, method }, res => {
         let body = '';
         res.setEncoding('utf8').on('data', chunk => body += chunk).on('end', () => resolve({ status: res.statusCode!, body, headers: res.headers }));
     }).end(body));
@@ -96,7 +98,7 @@ test('a request whose Host is not the local server is refused, against DNS rebin
 test('a request sent by another site is refused before git runs', async () => {
     const dir = repo({ 'a.txt': 'a\n' });
     write(dir, { 'a.txt': 'b\n' });
-    const { id } = await (await fetch(`http://127.0.0.1:${port}/api/sessions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ worktree: dir }) })).json();
+    const { id } = await (await fetch(`http://127.0.0.1:${port}/api/sessions`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ worktree: dir }) })).json();
     const path = `/api/sessions/${id}/diff`;
     const host = `127.0.0.1:${port}`;
     const objectsBefore = git(dir, 'count-objects');
@@ -119,7 +121,7 @@ test('a link from another site opens the page, but cannot call the API', async (
 });
 
 test('a worktree that does not exist gets a 400 naming its path', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ worktree: '/no/such/worktree' }) });
+    const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ worktree: '/no/such/worktree' }) });
 
     assert.equal(res.status, 400);
     assert.match((await res.json()).error, /\/no\/such\/worktree/);
@@ -147,13 +149,15 @@ test('GET /api/health names the app and the version of the plugin', async () => 
     assert.deepEqual(await res.json(), { app: 'claude-reviews', version });
 });
 
-test('POST /api/shutdown is guarded like any write, then stops the server', async () => {
+test('POST /api/shutdown is guarded like any write and by the token, then stops the server', async () => {
     const other = await start(0);
     const url = `http://127.0.0.1:${(other.address() as AddressInfo).port}`;
+    const json = { 'content-type': 'application/json' };
     const closed = new Promise(resolve => other.once('close', resolve));
 
     assert.equal((await fetch(`${url}/api/shutdown`, { method: 'POST' })).status, 415);
-    const res = await fetch(`${url}/api/shutdown`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    assert.equal((await fetch(`${url}/api/shutdown`, { method: 'POST', headers: json, body: '{}' })).status, 401, 'no token');
+    const res = await fetch(`${url}/api/shutdown`, { method: 'POST', headers: { ...json, authorization: `Bearer ${other.token}` }, body: '{}' });
     assert.equal(res.status, 200);
 
     await closed;
@@ -196,6 +200,7 @@ async function withMe(script: string | null, use: (url: string, log: string, bin
     });
     Object.assign(process.env, { PATH: [bin, ...path].join(':'), GIT_CONFIG_GLOBAL: join(bin, 'config') });
     const other = await start(0);
+    meToken = other.token;
     try {
         await use(`http://127.0.0.1:${(other.address() as AddressInfo).port}`, log, bin);
     } finally {
@@ -205,14 +210,21 @@ async function withMe(script: string | null, use: (url: string, log: string, bin
     }
 }
 
+/** The token of the server withMe last started, for the /api/me helpers below. */
+let meToken = '';
+
+function meFetch(url: string): Promise<Response> {
+    return fetch(`${url}/api/me`, { headers: { authorization: `Bearer ${meToken}` } });
+}
+
 async function me(url: string): Promise<unknown> {
-    return (await fetch(`${url}/api/me`)).json();
+    return (await meFetch(url)).json();
 }
 
 test('GET /api/me answers the github.com login gh reads, once, and the name of git config user.name', async () => {
     await withMe('echo octocat', async (url, log) => {
-        const first = await fetch(`${url}/api/me`);
-        const second = await fetch(`${url}/api/me`);
+        const first = await meFetch(url);
+        const second = await meFetch(url);
 
         assert.equal(first.status, 200);
         assert.deepEqual(await first.json(), { login: 'octocat', name: 'Mona Lisa' });
@@ -272,4 +284,126 @@ test('a link from another site cannot open the session of a worktree, and no oth
     const opened = await request(path, { host, 'sec-fetch-site': 'none' });
     assert.equal(opened.status, 200);
     assert.match(String(opened.headers['content-security-policy']), /frame-ancestors 'none'/);
+});
+
+test('every API route but /api/health needs the token', async () => {
+    const url = `http://127.0.0.1:${port}`;
+
+    assert.equal((await fetch(`${url}/api/sessions`)).status, 401, 'no token');
+    assert.equal((await fetch(`${url}/api/sessions`, { headers: { authorization: 'Bearer wrong' } })).status, 401, 'wrong token');
+    assert.equal((await fetch(`${url}/api/sessions`, { headers: { authorization: `Bearer ${token}` } })).status, 200, 'valid token');
+    // The auth gate runs before the route, so gh never runs: /api/me cannot leak the login without the token.
+    assert.equal((await fetch(`${url}/api/me`)).status, 401, '/api/me needs the token');
+    assert.equal((await fetch(`${url}/api/health`)).status, 200, 'health stays open');
+});
+
+// A legacy port where nothing listens: the tests never stop a real server left on 7778.
+const quiet = { legacy: 1 };
+
+test('listen writes the endpoint file, port and token, 0600 in a 0700 data directory', async () => {
+    const other = await listen(quiet);
+    assert.ok(other);
+    try {
+        const endpoint = JSON.parse(readFileSync(join(dataRoot, 'endpoint'), 'utf8'));
+        assert.equal(endpoint.port, (other.address() as AddressInfo).port);
+        assert.equal(endpoint.token, other.token);
+        assert.equal(statSync(join(dataRoot, 'endpoint')).mode & 0o777, 0o600);
+        assert.equal(statSync(dataRoot).mode & 0o777, 0o700);
+    } finally {
+        other.close();
+    }
+});
+
+test('listen defers to a server already serving the data directory, so one account runs one server', async () => {
+    const first = await listen(quiet);
+    assert.ok(first);
+    try {
+        assert.equal(await listen(quiet), null, 'the second listen defers to the first');
+    } finally {
+        first.close();
+    }
+});
+
+/** /proc/net/tcp then /proc/net/tcp6: a listener of uid 1000 on 127.0.0.1:0xA609, a connection of uid 1001 from that port, a listener of 1001 on 0.0.0.0:7778, one of 1002 on [::ffff:127.0.0.1]:0xA609. */
+const PROC = [
+    '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode',
+    '   0: 0100007F:A609 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 84322 1 0000000000000000 100 0 0 10 0',
+    '   1: 0100007F:A609 0100007F:C350 01 00000000:00000000 00:00000000 00000000  1001        0 0 1 0000000000000000 20 4 30 10 -1',
+    '   2: 00000000:1E62 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1001        0 7964741 1 0000000000000000 100 0 0 10 0',
+    '   0: 0000000000000000FFFF00000100007F:A609 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1002        0 10494914 1 0000000000000000 100 0 0 10 0',
+].join('\n');
+
+test('the listeners of a port are the sockets listening on it, IPv4 or IPv6, with their uid', () => {
+    assert.deepEqual(listeners(PROC, 0xA609), [1000, 1002], 'a connection from the port is no listener');
+    assert.deepEqual(listeners(PROC, 7778), [1001], 'any address, 0.0.0.0 included');
+    assert.deepEqual(listeners(PROC, 1234), []);
+});
+
+test('listen does not defer to the port of its endpoint once another account listens on it, and starts a server of its own', { skip: !existsSync('/proc/net/tcp') }, async () => {
+    const first = await listen(quiet);
+    assert.ok(first);
+    try {
+        // Seen from another uid, the listener of the endpoint's port is another account's: a squatter of the port of a dead server.
+        const second = await listen({ ...quiet, uid: process.getuid!() + 1 });
+        assert.ok(second, 'a server of its own starts');
+        try {
+            assert.notEqual((second.address() as AddressInfo).port, (first.address() as AddressInfo).port);
+            assert.equal(JSON.parse(readFileSync(join(dataRoot, 'endpoint'), 'utf8')).port, (second.address() as AddressInfo).port);
+        } finally {
+            second.close();
+        }
+    } finally {
+        first.close();
+    }
+});
+
+test('listen starts over a corrupt endpoint file, and writes it again', async () => {
+    mkdirSync(dataRoot, { recursive: true });
+    writeFileSync(join(dataRoot, 'endpoint'), '{"port":');
+
+    const other = await listen(quiet);
+
+    try {
+        assert.ok(other);
+        assert.equal(JSON.parse(readFileSync(join(dataRoot, 'endpoint'), 'utf8')).port, (other.address() as AddressInfo).port);
+    } finally {
+        other?.close();
+    }
+});
+
+test('listen stops a server from before the token left on the legacy port, which serves the data directory to anyone', async () => {
+    const calls: string[] = [];
+    const legacy = createServer((req, res) => {
+        calls.push(`${req.method} ${req.url}`);
+        if (req.url === '/api/health') return res.end(JSON.stringify({ app: 'claude-reviews', version: '0.6.0' }));
+        if (req.url === '/api/shutdown') {
+            legacy.close();
+            return res.end('{}');
+        }
+        // Before the token, an unknown session answered 404 to anyone.
+        res.writeHead(404).end('{"error":"No session"}');
+    });
+    await new Promise<void>(resolve => legacy.listen(0, '127.0.0.1', resolve));
+
+    const other = await listen({ legacy: (legacy.address() as AddressInfo).port });
+
+    try {
+        assert.ok(other);
+        assert.ok(calls.includes('POST /api/shutdown'), calls.join(', '));
+        assert.equal(legacy.listening, false);
+    } finally {
+        other?.close();
+        legacy.closeAllConnections();
+    }
+});
+
+test('listen leaves a server of this version on the legacy port, which refuses its API without the token', async () => {
+    const other = await listen({ legacy: port });
+
+    try {
+        assert.ok(other);
+        assert.equal((await fetch(`http://127.0.0.1:${port}/api/health`)).status, 200);
+    } finally {
+        other?.close();
+    }
 });

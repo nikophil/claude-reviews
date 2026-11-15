@@ -129,3 +129,17 @@ test('the code of an Outdated thread is its diff excerpt as unified diff, else t
 test('a message keeps its markdown, its images replaced by their text', () => {
     assert.equal(review.noImages('See ![the graph](https://example.com/x.png) and [a link](https://example.com).'), 'See the graph and [a link](https://example.com).');
 });
+
+test('the listeners of a port are the sockets listening on it, IPv4 or IPv6, with their uid', () => {
+    // /proc/net/tcp then /proc/net/tcp6: a listener of uid 1000 on 127.0.0.1:0xA609, a connection of uid 1001 from that port, a listener of 1001 on 0.0.0.0:7778, one of 1002 on [::ffff:127.0.0.1]:0xA609.
+    const proc = [
+        '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode',
+        '   0: 0100007F:A609 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 84322 1 0000000000000000 100 0 0 10 0',
+        '   1: 0100007F:A609 0100007F:C350 01 00000000:00000000 00:00000000 00000000  1001        0 0 1 0000000000000000 20 4 30 10 -1',
+        '   2: 00000000:1E62 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1001        0 7964741 1 0000000000000000 100 0 0 10 0',
+        '   0: 0000000000000000FFFF00000100007F:A609 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1002        0 10494914 1 0000000000000000 100 0 0 10 0',
+    ].join('\n');
+    assert.deepEqual(review.listeners(proc, 0xA609), [1000, 1002], 'a connection from the port is no listener');
+    assert.deepEqual(review.listeners(proc, 7778), [1001], 'any address, 0.0.0.0 included');
+    assert.deepEqual(review.listeners(proc, 1234), []);
+});

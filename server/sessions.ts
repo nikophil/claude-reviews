@@ -47,17 +47,17 @@ export function httpError(status: number, message: string): Error {
     return Object.assign(new Error(message), { status });
 }
 
-function dataDir(): string {
+export function dataDir(): string {
     return join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'claude-reviews');
 }
 
-/** Replaces the file atomically: a reader, or a crash, never sees it half written. */
+/** Replaces the file atomically: a reader, or a crash, never sees it half written. A session may hold the identity git reads, so 0600. */
 async function save(session: Session): Promise<void> {
     const dir = join(dataDir(), 'sessions');
-    await mkdir(dir, { recursive: true });
+    await mkdir(dir, { recursive: true, mode: 0o700 });
     const file = join(dir, `${session.id}.json`);
     // ponytail: no fsync, so a power cut right after the rename may leave an empty file on some filesystems; fsync the temp file if it ever bites.
-    await writeFile(`${file}.tmp`, JSON.stringify(session, null, 2));
+    await writeFile(`${file}.tmp`, JSON.stringify(session, null, 2), { mode: 0o600 });
     await rename(`${file}.tmp`, file);
 }
 
@@ -680,7 +680,7 @@ async function close(session: Session, because?: 'worktree-gone'): Promise<void>
     session.approvedAt = new Date().toISOString();
     if (because) session.closedBecause = because;
     await save(session);
-    await mkdir(join(dataDir(), 'archive'), { recursive: true });
+    await mkdir(join(dataDir(), 'archive'), { recursive: true, mode: 0o700 });
     await rename(join(dataDir(), 'sessions', `${id}.json`), join(dataDir(), 'archive', `${id}.json`));
     // git runs in the common repository, which outlives a linked worktree.
     // ponytail: refs git cannot delete (whole repository gone, or session from before commonDir) stay behind, hidden; sweep refs of archived sessions if they pile up.

@@ -443,7 +443,7 @@ final class ThreadView extends JPanel implements Disposable {
             try {
                 action.consume(body);
             } catch (IOException e) {
-                failure = e.getMessage() != null ? e.getMessage() : "The claude-reviews server does not answer on " + Server.URL;
+                failure = e.getMessage() != null ? e.getMessage() : "The claude-reviews server does not answer; no server at " + Server.ENDPOINT;
             } catch (RuntimeException e) {
                 // An answer that is not JSON, say: the buttons come back, with why.
                 failure = "Unexpected answer of the claude-reviews server: " + e;

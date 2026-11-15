@@ -1,24 +1,51 @@
 // @ts-check
 'use strict';
 const vscode = require('vscode');
+const { readFileSync } = require('node:fs');
+const { homedir } = require('node:os');
+const { join } = require('node:path');
 const review = require('./review.js');
 const diff = require('./diff.js');
 const threads = require('./threads.js');
 
-const URL = `http://127.0.0.1:${process.env.CLAUDE_REVIEWS_PORT || 7778}`;
-const SILENT = `The claude-reviews server does not answer on ${URL}: start a Claude session with the local-reviews mod, or npm start.`;
+/** The endpoint file this account's server writes, with its port and token; read fresh on each call, as both change on a restart. */
+const ENDPOINT = join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'claude-reviews', 'endpoint');
+const SILENT = `The claude-reviews server does not answer (no server at ${ENDPOINT}): start a Claude session with the local-reviews mod, or npm start.`;
 /** The scheme of the files of the view: their own decorations, not those of git against HEAD. */
 const FILE = 'local-reviews-file';
 
 /** An answer other than 200, with the server's error message; status 0 when the server did not answer. */
 const failure = (/** @type {number} */ status, /** @type {string} */ message) => Object.assign(new Error(message), { status });
 
-/** The server, through its HTTP API only, as the mod calls it: no Origin, 2 s at most per read, 10 s per write, which may wait for the others. */
+/** Whether another account listens on `port`, as /proc/net/tcp tells every account; false without /proc (macOS), a machine of one account. */
+function foreign(/** @type {number} */ port) {
+    const uid = process.getuid?.();
+    if (uid === undefined) return false;
+    const text = ['/proc/net/tcp', '/proc/net/tcp6'].map(file => {
+        try {
+            return readFileSync(file, 'utf8');
+        } catch {
+            return '';
+        }
+    }).join('\n');
+    return review.listeners(text, port).some(owner => owner !== uid);
+}
+
+/** The server, through its HTTP API only, with the token from the endpoint file: another account's server, with another token, rejects it. 2 s per read, 10 s per write. */
 async function call(/** @type {string} */ path, /** @type {object=} */ body) {
+    let endpoint;
+    try {
+        endpoint = JSON.parse(readFileSync(ENDPOINT, 'utf8'));
+    } catch {
+        throw failure(0, SILENT);
+    }
+    // Another account may take the port of a dead server: the view must neither show its threads nor send it mine.
+    if (foreign(endpoint.port)) throw failure(0, `The port of ${ENDPOINT} is held by another account: start a Claude session with the local-reviews mod, which starts a server of your own.`);
+    const auth = { authorization: `Bearer ${endpoint.token}` };
     let res;
     try {
-        res = await fetch(URL + path, body === undefined ? { signal: AbortSignal.timeout(2000) }
-            : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) });
+        res = await fetch(`http://127.0.0.1:${endpoint.port}${path}`, body === undefined ? { headers: auth, signal: AbortSignal.timeout(2000) }
+            : { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) });
     } catch {
         throw failure(0, SILENT);
     }

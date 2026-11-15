@@ -5,6 +5,24 @@ import { marked, Renderer } from '/vendor/marked.js';
 const worktree = new URLSearchParams(location.search).get('worktree');
 const sessionId = location.pathname.match(/^\/s\/([0-9a-f]{16})$/)?.[1];
 
+// The token authenticates every API call. The mod opens the page with #token=, a fragment no request carries, not even a Referer;
+// the page keeps it for the other tabs of this origin, where only its own scripts run, and drops it from the address bar.
+const token = (() => {
+    const hash = () => new URLSearchParams(location.hash.replace(/^#/, ''));
+    try {
+        const fromUrl = hash().get('token');
+        if (!fromUrl) return localStorage.getItem('claude-reviews.token') ?? '';
+        localStorage.setItem('claude-reviews.token', fromUrl);
+        const rest = hash();
+        rest.delete('token');
+        history.replaceState(null, '', location.pathname + location.search + (rest.toString() ? `#${rest}` : ''));
+        return fromUrl;
+    } catch {
+        // Without storage, the fragment stays in the address bar, and keeps the token for a reload.
+        return hash().get('token') ?? '';
+    }
+})();
+
 const STATUS = {
     'waiting-for-claude': ['Waiting for Claude', 'Label--attention'],
     resolved: ['Resolved', 'Label--done'],
@@ -139,7 +157,10 @@ function setPreference(name, value) {
 }
 
 async function api(path, body) {
-    const res = await fetch(path, body && { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const auth = { authorization: `Bearer ${token}` };
+    const res = await fetch(path, body ? { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify(body) } : { headers: auth });
+    // The server restarted with another token, or the page came without one.
+    if (res.status === 401) throw new Error('The server refuses the token of this page: open the review again with /review-local.');
     const json = await res.json();
     if (!res.ok) throw new Error(json.error);
     return json;
@@ -223,7 +244,8 @@ function App() {
     useEffect(() => {
         (async () => {
             const opened = worktree ? await api('/api/sessions', { worktree }) : await api(`/api/sessions/${sessionId}`);
-            if (worktree) history.replaceState(null, '', `/s/${opened.id}`);
+            // The fragment, still there when the browser storage failed, keeps its token.
+            if (worktree) history.replaceState(null, '', `/s/${opened.id}${location.hash}`);
             // A closed session may outlive its worktree: without code to show, its threads show the code they were opened on.
             // Hide whitespace lives in the displayed diff; the preference only chooses the first one.
             const hideWhitespace = preference('hide-whitespace', 'false') === 'true';

@@ -38,9 +38,10 @@ function shim(dir: string, prelude = ''): { log: string; restore: () => void } {
 }
 
 async function api(method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> {
+    const auth = { authorization: `Bearer ${(server as unknown as { token: string }).token}` };
     const res = await fetch(`${base}${path}`, {
         method,
-        headers: body === undefined ? {} : { 'content-type': 'application/json' },
+        headers: body === undefined ? auth : { ...auth, 'content-type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
     });
     return { status: res.status, body: await res.json() };
@@ -382,7 +383,7 @@ test('a session file that cannot be read is a server error, not a missing sessio
 test('a body over 1 MB is refused with 413', async () => {
     const res = await fetch(`${base}/api/sessions`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${(server as unknown as { token: string }).token}` },
         body: JSON.stringify({ worktree: `/${'x'.repeat(1024 * 1024)}` }),
     });
 

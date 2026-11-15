@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import { expect, test, type APIRequestContext } from './fixtures.ts';
 import { basename } from 'node:path';
 import { git, removeRepos, repo, vanish, write } from '../server/fixture.ts';
 
@@ -34,6 +34,36 @@ test('Reviews shows each open session with its repository, branch and counters, 
     await second.click();
     await expect(page).toHaveURL(`/s/${waiting.id}`);
     await expect(page.getByRole('heading', { name: /1 files changed/ })).toBeVisible();
+});
+
+test('the token in the url fragment authenticates the page, then is dropped from the address bar', async ({ page, request, token }) => {
+    const { id } = await withThread(request, 'claude', 'Look');
+
+    await page.goto(`/s/${id}#token=${token}`);
+
+    // The page loaded its diff, so the token authenticated it; and the fragment is gone from the address bar.
+    await expect(page.getByRole('heading', { name: /files changed/ })).toBeVisible();
+    expect(await page.evaluate(() => location.hash)).toBe('');
+});
+
+test('a session opened in another tab keeps the token the first tab read', async ({ page, request, token }) => {
+    const { id } = await withThread(request, 'claude', 'Look');
+    await page.goto(`/s/${id}#token=${token}`);
+    await expect(page.getByRole('heading', { name: /files changed/ })).toBeVisible();
+
+    // A tab of its own, as a click with Ctrl on Reviews opens it, without the fragment.
+    const other = await page.context().newPage();
+    await other.goto(`/s/${id}`);
+
+    await expect(other.getByRole('heading', { name: /files changed/ })).toBeVisible();
+});
+
+test('a token the server refuses says to open the review again from /review-local', async ({ page, request }) => {
+    const { id } = await withThread(request, 'claude', 'Look');
+
+    await page.goto(`/s/${id}#token=${'0'.repeat(64)}`);
+
+    await expect(page.locator('.flash-error')).toContainText('/review-local');
 });
 
 test('a session archived because its worktree is gone shows read-only at its URL', async ({ page, request }) => {

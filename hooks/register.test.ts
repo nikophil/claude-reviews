@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -27,8 +27,9 @@ after(() => {
 });
 
 async function api(method: string, path: string, body?: unknown): Promise<any> {
+    const auth = { authorization: `Bearer ${(server as unknown as { token: string }).token}` };
     const res = await fetch(`http://127.0.0.1:${port}${path}`, {
-        method, headers: body === undefined ? {} : { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body),
+        method, headers: body === undefined ? auth : { ...auth, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body),
     });
     return res.json();
 }
@@ -38,10 +39,13 @@ async function api(method: string, path: string, body?: unknown): Promise<any> {
  * records what reaches the host (prompts, commands, log lines), and fires the poll only when the test says so.
  */
 /**
- * `serverPort`, the value of CLAUDE_REVIEWS_PORT; `launcher` and `code`, the PhpStorm and VS Code launchers the mod finds, none by default;
- * `choice`, the answer to its question, none for a dismissed one; `down`, whether the server fails from the start.
+ * `serverPort`, the port the harness writes into the endpoint file for the mod to find; `launcher` and `code`, the PhpStorm and VS Code launchers the mod finds, none by default;
+ * `choice`, the answer to its question, none for a dismissed one; `down`, whether the server fails from the start;
+ * `env`, variables the mod reads instead of this process's (SSH_* left out unless given); `uid` and `procNet`, what `id -u` and `cat /proc/net/tcp…` print, empty by default
+ * (an unknown owner, trusted); `endpointText`, the endpoint file written instead of the one naming `serverPort`; `sleep`, what $.clock.sleep waits for, nothing by default.
  */
-async function mod(cwd: string, { serverPort = port as number | string, launcher = '', code = '', choice = undefined as string | undefined, down = false } = {}) {
+async function mod(cwd: string, { serverPort = port as number | string, launcher = '', code = '', choice = undefined as string | undefined, down = false, env = {} as Record<string, string>, uid = '', procNet = '', endpointText = undefined as string | undefined, sleep = async () => {} } = {}) {
+    let proc = procNet;
     const hooks: { event: string; matcher: Record<string, string>; hook: Function }[] = [];
     const on = (event: string, matcher: any, hook?: Function) => {
         hooks.push(hook ? { event, matcher, hook } : { event, matcher: {}, hook: matcher });
@@ -56,7 +60,8 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
     let root = cwd;
     const $ = {
         plugin: { name: 'local-reviews', root: ROOT },
-        env: { get: async (name: string) => name === 'CLAUDE_REVIEWS_PORT' ? String(serverPort) : process.env[name] },
+        // A run of the tests over SSH must not change what the mod does.
+        env: { get: async (name: string) => name in env ? env[name] : name.startsWith('SSH_') ? undefined : process.env[name] },
         fs: { read: (path: string) => readFile(path, 'utf8') },
         http: {
             fetch: async (url: string, init?: any) => {
@@ -70,6 +75,8 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
             run: async (argv: string[], init?: { cwd?: string }) => {
                 seen.run.push(argv);
                 seen.cwd.push(init?.cwd);
+                if (argv[0] === 'id') return { exitCode: 0, stdout: uid && `${uid}\n`, stderr: '' };
+                if (argv[0] === 'cat') return { exitCode: 0, stdout: proc, stderr: '' };
                 if (argv[3] === 'phpstorm-launcher') return { exitCode: 0, stdout: launcher && `${launcher}\n`, stderr: '' };
                 if (argv[3] === 'vscode-launcher') return { exitCode: 0, stdout: code && `${code}\n`, stderr: '' };
                 if (argv[0] !== 'git') return { exitCode: 0, stdout: '', stderr: '' };
@@ -80,7 +87,7 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
         clock: {
             every: (_: number, poll: Function) => (seen.polls.push(poll), { cancel() {} }),
             after: (ms: number, fn: () => void) => { const timer = setTimeout(fn, ms); return { cancel: () => clearTimeout(timer) }; },
-            sleep: async () => {},
+            sleep: () => sleep(),
         },
         prompt: { submit: async ({ text }: { text: string }) => (seen.submitted.push(text), { text, ...await answer }) },
         session: { append: async () => { seen.appended++; }, root: async () => root },
@@ -110,6 +117,9 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
         return found ? found.hook($, e, next) : next(e);
     }
     const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+    // The server writes this file; here the harness stands in for it, pointing the mod at the test server (or the port under test).
+    mkdirSync(DATA, { recursive: true });
+    writeFileSync(join(DATA, 'endpoint'), endpointText ?? JSON.stringify({ port: serverPort, token: (server as unknown as { token: string }).token }));
     await fire('session.start', { cwd, surface: null, isInteractive: false });
     return {
         seen, fire, settle,
@@ -119,6 +129,8 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
         down: (value: boolean) => { down = value; },
         /** Moves the session's root, as /cd or EnterWorktree do. */
         move: (dir: string) => { root = dir; },
+        /** What `cat /proc/net/tcp…` prints from now on: another account may take a port. */
+        hold: (text: string) => { proc = text; },
         poll: async () => { for (const poll of seen.polls) await poll(); await settle(); },
         tool: (name: string, input: object = {}) => fire('tool.call', { tool: `mcp__local-reviews__${name}`, ...input }),
     };
@@ -320,7 +332,7 @@ test('/review-local asks where to open the review when PhpStorm is there, and op
 
     assert.deepEqual(claude.seen.asked, ['Where to open the review?']);
     assert.equal((await api('GET', `/api/sessions/${id}`)).showRequestedAt, null);
-    assert.ok(claude.seen.run.some(argv => argv.includes(`http://127.0.0.1:${port}/s/${id}`)));
+    assert.ok(claude.seen.run.some(argv => argv.some(a => a.startsWith(`http://127.0.0.1:${port}/s/${id}#`))));
     assert.match(command.text, new RegExp(`/s/${id}`));
 });
 
@@ -333,8 +345,8 @@ test('/review-local opens the browser without a question when no PhpStorm launch
     const nothing = await dismissed.fire('command.run', { command: 'review-local', args: '' });
 
     assert.deepEqual(alone.seen.asked, []);
-    assert.ok(alone.seen.run.some(argv => argv.includes(`http://127.0.0.1:${port}/s/${id}`)));
-    assert.ok(!dismissed.seen.run.some(argv => argv.includes(`http://127.0.0.1:${port}/s/${id}`) || argv.includes('/opt/bin/phpstorm')));
+    assert.ok(alone.seen.run.some(argv => argv.some(a => a.startsWith(`http://127.0.0.1:${port}/s/${id}#`))));
+    assert.ok(!dismissed.seen.run.some(argv => argv.some(a => a.startsWith(`http://127.0.0.1:${port}/s/${id}#`)) || argv.includes('/opt/bin/phpstorm')));
     assert.match(nothing.text, new RegExp(`/s/${id}`));
 });
 
@@ -386,10 +398,14 @@ async function impostor(answer: (path: string, res: any) => void): Promise<{ por
 
 const DATA = join(process.env.XDG_DATA_HOME!, 'claude-reviews');
 const LAUNCH = ['/bin/sh', '-c',
-    `mkdir -p "$2"; trap '' HUP; nohup node "$1" >> "$2/server.log" 2>&1 </dev/null &`,
+    `umask 077; mkdir -p "$2"; trap '' HUP; nohup node "$1" >> "$2/server.log" 2>&1 </dev/null &`,
     'claude-reviews', `${ROOT}/server/main.ts`, DATA];
 
-const launches = (claude: { seen: { run: string[][] } }) => claude.seen.run.filter(argv => argv[0] !== 'git');
+const launches = (claude: { seen: { run: string[][] } }) => claude.seen.run.filter(argv => argv.at(-2) === `${ROOT}/server/main.ts`);
+
+/** A line of /proc/net/tcp: a socket of `uid` listening on 127.0.0.1:`port`. */
+const listening = (port: number, uid: number) =>
+    `   0: 0100007F:${port.toString(16).toUpperCase().padStart(4, '0')} 00000000:0000 0A 00000000:00000000 00:00000000 00000000  ${uid}        0 84322 1 0000000000000000 100 0 0 10 0`;
 
 /** Waits for what the mod does in the background, the start of the server, up to 3 s. */
 async function until(done: () => unknown): Promise<void> {
@@ -647,11 +663,14 @@ test('a turn opened by a wake and interrupted, or ended on an error, calls no tu
     }
 });
 
-test('an empty CLAUDE_REVIEWS_PORT means port 7778', async () => {
-    const claude = await mod(repo({ 'a.txt': 'a\n' }), { serverPort: '', down: true });
-    await until(() => claude.seen.log.length);
+test('the mod reads the port and token from the endpoint file, and authenticates its calls', async () => {
+    const { dir } = await session([]);
+    const claude = await mod(dir);
 
-    assert.match(claude.seen.log.join('\n'), /http:\/\/127\.0\.0\.1:7778 answers/);
+    // The server answers 401 without the token, so a result proves the mod read it from the endpoint file and sent it.
+    const listed = await claude.tool('list_open_threads');
+
+    assert.ok('result' in listed, JSON.stringify(listed));
 });
 
 test('/review-local phpstorm without a PhpStorm launcher says so, and opens the browser', async () => {
@@ -661,7 +680,7 @@ test('/review-local phpstorm without a PhpStorm launcher says so, and opens the 
     const command = await claude.fire('command.run', { command: 'review-local', args: 'phpstorm' });
 
     assert.match(command.text, /PhpStorm launcher not found/);
-    assert.ok(claude.seen.run.some(argv => argv.includes(`http://127.0.0.1:${port}/s/${id}`)));
+    assert.ok(claude.seen.run.some(argv => argv.some(a => a.startsWith(`http://127.0.0.1:${port}/s/${id}#`))));
 });
 
 test('/review-local compares an answer typed under Other without case', async () => {
@@ -759,4 +778,64 @@ test('open_thread without lines opens a thread on the whole file, start and end 
     assert.deepEqual(tool.inputSchema.required, ['file', 'side', 'body']);
     assert.match(tool.description, /whole file/);
     assert.match(tool.inputSchema.properties.lines.description, /whole file/);
+});
+
+test('the mod neither adopts nor calls the server its endpoint names once another account listens on that port, and starts one of its own', async () => {
+    // A squatter of the port of a dead server: the endpoint still names it, /proc/net/tcp says another uid listens there.
+    const claude = await mod(repo({ 'a.txt': 'a\n' }), { uid: '1000', procNet: listening(port, 4242) });
+    await until(() => launches(claude).length);
+
+    const listed = await claude.tool('list_open_threads');
+
+    assert.deepEqual(launches(claude), [LAUNCH]);
+    assert.deepEqual(claude.seen.fetched, [], 'no request reached the port of another account');
+    assert.match(listed.deny, /does not answer/);
+});
+
+test('a server whose port another account took since the mod adopted it is no longer called: the tools say so', async () => {
+    const { dir } = await session();
+    const claude = await mod(dir, { uid: '1000' });
+    claude.hold(listening(port, 4242));
+    const before = claude.seen.fetched.length;
+
+    const listed = await claude.tool('list_open_threads');
+
+    assert.match(listed.deny, /another account/);
+    assert.equal(claude.seen.fetched.length, before);
+});
+
+test('over SSH, /review-local launches no browser, whose argv would show the token to every account, and prints the URL', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir, { env: { SSH_CONNECTION: '10.0.0.1 51000 10.0.0.2 22' } });
+
+    const command = await claude.fire('command.run', { command: 'review-local', args: 'browser' });
+
+    assert.ok(!claude.seen.run.some(argv => argv.some(arg => arg.includes(`/s/${id}`))), JSON.stringify(claude.seen.run));
+    assert.match(command.text, new RegExp(`/s/${id}#token=`));
+});
+
+test('a corrupt endpoint file is no server: the mod still registers its tools, and starts a server', async () => {
+    const claude = await mod(repo({ 'a.txt': 'a\n' }), { endpointText: '{"port":' });
+    await until(() => launches(claude).length);
+
+    assert.deepEqual(launches(claude), [LAUNCH]);
+    assert.equal(claude.seen.tools.length, 3);
+});
+
+test('a launch of an earlier registration of the module neither probes nor adopts the endpoint it reads once the module registered again', async () => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    // The first registration launches a server that never shows, and waits between its probes.
+    const first = await mod(repo({ 'a.txt': 'a\n' }), { serverPort: await nobody(), sleep: () => held });
+    await until(() => launches(first).length);
+    const { version } = JSON.parse(await readFile(join(ROOT, '.claude-plugin', 'plugin.json'), 'utf8'));
+    const other = await impostor((_, res) => res.end(JSON.stringify({ app: 'claude-reviews', version })));
+    // The second registration writes an endpoint that names another server: the probes of the first must leave it alone.
+    const second = await mod(repo({ 'a.txt': 'a\n' }), { serverPort: other.port });
+    await second.settle();
+
+    release();
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    assert.deepEqual(other.paths, ['GET /api/health'], 'only the second registration probed it');
 });

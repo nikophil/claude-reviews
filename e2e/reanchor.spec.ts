@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Page } from './fixtures.ts';
 import { git, removeRepos, repo, write } from '../server/fixture.ts';
 
 test.afterAll(removeRepos);

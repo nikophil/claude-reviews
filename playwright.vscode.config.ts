@@ -34,7 +34,8 @@ export default defineConfig({
         },
         {
             command: `sh vscode/build.sh && ${server} ${dirs} --install-extension var/vscode/local-reviews.vsix --force && ${server} --host 127.0.0.1 --port ${vscode} --without-connection-token ${dirs}`,
-            env: { CLAUDE_REVIEWS_PORT: String(port) },
+            // XDG_DATA_HOME so the extension reads the same endpoint file (port and token) the server wrote.
+            env: { CLAUDE_REVIEWS_PORT: String(port), XDG_DATA_HOME: data },
             url: `http://127.0.0.1:${vscode}/`,
             timeout: 120_000,
         },

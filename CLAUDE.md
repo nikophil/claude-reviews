@@ -10,8 +10,11 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 ## Commandes
 
 - `npm ci` : installe `@playwright/test` et `@types/vscode`, les seules dépendances, de développement.
-- `npm start` (`node server/main.ts`) : lance le serveur sur `127.0.0.1:7778`, puis ouvrir `http://127.0.0.1:7778/?worktree=<chemin absolu>`, qui ouvre la session du worktree et redirige vers `/s/<id>`.
-- `CLAUDE_REVIEWS_PORT=<port>` change le port.
+- `npm start` (`node server/main.ts`) : lance le serveur sur un port éphémère de `127.0.0.1`, et écrit son port et son token dans `<données>/endpoint`.
+  Ouvrir ensuite `http://127.0.0.1:<port>/?worktree=<chemin absolu>#token=<token>`, qui ouvre la session du worktree et redirige vers `/s/<id>` sans le token dans l'URL.
+- `CLAUDE_REVIEWS_PORT=<port>` fixe le port au lieu d'en tirer un éphémère.
+  En SSH, chacun choisit le sien dans son profil shell et forwarde le même numéro des deux côtés (`ssh -L <port>:127.0.0.1:<port>`) :
+  la garde `Host` attend ce numéro, et un port éphémère change à chaque redémarrage du serveur.
 - `node --test` : tests du serveur, des fonctions pures et du mod, ce dernier sous un `$` factice.
 - `npm run test:mod` : `claude plugin test` sur une copie du mod dans `var/mod/`, car il lancerait aussi les `*.test.ts` de `node --test` ; ses tests sont des `*.test.tsx`, que `node --test` ignore.
 - `claude --plugin-dir .` : une Claude session avec le mod de ce dossier.
@@ -39,7 +42,7 @@ Lire `BRIEF.md`, `GLOSSARY.md` et `docs/adr/` avant de modifier le code, et nomm
 - `.claude-plugin/` : le plugin `local-reviews` (le préfixe `claude-` est réservé à Anthropic) et la marketplace de ce dépôt ; la version du plugin est celle du serveur.
   Tout changement de `server/` ou de `ui/` la monte : le mod garde un serveur déjà lancé de même version.
 - `hooks/register.ts` : le mod, qui enregistre les outils et `/review-local`, démarre le serveur, sonde la session toutes les 2 s et réveille Claude ; `$` n'y passe qu'à des fonctions déclarées en tête de fichier.
-- `hooks/watch.ts` : les décisions du mod (réveiller, relancer, se taire, reprendre après un `{ drop }`), en fonctions pures.
+- `hooks/watch.ts` : les décisions du mod (réveiller, relancer, se taire, reprendre après un `{ drop }`), et les sockets à l'écoute d'un port lus dans `/proc/net/tcp`, en fonctions pures.
 - `phpstorm/` : le plugin PhpStorm, en Java et Swing : la tool window « Claude Reviews » (base, Send, Approve, fichiers changés et leurs threads), les threads dans l'éditeur et dans le diff de l'IDE ;
   sa vue Editor ouvre un fichier dans l'éditeur, sa vue Diff dans le diff de l'IDE, avec la case Viewed de chaque fichier dans l'arbre et dans la barre du diff ;
   il modifie et supprime mes messages Pending, passe d'un thread non Resolved à l'autre (Next Thread et Previous Thread, Alt+Shift+Page Down et Page Up), marque « Replied » ceux où Claude a répondu depuis mon dernier Send,
@@ -60,23 +63,30 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - La page lit la session et `/tree` toutes les 2 s, et ne recharge le diff qu'à son ouverture, au Refresh, au changement de base et à Hide whitespace.
 - Le bandeau « The code changed since it was loaded » paraît quand `/tree` diffère du diff affiché : par son `tree`, ou par sa `base` hors Since my last review, qu'un Send déplace sans changer le code.
 
+- Le serveur écoute sur un port éphémère de `127.0.0.1`, et écrit `{ port, token }` dans `<données>/endpoint` (0600) : chaque compte a son serveur, et les clients y lisent où le joindre et son token.
+- Un client ne fait confiance au port de l'`endpoint` que si le socket qui l'écoute est de son compte, lu dans `/proc/net/tcp` et `/proc/net/tcp6`, que tout compte lit :
+  un autre compte qui prend le port d'un serveur mort et répond comme claude-reviews n'obtient ni appel, ni confiance. Sans `/proc` (macOS), le client fait confiance.
+- Toute route `/api/` sauf `GET /api/health` exige le token en `Authorization: Bearer <token>`, sinon 401 `{ "error": "unauthorized" }` : un autre compte atteint le port sur la loopback, mais n'obtient rien sans le token, et ne peut ni lire un dépôt, ni écrire un message, ni arrêter le serveur.
+- Le token se compare à temps constant ; il garde `/api/me`, donc le login github.com du compte ne fuit pas.
+- L'UI reçoit le token par le fragment `#token=<token>` à l'ouverture, le garde dans `localStorage`, que seuls ses propres scripts lisent, le retire de l'URL, puis l'envoie sur chaque appel ;
+  sur un 401, elle demande de rouvrir la review par `/review-local`. Le mod, PhpStorm et VS Code le lisent dans le fichier `endpoint`.
 - Toute requête dont le `Host` n'est ni `127.0.0.1:<port>` ni `localhost:<port>` reçoit 403.
 - `/?worktree=` reçoit 403 quand son `Sec-Fetch-Site` n'est ni absent, ni `same-origin`, ni `none` : la page ouvrirait la session et lancerait git sur un chemin choisi par un autre site.
 - Le HTML porte `Content-Security-Policy: script-src 'self'; object-src 'none'; frame-ancestors 'none'`.
 - Une requête `/api/` dont le `Sec-Fetch-Site` n'est ni `same-origin` ni `none` reçoit 403.
-- Une écriture (toute méthode sauf `GET` et `HEAD`) exige `Content-Type: application/json` (sinon 415) et un `Origin` absent ou égal à `http://<Host>` (sinon 403) : l'UI envoie le sien, le mod aucun.
+- Une écriture (toute méthode sauf `GET` et `HEAD`) exige `Content-Type: application/json` (sinon 415) et un `Origin` absent ou égal à `http://<Host>` (sinon 403) : l'UI envoie le sien, le mod aucun ; ces gardes et la CSP protègent le navigateur, le token protège du process local.
 - Aucune réponse ne porte d'en-tête CORS.
 - Une erreur répond `{ "error": "<message>" }` : 400 pour une entrée invalide, 404 pour une session, un thread ou une route inconnus, 409 pour une écriture refusée, 413 pour un corps de plus de 1 Mo.
 
 | Route | Rôle |
 | --- | --- |
-| `GET /api/health` | `{ app: "claude-reviews", version }`, la version de `.claude-plugin/plugin.json`. |
+| `GET /api/health` | `{ app: "claude-reviews", version }`, la version de `.claude-plugin/plugin.json` ; seule route sans token, pour le test de vivacité. |
 | `GET /api/me` | `{ login, name }`, pour les avatars de mes messages : mon login sur github.com (`gh api --hostname github.com user --jq .login`) et `git config --global --includes user.name`, chacun `null` en échec ou au-delà de 2 s. |
 | `POST /api/shutdown` `{}` | Arrête le serveur : il cesse d'écouter avant de répondre. |
 | `GET /api/sessions` | Les sessions ouvertes, pour Reviews : `[{ id, worktree, repo, branch, waitingForClaude, updatedAt }]`, Waiting for Claude d'abord, puis le reste, la plus récemment active d'abord à égalité. |
 | `GET /api/sessions?worktree=<chemin>[&claude]` | La session ouverte du worktree, sans en créer : 404 sans session ouverte ; `&claude` vient du mod, et dit qu'une Claude session tourne dans ce worktree, même sans session ouverte. |
 | `GET /api/sessions?closed` | Les sessions closes, pour l'onglet Closed de Reviews : `[{ id, worktree, repo, approvedAt, closedBecause }]`, la plus récemment close d'abord. |
-| `GET /api/inbox` | Une entrée par session ouverte, pour les sources locales de gh-notif : `[{ repo, branch, title, url, openThreads, awaitingMe, lastActor, updatedAt }]`, où `awaitingMe` compte les threads où Claude a parlé en dernier. |
+| `GET /api/inbox` | Une entrée par session ouverte, pour les sources locales de gh-notif : `[{ repo, branch, title, url, openThreads, awaitingMe, lastActor, updatedAt }]`, où `awaitingMe` compte les threads où Claude a parlé en dernier ; gh-notif l'appelle avec le port et le token du fichier `endpoint`, comme tout client. |
 | `POST /api/sessions` `{ worktree }` | Renvoie la session ouverte du worktree, ou en crée une. |
 | `GET /api/sessions/<id>` | La session, ouverte ou approuvée. |
 | `GET /api/sessions/<id>/diff[?base=&tree=][&w=1]` | Le diff du working tree de la session contre sa base : `{ ref, base, tree, files }`, où `ref` est la base choisie, ou `HEAD` quand elle ne désigne plus rien, et `base` et `tree` les ids de la base et du tree affichés ; avec `?base=&tree=`, `{ base, tree, files }`, le diff de ces ids ; avec `w=1` (Hide whitespace), `git diff -w`. |
@@ -139,11 +149,13 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 
 - Au `session.start`, le mod relie la Claude session au worktree par `git rev-parse --show-toplevel` sur le `cwd`, enregistre ses outils, puis démarre le serveur.
 - Il suit ensuite `$.session.root()`, que `/cd` et EnterWorktree déplacent : un autre worktree repart d'un état neuf, comme une Claude session qui y démarre.
-- Sans réponse sur le port, il lance `node <racine du plugin>/server/main.ts` détaché par `nohup`, depuis la racine du plugin, ses sorties dans `<données>/server.log` ;
-  puis il sonde `/api/health` pendant 5 s, et en échec écrit par `$.ui.log` le chemin de `server.log` et ses dernières lignes.
+- Il trouve le serveur par `<données>/endpoint`, d'où il lit le port et le token ; sans fichier, avec un fichier corrompu, si un autre compte écoute sur son port, ou si le serveur qu'il nomme ne répond pas, il en lance un.
+- Il lance `node <racine du plugin>/server/main.ts` détaché par `nohup`, sous `umask 077`, depuis la racine du plugin, ses sorties dans `<données>/server.log` ;
+  puis il attend que le serveur réécrive `endpoint` et réponde, pendant 5 s, et en échec écrit par `$.ui.log` le chemin de `server.log` et ses dernières lignes.
+- Chaque appel au serveur porte le token en `Authorization: Bearer <token>` ; un serveur d'un autre compte, qui a un autre token, le rejette.
+  Il n'appelle plus un port qu'un autre compte a pris depuis : les outils le disent, et une nouvelle Claude session lance un serveur à lui.
 - Une version plus ancienne de claude-reviews, il l'arrête par `POST /api/shutdown` puis la relance ; une version plus récente, il l'utilise telle quelle, pour que deux Claude sessions de versions différentes n'arrêtent pas le serveur l'une de l'autre.
-- Un port qui répond autre chose que claude-reviews, ou qui ne répond pas en 2 s, ne lance rien : le mod le signale par `$.ui.log`, une ligne du transcript que le modèle ne lit pas, et sonde quand même.
-- Le mod lit `CLAUDE_REVIEWS_PORT` comme le serveur : vide, il vaut 7778.
+- Le port de l'`endpoint`, tenu par son compte, qui répond autre chose que claude-reviews, ou qui ne répond pas en 2 s, ne lance rien : le mod le signale par `$.ui.log`, une ligne du transcript que le modèle ne lit pas, et sonde quand même.
 - `list_open_threads()` rend `base`, le commit de la base de la session, et, hors Resolved et hors threads sans message publié, l'id, le statut, `outdated`, le fichier, le côté, la plage ré-ancrée sur cette base côté `old` et sur le working tree côté `new` (celle de l'Anchor s'il est Outdated), les lignes de l'Anchor et les messages publiés.
 - Un thread Outdated y porte en plus `hunk`, l'extrait de diff d'origine en diff unifié, `null` si l'Anchor était hors du diff.
 - Un thread sur le fichier entier y a `start` et `end` à 0 et pas de lignes ; `open_thread` sans `lines` en ouvre un.
@@ -158,6 +170,8 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 - `/review-local phpstorm`, `/review-local vscode` ou `/review-local browser` ouvre la session dans PhpStorm, VS Code ou le navigateur ;
   sans argument, il demande où par `$.ui.ask` parmi les IDE dont il trouve le lanceur (`phpstorm` du `PATH`, sinon le script de JetBrains Toolbox ; `code` du `PATH`) et le navigateur, le navigateur sans question s'il n'en trouve aucun ;
   un IDE sans lanceur ouvre le navigateur et le dit. Les lanceurs et le navigateur partent de la racine du plugin, détachés par `nohup`.
+- Dans une session SSH (`SSH_CONNECTION`, `SSH_CLIENT` ou `SSH_TTY`), il ne lance pas de navigateur et affiche seulement l'URL :
+  aucun navigateur ne tourne sur cette machine, et l'argv du lanceur montrerait le token à tout compte (`/proc/<pid>/cmdline`, `ps`).
 - Pour un IDE, il fait `POST /show`, puis lance son lanceur sur le worktree ; le plugin PhpStorm active sa tool window, et l'extension VS Code sa vue, quand `showRequestedAt` change et date de moins de 30 s.
 - Tout appel au serveur abandonne au bout de 2 s : sans réponse, ou sur un 200 sans `threads`, les outils répondent `{ deny }` « does not answer », `/review-local` le dit, et un sondage laisse l'état tel quel ;
   une erreur du serveur arrive aux outils avec son message.
@@ -166,6 +180,11 @@ Le serveur sert l'UI et une API JSON, pour l'UI et le mod.
 
 Le dossier de données est `$XDG_DATA_HOME/claude-reviews`, sinon `~/.local/share/claude-reviews` ; les tests le placent dans un dossier temporaire avec `dataHome()` de `server/fixture.ts`.
 
+- Le dossier de données est en `0700`, le fichier `endpoint` et les fichiers de session en `0600` : un autre compte ne lit ni les threads, ni le token, ni le log.
+- `endpoint` porte `{ port, token }` du serveur, réécrit à chaque démarrage ; le serveur tire un token de 32 octets, écoute sur un port éphémère (ou `CLAUDE_REVIEWS_PORT`), puis l'écrit.
+- Au démarrage, le serveur renonce si l'`endpoint` nomme un serveur vivant de son compte : un compte n'a qu'un serveur, même avec deux Claude sessions ; un `endpoint` corrompu ne nomme aucun serveur.
+- Il arrête ensuite un serveur d'avant le token (0.6 et avant) resté sur `CLAUDE_REVIEWS_PORT`, sinon 7778, s'il est de son compte :
+  celui-ci sert le dossier de données à tout compte, et se reconnaît à son 404, au lieu d'un 401, pour une session inconnue sans token.
 - Une session ouverte vit dans `sessions/<id>.json`, une session approuvée dans `archive/<id>.json`.
 - Le serveur seul écrit ces fichiers, en écrivant `<id>.json.tmp` dans le même dossier, puis en le renommant.
 - Un Send commite le tree affiché sous `refs/claude-reviews/<id>/<n>`, où `n` est le numéro du Send.

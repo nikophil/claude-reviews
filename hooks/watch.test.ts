@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { due, look, notified, resumed, sending, start, status, submitted, turnEnded, type Watch } from './watch.ts';
+import { due, listeners, look, notified, resumed, sending, start, status, submitted, turnEnded, type Watch } from './watch.ts';
 
 /** What the glue does once the decision says a prompt is due: submit it, then learn whether it entered. */
 function submit(watch: Watch, dropped = false): Watch {
@@ -115,4 +115,20 @@ test('the status line counts the threads waiting for Claude, adds a wake held by
     assert.equal(status(watch), 'claude-reviews · 2 threads waiting for Claude · wake held until the next prompt');
     assert.equal(status(look(watch, { id: 's', sends: 1, waiting: 0 })), undefined, 'nothing waiting, nothing held');
     assert.equal(status(submit(resumed(watch))), 'claude-reviews · 2 threads waiting for Claude');
+});
+
+/** /proc/net/tcp then /proc/net/tcp6: a listener of uid 1000 on 127.0.0.1:0xA609, a connection of uid 1001 from that port, a listener of 1001 on 0.0.0.0:7778, one of 1002 on [::ffff:127.0.0.1]:0xA609. */
+const PROC = [
+    '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode',
+    '   0: 0100007F:A609 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 84322 1 0000000000000000 100 0 0 10 0',
+    '   1: 0100007F:A609 0100007F:C350 01 00000000:00000000 00:00000000 00000000  1001        0 0 1 0000000000000000 20 4 30 10 -1',
+    '   2: 00000000:1E62 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1001        0 7964741 1 0000000000000000 100 0 0 10 0',
+    '   0: 0000000000000000FFFF00000100007F:A609 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1002        0 10494914 1 0000000000000000 100 0 0 10 0',
+].join('\n');
+
+test('the listeners of a port are the sockets listening on it, IPv4 or IPv6, with their uid', () => {
+    assert.deepEqual(listeners(PROC, 0xA609), [1000, 1002], 'a connection from the port is no listener');
+    assert.deepEqual(listeners(PROC, 7778), [1001], 'any address, 0.0.0.0 included');
+    assert.deepEqual(listeners(PROC, 1234), []);
+    assert.deepEqual(listeners('', 7778), []);
 });
