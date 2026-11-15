@@ -58,6 +58,9 @@ il les ouvre avec l'outil `open_thread`, et ils t'attendent dans la page.
 ## Plugin PhpStorm
 
 Le plugin PhpStorm montre la même session dans une tool window « Claude Reviews », avec les threads dans l'éditeur et dans le diff de l'IDE.
+
+![PhpStorm : la tool window Claude Reviews, et dans l'éditeur un thread où Claude a répondu, puis une suggestion qui attend Claude](docs/images/phpstorm.png)
+
 Il se construit avec le PhpStorm installé, sans rien télécharger :
 
 ```
@@ -83,5 +86,5 @@ npx playwright test
 ```
 
 `npm start` lance le serveur sur `127.0.0.1:7778` ; ouvre `http://127.0.0.1:7778/?worktree=<chemin absolu>`.
-`npm run readme` refait les images de ce README.
+`npm run readme` refait les images de ce README, sauf la capture de PhpStorm, prise à la main dans l'IDE.
 Les règles du dépôt, le contrat HTTP et le format des données sont dans [CLAUDE.md](CLAUDE.md), les décisions d'architecture dans [docs/adr/](docs/adr/).
