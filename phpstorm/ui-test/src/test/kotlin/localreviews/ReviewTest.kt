@@ -10,6 +10,7 @@ import com.intellij.driver.sdk.ui.components.common.gutter
 import com.intellij.driver.sdk.ui.components.common.ideFrame
 import com.intellij.driver.sdk.ui.components.common.JEditorUiComponent
 import com.intellij.driver.sdk.ui.components.elements.button
+import com.intellij.driver.sdk.ui.components.elements.list
 import com.intellij.driver.sdk.ui.components.elements.radioButton
 import com.intellij.driver.sdk.ui.components.elements.tree
 import com.intellij.driver.sdk.ui.enabled
@@ -258,6 +259,29 @@ class ReviewTest {
 
     @Test
     @Order(8)
+    fun `Group By › Directory lists the files under their directories, or flat once unchecked`() {
+        Files.createDirectories(Path.of(worktree, "src"))
+        Files.writeString(Path.of(worktree, "src/b.php"), "<?php\n")
+        frame {
+            tree("//div[@class='Tree']").apply {
+                // The next poll reads the new file.
+                waitOneText("src")
+                clickPath("src", "b.php", fullMatch = false)
+            }
+            x("//div[@class='ActionButton' and contains(@myaction, 'Group By')]").click()
+        }
+        driver.ui.list("//div[@class='MyList']").clickItem("Directory", fullMatch = false)
+        frame {
+            tree("//div[@class='Tree']").apply {
+                // At the top of the tree, followed by its directory.
+                waitOneText("  src")
+                clickPath("b.php", fullMatch = false)
+            }
+        }
+    }
+
+    @Test
+    @Order(9)
     fun `in the Diff view, a click on a thread of the file shown scrolls its diff there, an added file too`() {
         Files.createDirectories(Path.of(worktree, "src"))
         Files.writeString(Path.of(worktree, "src/c.php"), "<?php\n" + (1..60).joinToString("") { "// line $it\n" })
@@ -266,12 +290,13 @@ class ReviewTest {
         frame {
             tree("//div[@class='Tree']").apply {
                 waitOneContainsText("Line +50")
-                clickPath("src", "c.php", fullMatch = false)
+                // At the top of the tree, the Group By step having listed the files flat.
+                clickPath("c.php", fullMatch = false)
             }
             // The editor of the diff of c.php, beside the one of a.php that step 2 opened.
             fun diff() = xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java).list().singleOrNull { "// line 60" in it.text }
             repeat(50) { if (diff() == null) Thread.sleep(200) }
-            tree("//div[@class='Tree']").clickPath("src", "c.php", "Line +50", fullMatch = false)
+            tree("//div[@class='Tree']").clickPath("c.php", "Line +50", fullMatch = false)
             var line = -1
             repeat(50) {
                 line = diff()!!.editor.getCaretModel().getLogicalPosition().getLine()

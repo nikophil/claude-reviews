@@ -23,6 +23,7 @@ import com.intellij.openapi.fileTypes.FileTypeManager;
 import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.DumbAwareAction;
+import com.intellij.openapi.project.DumbAwareToggleAction;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.ComboBox;
 import com.intellij.openapi.vcs.FileStatus;
@@ -74,7 +75,9 @@ import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.LinkedHashMap;
@@ -117,9 +120,30 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
 
     @Override
     public void createToolWindowContent(Project project, ToolWindow toolWindow) {
-        toolWindow.getContentManager().addContent(ContentFactory.getInstance().createContent(new Panel(project, toolWindow), "", false));
+        Panel panel = new Panel(project, toolWindow);
+        toolWindow.getContentManager().addContent(ContentFactory.getInstance().createContent(panel, "", false));
+        // As in the Commit tool window: its files in the tree of their directories, or flat.
+        DefaultActionGroup groupBy = DefaultActionGroup.createPopupGroup(() -> "Group By");
+        groupBy.getTemplatePresentation().setIcon(AllIcons.Actions.GroupBy);
+        groupBy.add(new DumbAwareToggleAction("Directory") {
+            @Override
+            public ActionUpdateThread getActionUpdateThread() {
+                return ActionUpdateThread.EDT;
+            }
+
+            @Override
+            public boolean isSelected(AnActionEvent event) {
+                return ReviewService.get(project).groupByDirectory();
+            }
+
+            @Override
+            public void setSelected(AnActionEvent event, boolean grouped) {
+                panel.groupByDirectory(grouped);
+            }
+        });
         ActionManager actions = ActionManager.getInstance();
         toolWindow.setTitleActions(List.of(
+            groupBy,
             actions.getAction("localreviews.ReviewDiff"),
             actions.getAction("localreviews.PreviousThread"),
             actions.getAction("localreviews.NextThread"),
@@ -171,7 +195,50 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         }
     }
 
-    private record Dir(String path) {}
+    /** A directory of the tree of the tool window: its path, and its name there, which takes those of the directories it merges. */
+    record Dir(String path, String name) {
+        /**
+         * Moves the files under `root` into the tree of their directories, as the Commit tool window groups them:
+         * the directories before the files, and a directory that holds only a directory merged with it (`src/Mapping`).
+         */
+        static void group(DefaultMutableTreeNode root) {
+            Map<String, DefaultMutableTreeNode> dirs = new HashMap<>(Map.of("", root));
+            for (TreeNode file : Collections.list(root.children())) {
+                String path = ((JsonObject) ((DefaultMutableTreeNode) file).getUserObject()).get("path").getAsString();
+                directory(dirs, path.substring(0, Math.max(path.lastIndexOf('/'), 0))).add((DefaultMutableTreeNode) file);
+            }
+            merge(root);
+        }
+
+        /** The node of the directory `path`, made with those of its parents, after the directories and before the files of its parent. */
+        private static DefaultMutableTreeNode directory(Map<String, DefaultMutableTreeNode> dirs, String path) {
+            DefaultMutableTreeNode node = dirs.get(path);
+            if (node != null) return node;
+            int cut = path.lastIndexOf('/');
+            DefaultMutableTreeNode parent = directory(dirs, cut < 0 ? "" : path.substring(0, cut));
+            node = new DefaultMutableTreeNode(new Dir(path, path.substring(cut + 1)));
+            int at = 0;
+            while (at < parent.getChildCount() && ((DefaultMutableTreeNode) parent.getChildAt(at)).getUserObject() instanceof Dir) at++;
+            parent.insert(node, at);
+            dirs.put(path, node);
+            return node;
+        }
+
+        private static void merge(DefaultMutableTreeNode node) {
+            for (int i = 0; i < node.getChildCount(); i++) {
+                DefaultMutableTreeNode child = (DefaultMutableTreeNode) node.getChildAt(i);
+                while (child.getUserObject() instanceof Dir dir && child.getChildCount() == 1
+                    && ((DefaultMutableTreeNode) child.getFirstChild()).getUserObject() instanceof Dir inner) {
+                    DefaultMutableTreeNode merged = (DefaultMutableTreeNode) child.getFirstChild();
+                    merged.setUserObject(new Dir(inner.path(), dir.name() + "/" + inner.name()));
+                    node.remove(i);
+                    node.insert(merged, i);
+                    child = merged;
+                }
+                merge(child);
+            }
+        }
+    }
 
     private record ThreadNode(JsonObject thread) {}
 
@@ -459,7 +526,6 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                 if (!node.isRoot() && !node.isLeaf() && !tree.isExpanded(new TreePath(node.getPath()))) collapsed.add(key(node));
             }
             DefaultMutableTreeNode root = new DefaultMutableTreeNode();
-            Map<String, DefaultMutableTreeNode> dirs = new LinkedHashMap<>();
             DefaultMutableTreeNode reselect = null;
             Map<String, JsonObject> files = new LinkedHashMap<>();
             for (JsonElement element : state.files()) files.put(element.getAsJsonObject().get("path").getAsString(), element.getAsJsonObject());
@@ -475,17 +541,11 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             }
             for (JsonObject file : files.values()) {
                 String path = file.get("path").getAsString();
-                int cut = path.lastIndexOf('/');
-                DefaultMutableTreeNode parent = cut < 0 ? root : dirs.computeIfAbsent(path.substring(0, cut), dir -> {
-                    DefaultMutableTreeNode node = new DefaultMutableTreeNode(new Dir(dir));
-                    root.add(node);
-                    return node;
-                });
                 DefaultMutableTreeNode node = new DefaultMutableTreeNode(file);
                 List<JsonObject> threads = threads(path);
                 // A file that only Resolved threads name, Resolved ones hidden.
                 if (threads.isEmpty() && file.get("status").getAsString().equals("unchanged")) continue;
-                parent.add(node);
+                root.add(node);
                 if (path.equals(selected)) reselect = node;
                 for (JsonObject thread : threads) {
                     DefaultMutableTreeNode child = new DefaultMutableTreeNode(new ThreadNode(thread));
@@ -493,6 +553,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                     if (thread.get("id").getAsInt() == (selected instanceof Integer id ? id : 0)) reselect = child;
                 }
             }
+            if (service.groupByDirectory()) Dir.group(root);
             rebuilding = true;
             tree.setModel(new DefaultTreeModel(root));
             // Expanded again where it was, without scrolling to the nodes it expands.
@@ -551,6 +612,11 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
 
         private void view(boolean diff) {
             service.diffView(diff);
+            show(state, true);
+        }
+
+        void groupByDirectory(boolean grouped) {
+            service.groupByDirectory(grouped);
             show(state, true);
         }
 
@@ -694,7 +760,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             return "<html>" + text.replace("&", "&amp;").replace("<", "&lt;") + "</html>";
         }
 
-        /** A directory in grey; a file colored by its status, then its threads by status. */
+        /** A directory in grey; a file colored by its status, followed by its directory in grey when not grouped by directory, then its threads by status. */
         private final class Renderer extends ColoredTreeCellRenderer {
             private static final long serialVersionUID = 1L;
 
@@ -703,7 +769,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                 Object shown = ((DefaultMutableTreeNode) value).getUserObject();
                 if (shown instanceof Dir dir) {
                     setIcon(AllIcons.Nodes.Folder);
-                    append(dir.path(), SimpleTextAttributes.GRAYED_ATTRIBUTES);
+                    append(dir.name(), SimpleTextAttributes.GRAYED_ATTRIBUTES);
                     return;
                 }
                 if (shown instanceof ThreadNode node) {
@@ -726,6 +792,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                 };
                 append(name, new SimpleTextAttributes(status.equals("deleted") ? SimpleTextAttributes.STYLE_STRIKEOUT : SimpleTextAttributes.STYLE_PLAIN,
                     service.diffView() && viewed ? JBColor.GRAY : color.getColor()));
+                if (!service.groupByDirectory() && path.contains("/")) append("  " + path.substring(0, path.lastIndexOf('/')), SimpleTextAttributes.GRAYED_ATTRIBUTES);
                 int[] counts = Placement.counts(state.session(), path);
                 if (counts[0] > 0) append("  " + counts[0] + " waiting for Claude", SimpleTextAttributes.GRAYED_ATTRIBUTES);
                 if (counts[1] > 0) append("  " + counts[1] + " pending", new SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, AMBER));
