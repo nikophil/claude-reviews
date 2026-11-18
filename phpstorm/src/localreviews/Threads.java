@@ -257,11 +257,10 @@ final class Threads {
     }
 
     /**
-     * A new thread on lines `start` to `end` of the side, from 1, or on the whole file for 0 and 0, with its field focused;
-     * its lines follow the edits of the document until it is sent.
+     * A new thread on lines `start` to `end` of the side, from 1, or on the whole file for 0 and 0, with its field focused,
+     * in place of the new thread already open, whose text it takes; its lines follow the edits of the document until it is sent.
      */
     void draft(int start, int end) {
-        closeDraft();
         ModalityState modality = ModalityState.stateForComponent(editor.getComponent());
         RangeMarker marked = end == 0 ? null : document.createRangeMarker(document.getLineStartOffset(start - 1), document.getLineEndOffset(end - 1));
         ThreadView view = new ThreadView(project, review.session(), last == null ? null : Placement.sendRefusal(last), body -> {
@@ -287,6 +286,9 @@ final class Threads {
         });
         if (marked != null) Disposer.register(view, marked::dispose);
         add(toEditor(start), toEditor(end), false, () -> true, view);
+        // The text typed in the new thread already open moves to this one, as a click on another line number does in the browser.
+        if (draft != null) view.resume(draft);
+        closeDraft();
         draft = view;
         // Above the first line, out of sight once the editor scrolled down.
         if (end == 0) editor.getScrollingModel().scrollVertically(0);

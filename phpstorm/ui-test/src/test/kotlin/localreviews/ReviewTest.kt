@@ -282,16 +282,19 @@ class ReviewTest {
 
     @Test
     @Order(7)
-    fun `in the side-by-side diff, a drag over the line numbers on the right and a click on the left open a thread on that side`() {
+    fun `in the side-by-side diff, a click or a drag over the line numbers opens a thread on that side, which keeps the text typed in it`() {
         frame {
             // The two editors of the diff of step 6, left then right: the editor of a.php is in a tab behind it.
             val gutters = xx("//div[@class='EditorGutterComponentImpl']", GutterUiComponent::class.java).list()
                 .filter { it.component.isShowing() }.sortedBy { it.getLocationOnScreen().x }
             assertEquals(2, gutters.size, "the gutters of the diff")
             val (left, right) = gutters
+            right.waitOneText("3").click()
+            keyboard { typeText("Why 1 and 3?") }
+            // The new thread moves to the lines dragged over, with the text typed in it.
             right.mousePressMoveRelease(right.waitOneText("3").point, right.waitOneText("4").point)
             // Ctrl+Enter: the thread of step 2, in the diff too, has an Add pending of its own.
-            keyboard { typeText("Why 1 and 3?"); hotKey(KeyEvent.VK_CONTROL, KeyEvent.VK_ENTER) }
+            keyboard { hotKey(KeyEvent.VK_CONTROL, KeyEvent.VK_ENTER) }
             awaitSession("a thread opens on the lines 3 to 4 of the new side") { it.getAsJsonArray("threads").size() == 2 }
             // The gutter of the left side lies mirrored, against the right one: Driver gives the place of its texts unmirrored.
             val four = left.waitOneText("4").point
@@ -299,8 +302,11 @@ class ReviewTest {
             keyboard { typeText("Why 2?"); hotKey(KeyEvent.VK_CONTROL, KeyEvent.VK_ENTER) }
         }
         val threads = awaitSession("a thread opens on the line 4 of the old side") { it.getAsJsonArray("threads").size() == 3 }.getAsJsonArray("threads")
-        val anchors = (1..2).map { threads[it].asJsonObject.getAsJsonObject("anchor") }.map { listOf(it["side"].asString, it["start"].asInt, it["end"].asInt) }
-        assertEquals(listOf(listOf("new", 3, 4), listOf("old", 4, 4)), anchors)
+        val anchors = (1..2).map { threads[it].asJsonObject }.map {
+            val anchor = it.getAsJsonObject("anchor")
+            listOf(anchor["side"].asString, anchor["start"].asInt, anchor["end"].asInt, it.getAsJsonArray("messages")[0].asJsonObject["body"].asString)
+        }
+        assertEquals(listOf(listOf("new", 3, 4, "Why 1 and 3?"), listOf("old", 4, 4, "Why 2?")), anchors)
         // The next steps expect the thread of step 2 alone.
         val id = session()["id"].asString
         for (n in 2..3) post("/api/sessions/$id/threads/$n/messages/0/delete", "{}")
