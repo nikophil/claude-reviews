@@ -740,7 +740,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
 
         /**
          * Opens the selected file in the editor at its first thread, else at its first added line; a deleted file, or `diff`, in the diff.
-         * A thread opens where its code is: the editor for the new code, the diff for the old one, its own window when Outdated and `focus`.
+         * A thread opens where its code is: the editor for the new code, the diff for the old one, its own window when Outdated or Resolved, and `focus`.
          * The focus goes there when `focus`, else stays in the tree.
          */
         private void openSelected(boolean diff, boolean focus) {
@@ -762,11 +762,12 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         private void openThread(JsonObject thread, boolean diff, boolean focus) {
             JsonObject anchor = thread.getAsJsonObject("anchor");
             String path = anchor.get("path").getAsString();
-            if (!(thread.get("at") instanceof JsonObject at)) {
-                // A window of its own: not at each move of the selection.
-                if (focus) OutdatedThread.open(project, thread);
+            // A window of its own, where a Resolved thread shows unfolded: not at each move of the selection.
+            if (focus && (!(thread.get("at") instanceof JsonObject) || thread.get("resolved").getAsBoolean())) {
+                ThreadWindow.open(project, thread);
                 return;
             }
+            if (!(thread.get("at") instanceof JsonObject at)) return;
             // The first line for a thread on the whole file, above which it shows.
             int start = Math.max(at.get("start").getAsInt(), 1);
             boolean old = anchor.get("side").getAsString().equals("old");

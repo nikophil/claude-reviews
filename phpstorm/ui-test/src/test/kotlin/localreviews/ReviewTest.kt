@@ -392,4 +392,24 @@ class ReviewTest {
             throw AssertionError("the unchanged code folds, but not the line of the thread: $shown")
         }
     }
+
+    @Test
+    @Order(13)
+    fun `a double click on a Resolved thread opens it in its own window, unfolded, where Unresolve reopens it`() {
+        val id = session()["id"].asString
+        post("/api/sessions/$id/threads/2/resolve", "{}")
+        frame {
+            x("//div[@text='Show resolved']").click()
+            tree("//div[@class='Tree']").apply {
+                waitOneContainsText("Line +50")
+                doubleClickPath("c.php", "Line +50", fullMatch = false)
+            }
+        }
+        // The window, not the folded thread of the diff: its message shows.
+        val window = "//div[@class='JBScrollPane']//div[@class='ThreadView']"
+        driver.ui.x("$window//div[contains(@visible_text, 'Here')]").shouldBe(enabled)
+        driver.ui.x("$window//div[@text='Unresolve']").click()
+        awaitSession("the thread is no longer Resolved") { !it.getAsJsonArray("threads")[1].asJsonObject["resolved"].asBoolean }
+        driver.ui.button("Close").click()
+    }
 }

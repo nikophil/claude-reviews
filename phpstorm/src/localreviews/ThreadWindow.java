@@ -1,7 +1,9 @@
 package localreviews;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 import com.intellij.openapi.editor.EditorFactory;
 import com.intellij.openapi.fileTypes.FileTypeManager;
 import com.intellij.openapi.project.Project;
@@ -19,8 +21,11 @@ import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.Rectangle;
 
-/** An Outdated thread, whose lines no code shows any more: the code it was opened on, its discussion and its field, kept up to date by the poll. */
-final class OutdatedThread extends DialogWrapper {
+/**
+ * A thread in a window of its own: an Outdated one, whose lines no code shows any more, or a Resolved one, which the code shows folded.
+ * The code it was opened on, its discussion and its field, kept up to date by the poll.
+ */
+final class ThreadWindow extends DialogWrapper {
     private final JPanel panel = new JPanel(new BorderLayout(0, JBUI.scale(12)));
     private final JPanel column = new Column();
     private final Project project;
@@ -31,17 +36,17 @@ final class OutdatedThread extends DialogWrapper {
     private boolean claude;
 
     static void open(Project project, JsonObject thread) {
-        new OutdatedThread(project, thread).show();
+        new ThreadWindow(project, thread).show();
     }
 
-    private OutdatedThread(Project project, JsonObject thread) {
+    private ThreadWindow(Project project, JsonObject thread) {
         // Modeless: the code stays at hand while the thread is open.
         super(project, false, IdeModalityType.MODELESS);
         this.project = project;
         this.service = ReviewService.get(project);
         this.id = thread.get("id").getAsInt();
         JsonObject anchor = thread.getAsJsonObject("anchor");
-        setTitle("Thread #" + id + " · " + anchor.get("path").getAsString() + " · Outdated");
+        setTitle("Thread #" + id + " · " + anchor.get("path").getAsString() + (thread.get("at") instanceof JsonObject ? "" : " · Outdated"));
         // A thread on the whole file has no lines to show.
         if (anchor.get("end").getAsInt() > 0) panel.add(code(project, anchor), BorderLayout.NORTH);
         panel.add(new JBScrollPane(column), BorderLayout.CENTER);
@@ -57,6 +62,8 @@ final class OutdatedThread extends DialogWrapper {
     }
 
     private void show(JsonObject thread) {
+        // Unfolded when it opens and once resolved: the window is there to read it.
+        boolean unfold = shown == null || shown.get("resolved").getAsBoolean() != thread.get("resolved").getAsBoolean();
         shown = thread;
         claude = Placement.claude(service.state().session());
         ThreadView previous = view;
@@ -67,18 +74,29 @@ final class OutdatedThread extends DialogWrapper {
             column.remove(previous);
             Disposer.dispose(previous);
         }
+        if (unfold) view.unfold();
         column.add(view, BorderLayout.CENTER);
         column.revalidate();
         column.repaint();
     }
 
-    /** The diff the thread was opened on, down to its last line, else the lines of its Anchor when they were out of the diff. */
+    /**
+     * The diff the thread was opened on, from 3 lines above its range down to its last line, as GitHub shows it, rather than a whole added file;
+     * else the lines of its Anchor when they were out of the diff.
+     */
     private static JComponent code(Project project, JsonObject anchor) {
         StringBuilder text = new StringBuilder();
         JsonElement hunk = anchor.get("hunk");
         if (hunk instanceof JsonObject diff) {
-            text.append(diff.get("header").getAsString()).append('\n');
-            for (JsonElement element : diff.getAsJsonArray("lines")) {
+            JsonArray lines = diff.getAsJsonArray("lines");
+            String side = anchor.get("side").getAsString().equals("old") ? "oldNo" : "newNo";
+            int from = 0;
+            for (int i = lines.size() - 1; i >= 0 && from == 0; i--) {
+                if (lines.get(i).getAsJsonObject().get(side) instanceof JsonPrimitive no && no.getAsInt() < anchor.get("start").getAsInt() - 3) from = i + 1;
+            }
+            // The header no longer counts the lines of a cut excerpt.
+            if (from == 0) text.append(diff.get("header").getAsString()).append('\n');
+            for (JsonElement element : lines.asList().subList(from, lines.size())) {
                 JsonObject line = element.getAsJsonObject();
                 String sign = switch (line.get("type").getAsString()) {
                     case "add" -> "+";

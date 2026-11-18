@@ -267,6 +267,10 @@ final class ThreadView extends JPanel implements Disposable {
         return header;
     }
 
+    void unfold() {
+        if (folded) fold();
+    }
+
     private void fold() {
         folded = !folded;
         content.setVisible(!folded);
