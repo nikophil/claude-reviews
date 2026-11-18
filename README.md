@@ -1,3 +1,5 @@
+<img src="ui/logo.svg" width="80" alt="The claude-reviews logo: a comment on a diff, with Claude's star as the avatar of its reply">
+
 # claude-reviews
 
 Review what Claude Code wrote in a local diff that looks like GitHub's "Files changed" tab,

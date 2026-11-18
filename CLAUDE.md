@@ -43,6 +43,7 @@ Read `BRIEF.md`, `GLOSSARY.md` and `docs/adr/` before changing the code, and nam
 - `server/reanchor.ts`: `reanchor(anchor, lines)`, the pure function that finds the range of an Anchor in a file, or returns `null` when the thread is Outdated.
 - `ui/`: page served as is, in Preact + htm without a build or JSX.
 - `ui/vendor/`: front-end libraries copied as is, not to be modified or reviewed.
+- `ui/logo.svg`: the logo, favicon of the page, image at the top of `README.md`, and icon of the PhpStorm plugin, which `phpstorm/build.sh` copies to `META-INF/pluginIcon.svg`.
 - `e2e/`: Playwright tests.
 - `.claude-plugin/`: the `local-reviews` plugin (the `claude-` prefix is reserved for Anthropic) and the marketplace of this repository; the version of the plugin is the one of the server, of the PhpStorm plugin and of the VS Code extension.
   Any change to `server/` or `ui/` bumps it, and its merge releases it: the mod keeps an already running server of the same version.
