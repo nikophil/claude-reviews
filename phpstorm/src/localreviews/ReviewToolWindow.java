@@ -502,10 +502,15 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             state = changed;
             if (changed.session() == null) {
                 // The tree, hidden below, repaints as it loses the focus: it holds no thread of the session gone, approved, to render against none.
-                rebuilding = true;
-                tree.setModel(new DefaultTreeModel(new DefaultMutableTreeNode()));
-                rebuilding = false;
-                shownKey = null;
+                if (shownKey != null) {
+                    rebuilding = true;
+                    try {
+                        tree.setModel(new DefaultTreeModel(new DefaultMutableTreeNode()));
+                    } finally {
+                        rebuilding = false;
+                    }
+                    shownKey = null;
+                }
                 emptyText.setText(changed.error() != null ? html(changed.error()) : "No review of this worktree yet.");
                 start.setVisible(changed.error() == null);
                 if (empty.getParent() != this) {

@@ -182,9 +182,11 @@ class ReviewTest {
             assertEquals(expected, last, "the caret on the line of the thread")
         }
 
-        /** The idea.log of the PhpStorm of the test, where an exception of the plugin lands as an IDE Internal Error. */
-        private fun ideaLog(): String = Files.walk(context.paths.testHome).use { paths -> paths.filter { it.fileName.toString() == "idea.log" }.toList() }
-            .joinToString("") { Files.readString(it) }
+        /**
+         * The idea.log of the PhpStorm of the test, where an exception of the plugin lands as an IDE Internal Error:
+         * decoded without failing on a character the IDE is still writing.
+         */
+        private fun ideaLog(): String = String(Files.readAllBytes(context.paths.testHome.resolve("log/idea.log")), Charsets.UTF_8)
     }
 
     @Test
@@ -427,8 +429,15 @@ class ReviewTest {
         // As the browser would: the tree keeps the focus, and loses it once the tool window no longer shows the session.
         post("/api/sessions/${session()["id"].asString}/approve", "{}")
         frame { x("//div[@class='JBLabel' and @text='No review of this worktree yet.']").shouldBe(enabled) }
-        Thread.sleep(2000)
-        val logged = ideaLog().substring(before)
+        // The tree repaints as it loses the focus, once the tool window no longer shows it: up to 5 s for an exception to reach the log.
+        var logged = ""
+        for (attempt in 1..25) {
+            val log = ideaLog()
+            // A log rolled to idea.1.log at its size limit starts again from empty.
+            logged = if (log.length < before) log else log.substring(before)
+            if ("at localreviews." in logged) break
+            Thread.sleep(200)
+        }
         assert("at localreviews." !in logged) { "an exception of the plugin after the Approve:\n$logged" }
     }
 }
