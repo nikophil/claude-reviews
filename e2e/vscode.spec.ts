@@ -215,6 +215,19 @@ test('Send in a thread adds my reply and sends this thread alone, or only its Pe
     }).toPass();
 });
 
+test('without a Claude session, Send in a thread keeps my reply as Pending, and says how to start one', async ({ page }) => {
+    const { dir, session } = await worktree(page, { claude: true });
+    const view = await open(page, dir);
+    await view.getByRole('treeitem', { name: /#1 · Line \+2/ }).click();
+
+    await page.locator('.review-widget .review-thread-reply-button').click();
+    await page.keyboard.type('Because.');
+    await page.locator('.review-widget').getByRole('button', { name: 'Send', exact: true }).click();
+
+    await expect(page.getByRole('button', { name: 'Copy Command' })).toBeVisible();
+    await expect.poll(async () => (await session()).threads[0].messages[1]).toMatchObject({ author: 'me', body: 'Because.', date: null });
+});
+
 test('Send in a new thread opens it and sends it at once', async ({ page }) => {
     const { dir, session, listen } = await worktree(page);
     await listen();

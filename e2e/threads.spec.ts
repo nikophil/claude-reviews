@@ -115,6 +115,21 @@ test('Send in the box of a new thread opens it and sends it at once', async ({ p
     await expect(page.locator('.thread')).not.toContainText('Pending');
 });
 
+test('a Send of a thread that fails after adding my message leaves it Pending and empties the box', async ({ page, request }) => {
+    const dir = changed();
+    await claudeThread(request, dir, 2, 'First?');
+    await page.route(url => new URL(url.href).pathname.endsWith('/send'), route => route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'refused' }) }));
+    await open(page, dir);
+    const thread = page.locator('.thread');
+    await thread.getByRole('textbox').fill('Now');
+
+    await thread.getByRole('button', { name: 'Send thread' }).click();
+
+    await expect(page.locator('.flash-error')).toHaveText('refused');
+    await expect(thread).toContainText('Pending');
+    await expect(thread.getByRole('textbox')).toHaveValue('');
+});
+
 test('a Resolved thread folds, opens again on a click, takes no message, and takes them again once Unresolved', async ({ page, request }) => {
     const dir = changed();
     await claudeThread(request, dir, 2, 'Is this right?');

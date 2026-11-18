@@ -148,20 +148,20 @@ async function shownTree() {
 }
 
 /**
- * Send of the whole session, or of the thread `thread` only; without a Claude session, how to start one instead.
- * @param {number} [thread]
+ * Send of the whole session, or of the thread whose id `write` gives once it wrote my message, nothing when it gives none;
+ * without a Claude session, how to start one instead, the message written staying Pending.
  */
-/** Send of the whole session, or of the thread whose id `write` gives, after it wrote my message, once a Claude session would read it; nothing when it gives none. */
 async function send(/** @type {(() => Promise<number | undefined>) | undefined} */ write) {
     const session = state.session;
     if (!session) return;
+    // VS Code empties the box once the command runs: the message is written before anything else.
+    const thread = await write?.();
+    if (write && thread === undefined) return;
     if (!review.claude(session)) {
         const copy = await vscode.window.showWarningMessage(`Start a Claude session in this worktree to send to Claude: ${review.startClaude(session)}`, 'Copy Command');
         if (copy) await vscode.env.clipboard.writeText(review.startClaude(session));
         return;
     }
-    const thread = await write?.();
-    if (write && thread === undefined) return;
     const tree = await shownTree();
     const sent = await call(`/api/sessions/${session.id}/send`, thread === undefined ? { tree } : { tree, threads: [thread] });
     const count = review.sent(sent);

@@ -325,8 +325,8 @@ function App() {
             const answer = await api(`/api/sessions/${session.id}${path}${placedOn(diff)}`, body);
             // Placed on a diff no longer displayed: the next poll places the write on the displayed one.
             if (diff === shown.current) setSession(answer);
-            await then?.(answer);
             setFlash(null);
+            await then?.(answer);
             return true;
         } catch (error) {
             setFlash(error.message);
@@ -379,10 +379,14 @@ function App() {
         }
     };
     const avatar = me && { ...me, login: avatarBroken ? null : me.login, broken: () => setAvatarBroken(true) };
-    // Send of the thread `n` alone, from within the write that added my message to it.
+    // Send of the thread `n` alone, from within the write that added my message to it: a failure leaves that write done, my message Pending.
     const sendThread = async n => {
-        const answer = await api(`/api/sessions/${session.id}/send${placedOn(diff)}`, { tree: diff.tree, threads: [n] });
-        if (diff === shown.current) setSession(answer);
+        try {
+            const answer = await api(`/api/sessions/${session.id}/send${placedOn(diff)}`, { tree: diff.tree, threads: [n] });
+            if (diff === shown.current) setSession(answer);
+        } catch (error) {
+            setFlash(error.message);
+        }
     };
     const review = { readOnly: !!session.approvedAt, busy, selection, setSelection, draft, message, fold, act, sendThread, diff, now, split, lines, avatar, current, reveal };
     // As GitHub's, the menu closes once a view is chosen, and on Escape; the focus goes back to its button.
