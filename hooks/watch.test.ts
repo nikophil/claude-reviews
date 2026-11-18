@@ -165,6 +165,26 @@ test('the end of the fork notifies its session when it answered and nothing is o
     assert.equal(forks(idle(ended.watch)), false, 'Claude idle: the prompt');
 });
 
+test('a fork that ends interrupted or on an error spends no relaunch: Claude still busy, the end of its turn relaunches it; idle, it is relaunched at once', () => {
+    let watch = turnStarted(look(start, { id: 's', sends: 0, waiting: 0 }));
+    watch = fork(look(watch, { id: 's', sends: 1, waiting: 2 }), 'f1');
+
+    let busy = forkEnded(watch, false).watch;
+    assert.equal(due(busy), false);
+    busy = turnEnded(idle(busy), { id: 's', sends: 1, waiting: 2 });
+    assert.equal(busy.owed, 'relaunch');
+    assert.equal(forks(busy), false);
+
+    let ended = turnEnded(idle(watch), { id: 's', sends: 1, waiting: 2 });
+    assert.equal(due(ended), false, 'no relaunch while the fork runs');
+    ended = forkEnded(ended, false).watch;
+    assert.equal(ended.owed, 'relaunch');
+    assert.equal(forks(ended), false);
+    assert.equal(submitted(sending(ended), false).sessions.s.relaunched, 1);
+
+    assert.equal(due(forkEnded(idle(look(watch, { id: 's', sends: 1, waiting: 0 })), false).watch), false, 'nothing waiting, nothing owed');
+});
+
 test('a fork the engine denies leaves the prompt owed, to submit instead', () => {
     let watch = turnStarted(look(start, { id: 's', sends: 0, waiting: 0 }));
     watch = fork(look(watch, { id: 's', sends: 1, waiting: 1 }));

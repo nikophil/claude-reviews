@@ -204,6 +204,22 @@ test('a Send seen while Claude works on a turn of its own spawns one fork in the
     assert.deepEqual(notified.at(-1), notification('Claude replied in 1 thread'));
 });
 
+test('after EnterWorktree in the middle of a turn, a Send in the new worktree still goes to a fork, as long as that turn runs', async () => {
+    const first = await session([]);
+    const second = await session([]);
+    const claude = await mod(first.dir);
+    await claude.poll();
+    await claude.fire('turn.start', { text: 'work', turnId: 't1' });
+
+    claude.move(second.dir);
+    await claude.poll();
+    await send(second.id, 'And this?');
+    await claude.poll();
+
+    assert.equal(claude.seen.spawned.length, 1);
+    assert.deepEqual(claude.seen.submitted, []);
+});
+
 test('a fork the engine denies leaves the Send to a prompt, as when Claude is idle', async () => {
     const { dir, id } = await session([]);
     const claude = await mod(dir);

@@ -57,11 +57,12 @@ export function look(watch: Watch, seen: Seen): Watch {
     return seen.sends > known.sends ? { ...next, owed: 'wake' } : next;
 }
 
-/** The end of a turn: threads still waiting relaunch Claude, once per Send. */
+/** The end of a turn: threads still waiting relaunch Claude, once per Send, unless a fork answers that Send. */
 export function turnEnded(watch: Watch, seen: Seen): Watch {
     const next = look(watch, seen);
     const known = seen && next.sessions[seen.id];
-    return known && next.waiting && !next.owed && known.relaunched !== known.sends ? { ...next, owed: 'relaunch' } : next;
+    const forked = next.forking?.session === seen?.id && next.forking?.sends === known?.sends;
+    return known && next.waiting && !next.owed && !forked && known.relaunched !== known.sends ? { ...next, owed: 'relaunch' } : next;
 }
 
 /** Whether a prompt is to be submitted now. */
@@ -80,17 +81,25 @@ export function forking(watch: Watch): Watch {
     return { ...watch, owed: null, forking: { owed: watch.owed!, session, sends: watch.sessions[session].sends } };
 }
 
-/** The fork started as `agent`, and spends the relaunch of its Send; denied, the prompt it took is owed again, to submit instead. */
+/** The fork started as `agent`; denied, the prompt it took is owed again, to submit instead. */
 export function forked(watch: Watch, agent?: string): Watch {
     const fork = watch.forking!;
-    if (!agent) return { ...watch, forking: null, owed: watch.owed ?? fork.owed };
-    const known = watch.sessions[fork.session];
-    return { ...watch, forking: { ...fork, agent }, sessions: { ...watch.sessions, [fork.session]: { ...known, relaunched: fork.sends } } };
+    return agent ? { ...watch, forking: { ...fork, agent } } : { ...watch, forking: null, owed: watch.owed ?? fork.owed };
 }
 
-/** The end of the fork: the session to notify, if it answered and no prompt is owed after it. */
+/**
+ * The end of the fork: answered, it spends the relaunch of its Send, and notifies its session if no prompt is owed after it.
+ * Interrupted or on an error, Claude may not have replied: the end of its turn relaunches it, or at once if it is idle.
+ */
 export function forkEnded(watch: Watch, answered: boolean): { watch: Watch; session: string | null } {
-    return { watch: { ...watch, forking: null }, session: answered && !watch.owed ? watch.forking!.session : null };
+    const fork = watch.forking!;
+    const next = { ...watch, forking: null };
+    if (answered) {
+        const sessions = { ...next.sessions, [fork.session]: { ...next.sessions[fork.session], relaunched: fork.sends } };
+        return { watch: { ...next, sessions }, session: next.owed ? null : fork.session };
+    }
+    const relaunch = !next.busy && !next.owed && next.waiting > 0 && next.session === fork.session;
+    return { watch: relaunch ? { ...next, owed: 'relaunch' } : next, session: null };
 }
 
 /** The due prompt is being submitted, for the Send of the session seen last. */

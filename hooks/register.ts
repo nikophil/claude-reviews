@@ -136,7 +136,8 @@ async function follow($: EngineInterface): Promise<void> {
     if (now === root) return;
     root = now;
     const next = await top($, now);
-    if (next !== worktree) [worktree, session, watch, greeted] = [next, undefined, start, false];
+    // The turn running goes on in the other worktree: a Send there still goes to a fork.
+    if (next !== worktree) [worktree, session, watch, greeted] = [next, undefined, { ...start, busy: watch.busy }, false];
 }
 
 /** The open session of the worktree, null when the server says it has none or out of a worktree, or why the server did not say. */
