@@ -9,6 +9,8 @@ import com.intellij.openapi.editor.ComponentInlayKt;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.EditorCustomElementRenderer;
+import com.intellij.openapi.editor.FoldRegion;
+import com.intellij.openapi.editor.FoldingModel;
 import com.intellij.openapi.editor.Inlay;
 import com.intellij.openapi.editor.RangeMarker;
 import com.intellij.openapi.editor.event.EditorMouseEvent;
@@ -196,6 +198,28 @@ final class Threads {
             }
             shown.put(n, new Shown(thread, claude, view, null));
         });
+    }
+
+    /**
+     * Expands the folds of unchanged code of the diff over the lines of the threads shown: a fold does not hide a thread.
+     * A fold of the whole file, of a diff without change, stays: the diff would expand every fold of its next rediff in its range.
+     */
+    void unfold() {
+        Document document = editor.getDocument();
+        FoldingModel folding = editor.getFoldingModel();
+        folding.runBatchFoldingOperation(() -> shown.forEach((n, thread) -> {
+            int[] range = range(n, thread.thread().getAsJsonObject("at"));
+            int start = toEditor(range[0]);
+            int end = toEditor(range[1]);
+            // A thread on the whole file goes above the first line, out of any fold.
+            if (start < 1 || end < 1 || end > document.getLineCount()) return;
+            int from = document.getLineStartOffset(start - 1);
+            int to = document.getLineEndOffset(end - 1);
+            for (FoldRegion region : folding.getAllFoldRegions()) {
+                boolean whole = region.getStartOffset() == 0 && document.getLineNumber(region.getEndOffset()) == document.getLineCount() - 1;
+                if (!region.isExpanded() && !whole && region.getStartOffset() <= to && region.getEndOffset() >= from) region.setExpanded(true);
+            }
+        }));
     }
 
     /**

@@ -26,6 +26,8 @@ import com.intellij.diff.contents.DiffContent;
 import com.intellij.diff.requests.DiffRequest;
 import com.intellij.diff.requests.SimpleDiffRequest;
 import com.intellij.diff.tools.util.DiffDataKeys;
+import com.intellij.diff.tools.util.base.TextDiffSettingsHolder;
+import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.diff.util.DiffUserDataKeys;
 import com.intellij.diff.util.Side;
 import com.intellij.openapi.actionSystem.ActionManager;
@@ -155,6 +157,8 @@ public final class ReviewDiffAction extends DumbAwareAction {
                 if (last != null && last.session().equals(id) && last.base().equals(base) && last.paths().equals(paths) && reuse(project, last, index, scroll, focus)) return;
                 targets.get(index).line = scroll;
                 SimpleDiffRequestChain chain = SimpleDiffRequestChain.fromProducers(files, index);
+                foldUnchanged();
+                chain.putUserData(DiffUserDataKeys.PLACE, PLACE);
                 ActionManager actions = ActionManager.getInstance();
                 chain.putUserData(DiffUserDataKeys.CONTEXT_ACTIONS, List.of(
                     actions.getAction("localreviews.PreviousThread"), actions.getAction("localreviews.NextThread"), Separator.getInstance(),
@@ -164,6 +168,20 @@ public final class ReviewDiffAction extends DumbAwareAction {
                 DiffEditorTabFilesManager.getInstance(project).showDiffFile(file, focus);
             }, project.getDisposed());
         });
+    }
+
+    /** The place of the diff of the review: the IDE keeps its settings apart from those of its other diffs. */
+    private static final String PLACE = "localreviews.Review";
+
+    /**
+     * Folds the unchanged code of the diff of the review, as the Commit view does, once only:
+     * « Collapse Unchanged Fragments » in the settings of the diff then keeps my choice.
+     */
+    private static void foldUnchanged() {
+        PropertiesComponent properties = PropertiesComponent.getInstance();
+        if (properties.isTrueValue(PLACE + ".folded")) return;
+        TextDiffSettingsHolder.TextDiffSettings.getSettings(PLACE).setExpandByDefault(false);
+        properties.setValue(PLACE + ".folded", true);
     }
 
     /** Shows the file `index` in the open tab of `opened`, scrolled to `scroll`; false when the tab is closed. */
