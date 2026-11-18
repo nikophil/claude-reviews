@@ -736,6 +736,23 @@ test('once Claude writes a file of another worktree of the repository, the poll,
     assert.equal(await last(first.id), 'Back');
 });
 
+test('while a fork answers, a write of the main loop in another worktree of the repository leaves the review where the fork answers', async () => {
+    const first = await session([]);
+    const second = await session(['Second'], worktree(first.dir));
+    const claude = await mod(first.dir);
+    await claude.poll();
+    await claude.fire('turn.start', { text: 'work', turnId: 't1' });
+    await send(first.id, 'And this?');
+    await claude.poll();
+    await claude.fire('tool.call', { tool: 'mcp__local-reviews__list_open_threads', agentId: 'fork-1' });
+
+    await claude.fire('tool.call', { tool: 'Edit', file_path: join(second.dir, 'a.txt'), old_string: '2', new_string: 'two' });
+    await claude.fire('tool.call', { tool: 'mcp__local-reviews__reply_to_thread', id: 1, body: 'Because', agentId: 'fork-1' });
+
+    assert.equal(await last(first.id), 'Because');
+    assert.equal(await last(second.id), 'Second');
+});
+
 test('a cd the shell keeps into another worktree of the repository moves the review there, and the shell back in its start folder leaves it there', async () => {
     const first = await session(['First']);
     const second = await session(['Second'], worktree(first.dir));

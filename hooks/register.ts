@@ -148,7 +148,9 @@ async function moved($: EngineInterface, e: { tool: string; [argument: string]: 
     const dir = touched(e, { shell, cwd, home: root!, failed });
     shell = cwd;
     const found = dir && await top($, dir);
-    if (found && found.common === common) enter(found);
+    // A fork answers in the worktree it was spawned for, whose session the tools share: a write of the main loop elsewhere meanwhile leads nowhere.
+    // ponytail: EnterWorktree still moves the tools under a running fork; pin each fork to its { worktree, session } by agentId if it shows.
+    if (found && found.common === common && !watch.forking) enter(found);
 }
 
 /** Follows the session's root, which /cd and EnterWorktree move. */
