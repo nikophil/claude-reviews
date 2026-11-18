@@ -13,7 +13,7 @@ import java.util.List;
  * Run by build.sh: fails the build when Placement leaves out or lets in the wrong threads, when raw HTML gets through a message,
  * or when the navigation, the Replied mark, a suggestion or the Markdown copy of the threads goes wrong,
  * when the listeners of a port, read in /proc/net/tcp to tell a server of another account, come out wrong,
- * or when the files of the tool window group wrong by directory.
+ * when the files of the tool window group wrong by directory, or when the window of a thread cuts its excerpt wrong.
  */
 final class PlacementCheck {
     private PlacementCheck() {}
@@ -85,6 +85,21 @@ final class PlacementCheck {
         JsonObject outdated = JsonParser.parseString("""
             { "anchor": { "side": "new", "start": 3, "end": 5 }, "at": null }""").getAsJsonObject();
         check(ThreadView.lines(outdated).equals("Lines +3 to +5"), "an Outdated thread at the lines of its Anchor");
+        JsonObject belowDeletion = JsonParser.parseString("""
+            { "side": "new", "start": 3, "end": 4, "hunk": { "header": "@@ -1,9 +1,4 @@", "lines": [
+              { "type": "context", "oldNo": 1, "newNo": 1, "text": "a" }, { "type": "context", "oldNo": 2, "newNo": 2, "text": "b" },
+              { "type": "del", "oldNo": 3, "newNo": null, "text": "x1" }, { "type": "del", "oldNo": 4, "newNo": null, "text": "x2" },
+              { "type": "del", "oldNo": 5, "newNo": null, "text": "x3" }, { "type": "del", "oldNo": 6, "newNo": null, "text": "x4" },
+              { "type": "context", "oldNo": 7, "newNo": 3, "text": "c" }, { "type": "del", "oldNo": 8, "newNo": null, "text": "y" },
+              { "type": "add", "oldNo": null, "newNo": 4, "text": "d" }] } }""").getAsJsonObject();
+        check(ThreadWindow.excerpt(belowDeletion).equals("-x2\n-x3\n-x4\n c\n-y\n+d"), "the excerpt of a thread from 3 lines above its range, whatever their side");
+        JsonObject nearTop = JsonParser.parseString("""
+            { "side": "old", "start": 2, "end": 2, "hunk": { "header": "@@ -1,2 +1,1 @@", "lines": [
+              { "type": "context", "oldNo": 1, "newNo": 1, "text": "a" }, { "type": "del", "oldNo": 2, "newNo": null, "text": "b" }] } }""").getAsJsonObject();
+        check(ThreadWindow.excerpt(nearTop).equals("@@ -1,2 +1,1 @@\n a\n-b"), "a whole excerpt keeps its header");
+        JsonObject outOfDiff = JsonParser.parseString("""
+            { "side": "new", "start": 7, "end": 8, "hunk": null, "lines": ["e", "f"] }""").getAsJsonObject();
+        check(ThreadWindow.excerpt(outOfDiff).equals("e\nf"), "the lines of an Anchor out of the diff");
         check(ThreadView.escapeHtml("a <img src=x> `<b>` b").equals("a &lt;img src=x> `<b>` b"), "raw HTML escaped outside a code span, kept in it");
         check(ThreadView.escapeHtml("```php\n$a = <<<X;\n```\n<i>").equals("```php\n$a = <<<X;\n```\n&lt;i>"), "raw HTML escaped after a code block, kept in it");
         check(ThreadView.escapeHtml("~~~\n<?php\n~~~").equals("~~~\n<?php\n~~~"), "a code block of tildes kept as written");

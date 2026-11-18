@@ -80,20 +80,29 @@ final class ThreadWindow extends DialogWrapper {
         column.repaint();
     }
 
+    private static JComponent code(Project project, JsonObject anchor) {
+        // The patch file type colors the added and deleted lines.
+        EditorTextField code = new EditorTextField(EditorFactory.getInstance().createDocument(excerpt(anchor)), project,
+            anchor.get("hunk") instanceof JsonObject ? FileTypeManager.getInstance().getFileTypeByExtension("patch")
+                : FileTypeManager.getInstance().getFileTypeByFileName(anchor.get("path").getAsString()), true, false);
+        code.setFontInheritedFromLAF(false);
+        return code;
+    }
+
     /**
      * The diff the thread was opened on, from 3 lines above its range down to its last line, as GitHub shows it, rather than a whole added file;
      * else the lines of its Anchor when they were out of the diff.
      */
-    private static JComponent code(Project project, JsonObject anchor) {
+    static String excerpt(JsonObject anchor) {
         StringBuilder text = new StringBuilder();
         JsonElement hunk = anchor.get("hunk");
         if (hunk instanceof JsonObject diff) {
             JsonArray lines = diff.getAsJsonArray("lines");
             String side = anchor.get("side").getAsString().equals("old") ? "oldNo" : "newNo";
-            int from = 0;
-            for (int i = lines.size() - 1; i >= 0 && from == 0; i--) {
-                if (lines.get(i).getAsJsonObject().get(side) instanceof JsonPrimitive no && no.getAsInt() < anchor.get("start").getAsInt() - 3) from = i + 1;
-            }
+            int first = 0;
+            while (first < lines.size() && !(lines.get(first).getAsJsonObject().get(side) instanceof JsonPrimitive no && no.getAsInt() == anchor.get("start").getAsInt())) first++;
+            // A deletion right above a thread of the new side counts too: 3 lines, whatever their side.
+            int from = first == lines.size() ? 0 : Math.max(first - 3, 0);
             // The header no longer counts the lines of a cut excerpt.
             if (from == 0) text.append(diff.get("header").getAsString()).append('\n');
             for (JsonElement element : lines.asList().subList(from, lines.size())) {
@@ -109,12 +118,7 @@ final class ThreadWindow extends DialogWrapper {
         } else {
             for (JsonElement line : anchor.getAsJsonArray("lines")) text.append(line.getAsString()).append('\n');
         }
-        // The patch file type colors the added and deleted lines.
-        EditorTextField code = new EditorTextField(EditorFactory.getInstance().createDocument(text.toString().stripTrailing()), project,
-            hunk instanceof JsonObject ? FileTypeManager.getInstance().getFileTypeByExtension("patch")
-                : FileTypeManager.getInstance().getFileTypeByFileName(anchor.get("path").getAsString()), true, false);
-        code.setFontInheritedFromLAF(false);
-        return code;
+        return text.toString().stripTrailing();
     }
 
     /** The thread at the width of the window, scrolled once it outgrows it: its texts wrap rather than scroll sideways. */
