@@ -171,14 +171,18 @@ The server serves the UI and a JSON API, for the UI and the mod.
 - An Outdated thread also carries `hunk` there, the original diff excerpt as a unified diff, `null` if the Anchor was outside the diff.
 - A thread on the whole file has `start` and `end` at 0 there and no lines; `open_thread` without `lines` opens one.
 - A ```` ```suggestion ```` block in one of my messages is the code I propose in place of the lines of the thread, on the `new` side: the descriptions of the tools ask Claude to apply it to the working tree unless it disagrees, then to reply.
-- The poll keeps a status line through `$.ui.status`: "claude-reviews · N threads waiting for Claude", followed by "· wake held until the next prompt" when a wake waits after a `{ drop }`, and nothing without a thread waiting for Claude.
+- The poll keeps a status line through `$.ui.status`: "claude-reviews · N threads waiting for Claude", followed by "· a fork answers in the background" while a fork runs, or by "· wake held until the next prompt" when a wake waits after a `{ drop }`, and nothing without a thread waiting for Claude.
 - It polls `GET /api/sessions?worktree=<path>&claude` every 2 s; a Send that leaves Waiting for Claude threads makes it wake Claude through `$.prompt.submit`, never awaited in a hook.
+- While Claude works on a turn of its own, one that no wake or relaunch opened, the mod spawns instead a fork of the Claude session in the background (`$.agent.spawn` with `subagentType: 'fork'`), which answers the threads with the same tools, in the same worktree:
+  its prompt warns it that the main conversation keeps working there, to leave its task and the files it edits alone, and to say so in the thread instead.
+  Following another worktree keeps the turn running: a Send there still goes to a fork. One fork runs at a time: a Send seen meanwhile waits for its end, then goes to a fork again, or to a prompt once Claude is idle; a fork the engine denies leaves the Send to the prompt.
 - Each of its reads adds `&blocked` while a loop of its Claude session, the main one or a subagent's, is Blocked:
   from a `classic.PermissionRequest` that no settings hook answers, or a `tool.call` of `AskUserQuestion`, until a tool call of that loop ends.
   The `next` of `classic.PermissionRequest` resolves once the settings hooks answered, not the person, hence the end of the tool call, run or refused, as the end of the wait.
 - Only a 404 means "no open session"; a failed poll leaves the state as is, and the mod keeps per session the last Send seen and the relaunch made.
-- It relaunches Claude once per Send, at the end of a turn that ended on an answer, neither interrupted nor in error, that leaves threads waiting; a `{ drop }` waits for the next prompt or turn start, and does not count.
+- It relaunches Claude once per Send, at the end of a turn that ended on an answer, neither interrupted nor in error, that leaves threads waiting; a `{ drop }` waits for the next prompt or turn start, and does not count; a fork that ends on an answer counts as the relaunch of its Send, which neither the main loop nor the fork then gets; one interrupted or on an error leaves it to the end of Claude's turn, or relaunches Claude at once if it is idle.
 - At the end of the turn opened by a wake or a relaunch, if it must not relaunch, it calls `POST /api/sessions/<id>/turn-complete` once, without awaiting it, only if this turn ended on an answer: after an Esc or an error, nothing.
+  The end of a fork, its own `turn.complete` (`agentId`), calls it the same way, unless a Send seen meanwhile is owed.
 - The first prompt of a Claude session carries, in the `context` of `prompt.submit`, the number of threads waiting for it: `prompt.context` would also reach the subagents, and `cc-plugin-sec-default` short-circuits it on Team or Enterprise accounts.
 - After an Approve, `open_thread` calls `POST /api/sessions` again and opens a new session; `reply_to_thread` answers "session approved".
 - `/review-local phpstorm`, `/review-local vscode` or `/review-local browser` opens the session in PhpStorm, VS Code or the browser;

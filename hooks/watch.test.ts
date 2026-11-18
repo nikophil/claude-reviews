@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { due, listeners, look, notified, resumed, sending, start, status, submitted, turnEnded, type Watch } from './watch.ts';
+import { due, forked, forkEnded, forking, forks, idle, listeners, look, notified, resumed, sending, start, status, submitted, turnEnded, turnStarted, type Watch } from './watch.ts';
 
 /** What the glue does once the decision says a prompt is due: submit it, then learn whether it entered. */
 function submit(watch: Watch, dropped = false): Watch {
@@ -115,6 +115,85 @@ test('the status line counts the threads waiting for Claude, adds a wake held by
     assert.equal(status(watch), 'claude-reviews · 2 threads waiting for Claude · wake held until the next prompt');
     assert.equal(status(look(watch, { id: 's', sends: 1, waiting: 0 })), undefined, 'nothing waiting, nothing held');
     assert.equal(status(submit(resumed(watch))), 'claude-reviews · 2 threads waiting for Claude');
+});
+
+/** What the glue does once the decision says a fork is due: spawn it, then learn its agent, or that it was denied. */
+function fork(watch: Watch, agent?: string): Watch {
+    assert.ok(due(watch) && forks(watch), 'a fork is due');
+    return forked(forking(watch), agent);
+}
+
+test('a Send while Claude works on a turn of its own goes to a fork, which spends the relaunch of the Send: the end of the turn relaunches nothing', () => {
+    let watch = turnStarted(look(start, { id: 's', sends: 0, waiting: 0 }));
+    watch = look(watch, { id: 's', sends: 1, waiting: 2 });
+
+    watch = fork(watch, 'f1');
+    assert.equal(due(watch), false);
+    assert.deepEqual(watch.forking, { owed: 'wake', session: 's', sends: 1, agent: 'f1' });
+
+    watch = turnEnded(idle(watch), { id: 's', sends: 1, waiting: 2 });
+    assert.equal(due(watch), false, 'the main loop is not relaunched for the threads the fork answers');
+    assert.equal(notified(watch).session, null, 'the end of the main turn notifies nothing');
+});
+
+test('Claude idle, or in a turn a wake or relaunch opened, gets the prompt and no fork', () => {
+    let watch = look(start, { id: 's', sends: 0, waiting: 0 });
+    assert.equal(forks(look(watch, { id: 's', sends: 1, waiting: 1 })), false, 'idle');
+
+    watch = turnStarted(submitted(sending(look(watch, { id: 's', sends: 1, waiting: 1 })), false));
+    watch = look(watch, { id: 's', sends: 2, waiting: 2 });
+    assert.equal(due(watch), true);
+    assert.equal(forks(watch), false, 'the turn of a wake answers threads already: the next Send is queued after it');
+    assert.equal(forks(look(idle(watch), { id: 's', sends: 2, waiting: 2 })), false);
+});
+
+test('the end of the fork notifies its session when it answered and nothing is owed, and lets a Send held meanwhile through', () => {
+    let watch = turnStarted(look(start, { id: 's', sends: 0, waiting: 0 }));
+    watch = fork(look(watch, { id: 's', sends: 1, waiting: 1 }), 'f1');
+    assert.equal(status(watch), 'claude-reviews · 1 thread waiting for Claude · a fork answers in the background');
+
+    let ended = forkEnded(watch, true);
+    assert.equal(ended.session, 's');
+    assert.equal(ended.watch.forking, null);
+    assert.equal(forkEnded(watch, false).session, null, 'an interrupted fork may not have replied');
+
+    watch = look(watch, { id: 's', sends: 2, waiting: 2 });
+    assert.equal(due(watch), false, 'one fork at a time: the Send waits for its end');
+    ended = forkEnded(watch, true);
+    assert.equal(ended.session, null, 'a prompt is owed after it');
+    assert.equal(forks(ended.watch), true, 'Claude still busy: a fork again');
+    assert.equal(forks(idle(ended.watch)), false, 'Claude idle: the prompt');
+});
+
+test('a fork that ends interrupted or on an error spends no relaunch: Claude still busy, the end of its turn relaunches it; idle, it is relaunched at once', () => {
+    let watch = turnStarted(look(start, { id: 's', sends: 0, waiting: 0 }));
+    watch = fork(look(watch, { id: 's', sends: 1, waiting: 2 }), 'f1');
+
+    let busy = forkEnded(watch, false).watch;
+    assert.equal(due(busy), false);
+    busy = turnEnded(idle(busy), { id: 's', sends: 1, waiting: 2 });
+    assert.equal(busy.owed, 'relaunch');
+    assert.equal(forks(busy), false);
+
+    let ended = turnEnded(idle(watch), { id: 's', sends: 1, waiting: 2 });
+    assert.equal(due(ended), false, 'no relaunch while the fork runs');
+    ended = forkEnded(ended, false).watch;
+    assert.equal(ended.owed, 'relaunch');
+    assert.equal(forks(ended), false);
+    assert.equal(submitted(sending(ended), false).sessions.s.relaunched, 1);
+
+    assert.equal(due(forkEnded(idle(look(watch, { id: 's', sends: 1, waiting: 0 })), false).watch), false, 'nothing waiting, nothing owed');
+});
+
+test('a fork the engine denies leaves the prompt owed, to submit instead', () => {
+    let watch = turnStarted(look(start, { id: 's', sends: 0, waiting: 0 }));
+    watch = fork(look(watch, { id: 's', sends: 1, waiting: 1 }));
+
+    assert.equal(watch.forking, null);
+    assert.equal(watch.owed, 'wake');
+    assert.equal(watch.sessions.s.relaunched, 0, 'the fork that did not start spends no relaunch');
+    watch = submitted(sending(watch), false);
+    assert.equal(watch.notify, 's');
 });
 
 /** /proc/net/tcp then /proc/net/tcp6: a listener of uid 1000 on 127.0.0.1:0xA609, a connection of uid 1001 from that port, a listener of 1001 on 0.0.0.0:7778, one of 1002 on [::ffff:127.0.0.1]:0xA609. */
