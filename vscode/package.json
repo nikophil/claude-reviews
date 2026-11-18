@@ -50,7 +50,10 @@
       { "command": "localReviews.resolve", "title": "Resolve", "icon": "$(check)" },
       { "command": "localReviews.unresolve", "title": "Unresolve", "icon": "$(discard)" },
       { "command": "localReviews.sendThread", "title": "Send Thread", "icon": "$(send)" },
-      { "command": "localReviews.copyStartClaude", "title": "Copy the Command That Starts Claude", "category": "Claude Reviews" }
+      { "command": "localReviews.copyStartClaude", "title": "Copy the Command That Starts Claude", "category": "Claude Reviews" },
+      { "command": "localReviews.previousThread", "title": "Previous Thread", "category": "Claude Reviews", "icon": "$(arrow-up)" },
+      { "command": "localReviews.nextThread", "title": "Next Thread", "category": "Claude Reviews", "icon": "$(arrow-down)" },
+      { "command": "localReviews.blocked", "title": "Claude is waiting for your answer in its session, to a permission or a question, before it replies in the threads.", "icon": "$(warning)" }
     ],
     "menus": {
       "commandPalette": [
@@ -64,7 +67,8 @@
         { "command": "localReviews.reply", "when": "false" },
         { "command": "localReviews.resolve", "when": "false" },
         { "command": "localReviews.unresolve", "when": "false" },
-        { "command": "localReviews.sendThread", "when": "false" }
+        { "command": "localReviews.sendThread", "when": "false" },
+        { "command": "localReviews.blocked", "when": "false" }
       ],
       "view/title": [
         { "command": "localReviews.send", "when": "view == localReviews.files && localReviews.state == session", "group": "navigation@1" },
@@ -78,9 +82,12 @@
         { "command": "localReviews.openDiff", "when": "view == localReviews.files && viewItem =~ /^file/", "group": "navigation@2" }
       ],
       "editor/title": [
-        { "command": "localReviews.markViewed", "when": "isInDiffEditor && resourcePath in localReviews.unviewed", "group": "navigation@1" },
-        { "command": "localReviews.unmarkViewed", "when": "isInDiffEditor && resourcePath in localReviews.viewed", "group": "navigation@1" },
-        { "command": "localReviews.send", "when": "isInDiffEditor && resourcePath in localReviews.changed", "group": "navigation@2" }
+        { "command": "localReviews.previousThread", "when": "resourcePath in localReviews.navigable || resourceScheme == local-reviews-outdated", "group": "navigation@1" },
+        { "command": "localReviews.nextThread", "when": "resourcePath in localReviews.navigable || resourceScheme == local-reviews-outdated", "group": "navigation@2" },
+        { "command": "localReviews.markViewed", "when": "isInDiffEditor && resourcePath in localReviews.unviewed", "group": "navigation@3" },
+        { "command": "localReviews.unmarkViewed", "when": "isInDiffEditor && resourcePath in localReviews.viewed", "group": "navigation@3" },
+        { "command": "localReviews.blocked", "when": "isInDiffEditor && localReviews.blocked && resourcePath in localReviews.changed", "group": "navigation@4" },
+        { "command": "localReviews.send", "when": "isInDiffEditor && resourcePath in localReviews.changed", "group": "navigation@5" }
       ],
       "comments/commentThread/title": [
         { "command": "localReviews.sendThread", "when": "commentController == local-reviews && commentThread =~ /pending/", "group": "inline@1" },

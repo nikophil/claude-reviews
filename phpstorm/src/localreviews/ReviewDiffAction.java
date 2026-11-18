@@ -28,10 +28,12 @@ import com.intellij.diff.requests.SimpleDiffRequest;
 import com.intellij.diff.tools.util.DiffDataKeys;
 import com.intellij.diff.util.DiffUserDataKeys;
 import com.intellij.diff.util.Side;
+import com.intellij.openapi.actionSystem.ActionManager;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.Presentation;
+import com.intellij.openapi.actionSystem.Separator;
 import com.intellij.openapi.actionSystem.ex.CheckboxAction;
 import com.intellij.openapi.actionSystem.ex.CustomComponentAction;
 import com.intellij.ide.ui.laf.darcula.ui.DarculaButtonUI;
@@ -51,12 +53,14 @@ import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.ui.AnimatedIcon;
 import com.intellij.ui.ClientProperty;
+import com.intellij.ui.components.JBLabel;
 import com.intellij.util.ui.JBUI;
 
 import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
+import javax.swing.SwingConstants;
 import java.awt.BorderLayout;
 import java.awt.Cursor;
 
@@ -151,7 +155,10 @@ public final class ReviewDiffAction extends DumbAwareAction {
                 if (last != null && last.session().equals(id) && last.base().equals(base) && last.paths().equals(paths) && reuse(project, last, index, scroll, focus)) return;
                 targets.get(index).line = scroll;
                 SimpleDiffRequestChain chain = SimpleDiffRequestChain.fromProducers(files, index);
-                chain.putUserData(DiffUserDataKeys.CONTEXT_ACTIONS, List.of(viewed(project, id), send(project, id), approve(project, id)));
+                ActionManager actions = ActionManager.getInstance();
+                chain.putUserData(DiffUserDataKeys.CONTEXT_ACTIONS, List.of(
+                    actions.getAction("localreviews.PreviousThread"), actions.getAction("localreviews.NextThread"), Separator.getInstance(),
+                    viewed(project, id), new Blocked(id), send(project, id), approve(project, id)));
                 ChainDiffVirtualFile file = new ChainDiffVirtualFile(chain, TITLE);
                 project.putUserData(OPENED, new Opened(file, id, base, paths, targets));
                 DiffEditorTabFilesManager.getInstance(project).showDiffFile(file, focus);
@@ -407,6 +414,36 @@ public final class ReviewDiffAction extends DumbAwareAction {
             margin.setBorder(JBUI.Borders.empty(0, 4));
             margin.add(button);
             return margin;
+        }
+    }
+
+    /** The warning of the tool window that the Claude session is Blocked, short in the toolbar of the diff, whole in its tooltip. */
+    private static final class Blocked extends DumbAwareAction implements CustomComponentAction {
+        private final String id;
+
+        Blocked(String id) {
+            this.id = id;
+        }
+
+        @Override
+        public ActionUpdateThread getActionUpdateThread() {
+            return ActionUpdateThread.BGT;
+        }
+
+        @Override
+        public void update(AnActionEvent event) {
+            event.getPresentation().setVisible(ThreadsInDiff.SESSIONS.get(id) instanceof JsonObject session && Placement.blocked(session));
+        }
+
+        @Override
+        public void actionPerformed(AnActionEvent event) {}
+
+        @Override
+        public JComponent createCustomComponent(Presentation presentation, String place) {
+            JBLabel label = new JBLabel("Claude is waiting for your answer in its session", AllIcons.General.Warning, SwingConstants.LEFT);
+            label.setToolTipText(ReviewToolWindow.BLOCKED);
+            label.setBorder(JBUI.Borders.empty(0, 4));
+            return label;
         }
     }
 

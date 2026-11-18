@@ -11,12 +11,17 @@ import com.google.gson.JsonObject;
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.ui.laf.darcula.ui.DarculaButtonUI;
 import com.intellij.openapi.actionSystem.ActionManager;
+import com.intellij.diff.tools.util.DiffDataKeys;
+import com.intellij.openapi.actionSystem.CommonDataKeys;
+import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.DefaultActionGroup;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.WriteIntentReadAction;
 import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.editor.EditorKind;
+import com.intellij.openapi.editor.markup.InspectionWidgetActionProvider;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
 import com.intellij.openapi.fileTypes.FileTypeManager;
@@ -118,6 +123,8 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         SystemNotifications.getInstance().notify("Local Reviews", "Claude Reviews", "The review of " + root + " is open in PhpStorm");
     }
 
+    static final String BLOCKED = "Claude is waiting for your answer in its session, to a permission or a question, before it replies in the threads.";
+
     @Override
     public void createToolWindowContent(Project project, ToolWindow toolWindow) {
         Panel panel = new Panel(project, toolWindow);
@@ -184,7 +191,11 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             ToolWindow window = ToolWindowManager.getInstance(event.getProject()).getToolWindow("Claude Reviews");
             // The content of a tool window never shown is made here.
             Content content = window == null ? null : window.getContentManager().getContent(0);
-            if (content != null && content.getComponent() instanceof Panel panel) panel.step(forward);
+            // Where it was clicked or pressed: a diff, an editor, else the view of the tool window.
+            Editor editor = event.getData(CommonDataKeys.EDITOR);
+            boolean diff = event.getData(DiffDataKeys.DIFF_REQUEST) != null
+                || (editor == null || editor.getEditorKind() != EditorKind.MAIN_EDITOR) && ReviewService.get(event.getProject()).diffView();
+            if (content != null && content.getComponent() instanceof Panel panel) panel.step(forward, diff);
         }
     }
 
@@ -192,6 +203,30 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
     public static final class PreviousThread extends NextThread {
         public PreviousThread() {
             super(false);
+        }
+    }
+
+    /** Previous Thread and Next Thread in the bar at the top right of the editor of a file of the review, beside the arrows of its problems. */
+    public static final class EditorArrows implements InspectionWidgetActionProvider {
+        @Override
+        public AnAction createAction(Editor editor) {
+            // The editors of a diff have the arrows in the toolbar of the diff.
+            if (editor.getEditorKind() != EditorKind.MAIN_EDITOR) return null;
+            ActionManager actions = ActionManager.getInstance();
+            return new DefaultActionGroup(actions.getAction("localreviews.PreviousThread"), actions.getAction("localreviews.NextThread")) {
+                @Override
+                public ActionUpdateThread getActionUpdateThread() {
+                    return ActionUpdateThread.BGT;
+                }
+
+                @Override
+                public void update(AnActionEvent event) {
+                    List<Threads> threads = editor.getUserData(Threads.KEY);
+                    ReviewService.State state = editor.getProject() == null ? null : ReviewService.get(editor.getProject()).state();
+                    event.getPresentation().setVisible(threads != null && state != null && state.session() != null
+                        && Placement.navigable(state.session(), state.files(), threads.get(0).review().path()));
+                }
+            };
         }
     }
 
@@ -257,8 +292,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         private final JBLabel summary = new JBLabel();
         /** How to start a Claude session, or the warning that the Claude session waits for my answer; empty otherwise. */
         private final JPanel notice = new JPanel(new BorderLayout());
-        private final JBLabel blocked = new JBLabel("<html>Claude is waiting for your answer in its session, to a permission or a question, before it replies in the threads.</html>",
-            AllIcons.General.Warning, SwingConstants.LEFT);
+        private final JBLabel blocked = new JBLabel("<html>" + BLOCKED + "</html>", AllIcons.General.Warning, SwingConstants.LEFT);
         private final Tree tree = new Tree(new DefaultTreeModel(new DefaultMutableTreeNode()));
         // Made once: a new one at each change of the state would scroll back to the top, and take the focus from the tree.
         private final JBScrollPane scroll = new JBScrollPane(tree);
@@ -648,9 +682,10 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
 
         /**
          * Selects and opens the next thread not Resolved after the selection of the tree, or the one before it, around at the ends:
-         * as a click from the tree, which keeps the focus; from elsewhere, the focus goes to it, an Outdated one opening its window.
+         * as a click from the tree, which keeps the focus; from elsewhere, the focus goes to it, an Outdated one opening its window;
+         * in the diff when `diff`, else in the editor.
          */
-        void step(boolean forward) {
+        void step(boolean forward, boolean diff) {
             // The tree of a tool window just made is still empty.
             if (state != service.state()) show(service.state(), false);
             List<DefaultMutableTreeNode> nodes = new ArrayList<>();
@@ -667,7 +702,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             tree.setSelectionPath(path);
             rebuilding = false;
             tree.scrollPathToVisible(path);
-            openThread(((ThreadNode) nodes.get(next).getUserObject()).thread(), service.diffView(), focus);
+            openThread(((ThreadNode) nodes.get(next).getUserObject()).thread(), diff, focus);
         }
 
         private void toggleViewed(JsonObject file) {

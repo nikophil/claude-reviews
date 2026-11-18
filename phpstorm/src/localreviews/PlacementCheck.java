@@ -36,6 +36,11 @@ final class PlacementCheck {
         check(Placement.startClaude(JsonParser.parseString("{ \"worktree\": \"/home/me/my app's\" }").getAsJsonObject()).equals("cd '/home/me/my app'\\''s' && claude"), "the command quotes a worktree with a space or a quote");
         check(!Placement.claude(JsonParser.parseString("{ \"claudeSession\": false }").getAsJsonObject()), "no Claude session reads the session");
         check(Placement.claude(new JsonObject()), "a server without the field takes a Claude session for granted");
+        JsonArray diffed = JsonParser.parseString("[{ \"path\": \"c.php\" }]").getAsJsonArray();
+        check(Placement.navigable(session, diffed, "b.php") && Placement.navigable(session, diffed, "c.php") && !Placement.navigable(session, diffed, "README.md"),
+            "the arrows of the threads in a file of an unresolved thread or of the diff, not in another one");
+        JsonObject resolved = JsonParser.parseString("{ \"threads\": [{ \"id\": 1, \"resolved\": true, \"anchor\": { \"path\": \"c.php\", \"side\": \"new\" } }] }").getAsJsonObject();
+        check(!Placement.navigable(resolved, diffed, "c.php"), "no arrows once every thread is Resolved");
         check(Placement.blocked(JsonParser.parseString("{ \"claudeBlocked\": true }").getAsJsonObject()) && !Placement.blocked(new JsonObject()), "Blocked as the server says, never from a server without the field");
         JsonObject statuses = JsonParser.parseString("""
             { "threads": [
