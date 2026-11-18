@@ -736,7 +736,7 @@ test('once Claude writes a file of another worktree of the repository, the poll,
     assert.equal(await last(first.id), 'Back');
 });
 
-test('a cd the shell keeps into another worktree of the repository moves the review there', async () => {
+test('a cd the shell keeps into another worktree of the repository moves the review there, and the shell back in its start folder leaves it there', async () => {
     const first = await session(['First']);
     const second = await session(['Second'], worktree(first.dir));
     const claude = await mod(first.dir);
@@ -744,11 +744,15 @@ test('a cd the shell keeps into another worktree of the repository moves the rev
     claude.cd(second.dir);
     await claude.fire('tool.call', { tool: 'Bash', command: `cd ${second.dir}` });
     await claude.tool('reply_to_thread', { id: 1, body: 'Here' });
+    claude.cd(first.dir);
+    await claude.fire('tool.call', { tool: 'Bash', command: 'cd /tmp && ls' });
+    await claude.tool('reply_to_thread', { id: 1, body: 'Still here' });
 
-    assert.equal(await last(second.id), 'Here');
+    assert.equal(await last(second.id), 'Still here', 'the shell back in its start folder after a cd it did not keep leaves the review where it is');
+    assert.equal(await last(first.id), 'First');
 });
 
-test('a write in another repository, a subagent\'s write or cd, and a refused write leave the review in its worktree', async () => {
+test('a write in another repository, a subagent\'s write or cd, a refused write and a failed one leave the review in its worktree', async () => {
     const first = await session(['First']);
     const second = await session(['Second'], worktree(first.dir));
     const other = await session(['Other']);
@@ -761,6 +765,8 @@ test('a write in another repository, a subagent\'s write or cd, and a refused wr
     claude.cd(first.dir);
     claude.engine['tool.call'] = () => ({ deny: 'refused' });
     await claude.fire('tool.call', { tool: 'Write', file_path: join(second.dir, 'b.txt'), content: '' });
+    claude.engine['tool.call'] = () => ({ result: 'String to replace not found in file.', text: 'String to replace not found in file.', isError: true });
+    await claude.fire('tool.call', { tool: 'Edit', file_path: join(second.dir, 'a.txt'), old_string: 'none', new_string: 'two' });
     claude.engine['tool.call'] = () => ({ result: '' });
     await claude.tool('reply_to_thread', { id: 1, body: 'Here' });
 

@@ -212,17 +212,29 @@ test('the listeners of a port are the sockets listening on it, IPv4 or IPv6, wit
     assert.deepEqual(listeners('', 7778), []);
 });
 
+/** A call of the main loop, the shell in /a before and after it, in a Claude session started in /a. */
+const at = { shell: '/a', cwd: '/a', home: '/a', failed: false };
+
 test('a write of the main loop leads to the folder of its file, a relative path read from the shell\'s directory', () => {
-    assert.equal(touched({ tool: 'Edit', file_path: '/b/src/a.ts' }, '/a', '/a'), '/b/src');
-    assert.equal(touched({ tool: 'Write', file_path: 'src/a.ts' }, '/a', '/a/web'), '/a/web/src');
-    assert.equal(touched({ tool: 'NotebookEdit', notebook_path: '/b/n.ipynb' }, '/a', '/a'), '/b');
+    assert.equal(touched({ tool: 'Edit', file_path: '/b/src/a.ts' }, at), '/b/src');
+    assert.equal(touched({ tool: 'Write', file_path: 'src/a.ts' }, { ...at, cwd: '/a/web' }), '/a/web/src');
+    assert.equal(touched({ tool: 'NotebookEdit', notebook_path: '/b/n.ipynb' }, at), '/b');
 });
 
-test('a Bash call of the main loop leads to the shell\'s directory only once a cd changed it', () => {
-    assert.equal(touched({ tool: 'Bash', command: 'cd /b' }, '/a', '/b'), '/b');
-    assert.equal(touched({ tool: 'Bash', command: 'cd /b && make' }, '/a', '/a'), undefined, 'a cd the shell did not keep');
+test('a write that failed leads nowhere: it wrote nothing', () => {
+    assert.equal(touched({ tool: 'Edit', file_path: '/b/a.ts' }, { ...at, failed: true }), undefined);
+});
+
+test('a Bash call of the main loop leads to the shell\'s directory only once a cd changed it, even if the command then failed', () => {
+    assert.equal(touched({ tool: 'Bash', command: 'cd /b' }, { ...at, cwd: '/b' }), '/b');
+    assert.equal(touched({ tool: 'Bash', command: 'cd /b; false' }, { ...at, cwd: '/b', failed: true }), '/b');
+    assert.equal(touched({ tool: 'Bash', command: 'cd /b && make' }, at), undefined, 'a cd the shell did not keep');
+});
+
+test('a shell back in the folder the Claude session started in leads nowhere: it is where the shell returns after a cd it did not keep', () => {
+    assert.equal(touched({ tool: 'Bash', command: 'cd /tmp/x && ls' }, { ...at, shell: '/b' }), undefined);
 });
 
 test('a call that writes nothing leads nowhere', () => {
-    assert.equal(touched({ tool: 'Read', file_path: '/b/a.ts' }, '/a', '/a'), undefined);
+    assert.equal(touched({ tool: 'Read', file_path: '/b/a.ts' }, at), undefined);
 });

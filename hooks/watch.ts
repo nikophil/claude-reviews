@@ -144,12 +144,14 @@ export function resumed(watch: Watch): Watch {
 /**
  * The directory a call of the main loop leads the mod to: the folder of the file Edit, Write or NotebookEdit wrote, a relative path read from `cwd`,
  * or `cwd`, the shell's directory after a Bash call, once it differs from `shell`, the one before; undefined for any other call.
+ * `home` is the folder the shell returns to after a cd it does not keep, `failed` whether the call ended on an error.
  */
-export function touched(e: { tool: string; [argument: string]: unknown }, shell: string, cwd: string): string | undefined {
-    // `cd x && make` leaves the shell where it was outside the working directories: only a cd it keeps leads there.
-    if (e.tool === 'Bash') return cwd !== shell ? cwd : undefined;
+export function touched(e: { tool: string; [argument: string]: unknown }, { shell, cwd, home, failed }: { shell: string; cwd: string; home: string; failed: boolean }): string | undefined {
+    // `cd x && make` leaves the shell where it was, or brings it back home, outside the working directories: only a cd it keeps leads there, even if the command then fails.
+    // ponytail: a cd Claude keeps back to home leads nowhere either; the next write there moves the review.
+    if (e.tool === 'Bash') return cwd !== shell && cwd !== home ? cwd : undefined;
     const file = e.tool === 'NotebookEdit' ? e.notebook_path : e.tool === 'Edit' || e.tool === 'Write' ? e.file_path : undefined;
-    if (typeof file !== 'string') return undefined;
+    if (failed || typeof file !== 'string') return undefined;
     const path = file.startsWith('/') ? file : `${cwd}/${file}`;
     return path.slice(0, path.lastIndexOf('/')) || '/';
 }

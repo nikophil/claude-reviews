@@ -142,9 +142,10 @@ function enter(next: { top: string; common: string } | undefined): void {
 }
 
 /** Follows the worktree of the repository a call of the main loop wrote in, or kept a cd to, as when the root moves. */
-async function moved($: EngineInterface, e: { tool: string; [argument: string]: unknown }): Promise<void> {
+async function moved($: EngineInterface, e: { tool: string; [argument: string]: unknown }, failed: boolean): Promise<void> {
     const cwd = await $.session.cwd();
-    const dir = touched(e, shell, cwd);
+    // The root, where the shell returns after a cd it does not keep.
+    const dir = touched(e, { shell, cwd, home: root!, failed });
     shell = cwd;
     const found = dir && await top($, dir);
     if (found && found.common === common) enter(found);
@@ -326,7 +327,7 @@ export const register: Register = on => {
         } finally {
             blocked.delete(loop);
         }
-        if (root !== undefined && e.agentId === undefined && result.deny === undefined) await moved($, e);
+        if (root !== undefined && e.agentId === undefined && result.deny === undefined) await moved($, e, !!result.isError);
         return result;
     });
 
