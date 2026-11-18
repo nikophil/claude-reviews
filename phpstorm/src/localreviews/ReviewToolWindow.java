@@ -394,7 +394,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             new DoubleClickListener() {
                 @Override
                 protected boolean onDoubleClick(MouseEvent event) {
-                    if (checkbox(event) == null) WriteIntentReadAction.run(() -> openSelected(service.diffView(), true));
+                    if (checkbox(event) == null) WriteIntentReadAction.run(() -> openSelected(service.diffView(), true, true));
                     return true;
                 }
             }.installOn(tree);
@@ -410,13 +410,13 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             tree.addKeyListener(new KeyAdapter() {
                 @Override
                 public void keyPressed(KeyEvent e) {
-                    if (e.getKeyCode() == KeyEvent.VK_ENTER) WriteIntentReadAction.run(() -> openSelected(service.diffView(), true));
+                    if (e.getKeyCode() == KeyEvent.VK_ENTER) WriteIntentReadAction.run(() -> openSelected(service.diffView(), true, true));
                     if (e.getKeyCode() == KeyEvent.VK_SPACE && selectedFile() != null) toggleViewed(selectedFile());
                 }
             });
             DefaultActionGroup menu = new DefaultActionGroup(
-                DumbAwareAction.create("Open", event -> openSelected(false, true)),
-                DumbAwareAction.create("Show Diff", AllIcons.Actions.Diff, event -> openSelected(true, true)),
+                DumbAwareAction.create("Open", event -> openSelected(false, true, true)),
+                DumbAwareAction.create("Show Diff", AllIcons.Actions.Diff, event -> openSelected(true, true, false)),
                 new DumbAwareAction("Resolve") {
                     @Override
                     public ActionUpdateThread getActionUpdateThread() {
@@ -468,7 +468,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             // A click, or the arrows, show the file or the thread selected, the focus kept in the tree; a double-click or Enter takes it there.
             // Bare Swing listeners: finding a file the VFS does not know yet, as one Claude just wrote, refreshes it under the write-intent lock.
             tree.addTreeSelectionListener(e -> {
-                if (!rebuilding) WriteIntentReadAction.run(() -> openSelected(service.diffView(), false));
+                if (!rebuilding) WriteIntentReadAction.run(() -> openSelected(service.diffView(), false, false));
             });
 
             service.listen(changed -> show(changed, false), toolWindow.getDisposable());
@@ -702,7 +702,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             tree.setSelectionPath(path);
             rebuilding = false;
             tree.scrollPathToVisible(path);
-            openThread(((ThreadNode) nodes.get(next).getUserObject()).thread(), diff, focus);
+            openThread(((ThreadNode) nodes.get(next).getUserObject()).thread(), diff, focus, false);
         }
 
         private void toggleViewed(JsonObject file) {
@@ -740,13 +740,13 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
 
         /**
          * Opens the selected file in the editor at its first thread, else at its first added line; a deleted file, or `diff`, in the diff.
-         * A thread opens where its code is: the editor for the new code, the diff for the old one, its own window when Outdated and `focus`.
+         * A thread opens where its code is: the editor for the new code, the diff for the old one, its own window when Outdated, or Resolved and `read`, and `focus`.
          * The focus goes there when `focus`, else stays in the tree.
          */
-        private void openSelected(boolean diff, boolean focus) {
+        private void openSelected(boolean diff, boolean focus, boolean read) {
             DefaultMutableTreeNode node = (DefaultMutableTreeNode) tree.getLastSelectedPathComponent();
             if (node != null && node.getUserObject() instanceof ThreadNode shown) {
-                openThread(shown.thread(), diff, focus);
+                openThread(shown.thread(), diff, focus, read);
                 return;
             }
             if (node == null || !(node.getUserObject() instanceof JsonObject file)) return;
@@ -759,14 +759,15 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             new OpenFileDescriptor(project, local, firstLine(file) - 1, 0).navigate(focus);
         }
 
-        private void openThread(JsonObject thread, boolean diff, boolean focus) {
+        private void openThread(JsonObject thread, boolean diff, boolean focus, boolean read) {
             JsonObject anchor = thread.getAsJsonObject("anchor");
             String path = anchor.get("path").getAsString();
-            if (!(thread.get("at") instanceof JsonObject at)) {
-                // A window of its own: not at each move of the selection.
-                if (focus) OutdatedThread.open(project, thread);
+            // A window of its own, where a Resolved thread shows unfolded, except for Show Diff: not at each move of the selection.
+            if (focus && (!(thread.get("at") instanceof JsonObject) || read && thread.get("resolved").getAsBoolean())) {
+                ThreadWindow.open(project, thread);
                 return;
             }
+            if (!(thread.get("at") instanceof JsonObject at)) return;
             // The first line for a thread on the whole file, above which it shows.
             int start = Math.max(at.get("start").getAsInt(), 1);
             boolean old = anchor.get("side").getAsString().equals("old");
