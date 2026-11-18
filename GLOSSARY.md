@@ -47,7 +47,7 @@ The code I had in front of me at the time of a Send, kept as the "Since my last 
 _Avoid_: picture, review state
 
 **Viewed**:
-Said of a file of the diff that I marked as viewed; its diff collapses.
+Said of a file of the diff that I marked as viewed; its diff collapses, and the review moves to the next file not Viewed.
 It stays Viewed as long as its content, in the displayed code, is still the one I viewed, even if the base changes.
 _Avoid_: read, reviewed
 

@@ -76,6 +76,50 @@ test('a Viewed file that the worktree does not change stays Viewed after a Refre
     await expect(page.getByText('1 / 3 viewed')).toBeVisible();
 });
 
+/** Opens a session on three changed files of 80 lines each, a.txt, b.txt and c.txt: the page is far taller than the window. */
+async function threeLongFiles(page: Page) {
+    const lines = (prefix: string) => Array.from({ length: 80 }, (_, i) => `${prefix}${i}\n`).join('');
+    const dir = repo({ 'a.txt': lines('a'), 'b.txt': lines('b'), 'c.txt': lines('c') });
+    write(dir, { 'a.txt': lines('A'), 'b.txt': lines('B'), 'c.txt': lines('C') });
+    await page.goto(`/?worktree=${encodeURIComponent(dir)}`);
+    await expect(page.locator('section[data-path] table')).toHaveCount(3);
+}
+
+const top = (page: Page, path: string) => file(page, path).evaluate(section => Math.round(section.getBoundingClientRect().top));
+
+test('checking Viewed brings the next file not Viewed to the top of the window, past the Viewed ones', async ({ page }) => {
+    await threeLongFiles(page);
+
+    await file(page, 'b.txt').getByRole('checkbox', { name: 'Viewed' }).check();
+
+    await expect(file(page, 'b.txt').locator('table')).toBeHidden();
+    await expect.poll(() => top(page, 'c.txt')).toBe(0);
+
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await file(page, 'a.txt').getByRole('checkbox', { name: 'Viewed' }).check();
+
+    await expect.poll(() => top(page, 'c.txt')).toBe(0);
+});
+
+test('unchecking Viewed leaves the page where it is, and checking the last file does not go back to the first', async ({ page }) => {
+    await threeLongFiles(page);
+    const a = file(page, 'a.txt');
+    await a.getByRole('checkbox', { name: 'Viewed' }).check();
+    await expect.poll(() => top(page, 'b.txt')).toBe(0);
+    await page.evaluate(() => window.scrollTo(0, 0));
+
+    await a.getByRole('checkbox', { name: 'Viewed' }).uncheck();
+
+    await expect(a.locator('table')).toBeVisible();
+    await expect(page.getByText('0 / 3 viewed')).toBeVisible();
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+    await file(page, 'c.txt').getByRole('checkbox', { name: 'Viewed' }).check();
+
+    await expect(page.getByText('1 / 3 viewed')).toBeVisible();
+    expect(await top(page, 'a.txt')).toBeLessThan(0);
+});
+
 /** Holds the answer to the next Viewed write until `release` is called. */
 async function holdViewed(page: Page) {
     let release!: () => void;

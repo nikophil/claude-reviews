@@ -7,6 +7,7 @@ import com.intellij.driver.model.OnDispatcher
 import com.intellij.driver.sdk.invokeAction
 import com.intellij.driver.sdk.ui.components.common.IdeaFrameUI
 import com.intellij.driver.sdk.ui.components.common.codeEditor
+import com.intellij.driver.sdk.ui.components.common.editorTabs
 import com.intellij.driver.sdk.ui.components.common.gutter
 import com.intellij.driver.sdk.ui.components.common.GutterUiComponent
 import com.intellij.driver.sdk.ui.components.common.ideFrame
@@ -176,6 +177,11 @@ class ReviewTest {
             }
         }
 
+        private fun IdeaFrameUI.editors() = xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java).list()
+
+        /** The name of the file selected in the tree of the tool window, its row's text up to the first space. */
+        private fun IdeaFrameUI.selected() = tree("//div[@class='Tree']").collectSelectedPaths().singleOrNull()?.path?.last()?.substringBefore(' ')
+
         /** Waits for the caret that `line` reads to reach `expected`, from 0. */
         private fun caretLine(expected: Int, line: () -> Int) {
             var last = -1
@@ -329,6 +335,61 @@ class ReviewTest {
 
     @Test
     @Order(9)
+    fun `Viewed in the diff unmarks the file in place, then marks it and shows in its tab the next file not viewed, selected in the tree, though Claude wrote a file since`() {
+        Files.writeString(Path.of(worktree, "next.php"), "<?php\necho 'next';\n")
+        frame {
+            val opened = editorTabs().getTabs().size
+            tree("//div[@class='Tree']").apply {
+                // The next poll reads the new file.
+                waitOneContainsText("next.php")
+                // The diff of step 7 opened before next.php, which it does not have: a diff of a.php that has it.
+                clickPath("a.php", fullMatch = false)
+            }
+            // Enter: a.php may already be the selection, which a click leaves as is.
+            keyboard { enter() }
+            repeat(50) { if (editorTabs().getTabs().size == opened) Thread.sleep(200) }
+            // a.php, Viewed at step 7, when it was the last file.
+            x("//div[@text='Viewed']").click()
+        }
+        awaitSession("a.php is no longer viewed") { it.getAsJsonObject("viewed")?.has("a.php") == false }
+        // A file Claude writes meanwhile: the diff of the session now has other files than the tab.
+        Files.writeString(Path.of(worktree, "z.php"), "<?php\n")
+        lateinit var before: List<String>
+        frame {
+            tree("//div[@class='Tree']").waitOneContainsText("z.php")
+            assert(editors().any { "echo 2;" in it.text }) { "the diff still shows a.php" }
+            before = editorTabs().getTabs().map { it.text }
+            x("//div[@text='Viewed']").click()
+        }
+        awaitSession("a.php is viewed") { it.getAsJsonObject("viewed")?.has("a.php") == true }
+        frame {
+            fun shown() = editors().any { "echo 'next';" in it.text }
+            repeat(50) { if (!shown()) Thread.sleep(200) }
+            assert(shown()) { "the diff shows next.php" }
+            // The tab of the diff is named after the file it shows.
+            val after = editorTabs().getTabs().map { it.text }
+            assert(after.size == before.size && "next.php" in after) { "the tab of the diff of a.php shows next.php, no other opens: $before, then $after" }
+            assertEquals("next.php", selected())
+        }
+    }
+
+    @Test
+    @Order(10)
+    fun `Space on a file of the tree unmarks it Viewed and stays there, then marks it and selects the next file not viewed`() {
+        frame {
+            tree("//div[@class='Tree']").clickPath("a.php", fullMatch = false)
+            keyboard { space() }
+            awaitSession("a.php is no longer viewed") { it.getAsJsonObject("viewed")?.has("a.php") == false }
+            assertEquals("a.php", selected())
+            keyboard { space() }
+            awaitSession("a.php is viewed") { it.getAsJsonObject("viewed")?.has("a.php") == true }
+            repeat(50) { if (selected() != "next.php") Thread.sleep(200) }
+            assertEquals("next.php", selected())
+        }
+    }
+
+    @Test
+    @Order(11)
     fun `the bar of the diff warns that the Claude session waits for my answer, and even in the Editor view, Next Thread goes to the thread in the diff`() {
         val warning = "//div[@class='JBLabel' and @text='Claude is waiting for your answer in its session']"
         claudeQuery = "&blocked"
@@ -351,13 +412,13 @@ class ReviewTest {
     }
 
     @Test
-    @Order(10)
+    @Order(12)
     fun `an Outdated thread opens in its own window, the thread in a scroll pane`() {
         // Line 4 changes again: the thread of step 2 no longer finds its line.
         Files.writeString(Path.of(worktree, "a.php"), "<?php\n\necho 1;\necho 4;\n")
         frame {
             tree("//div[@class='Tree']").apply {
-                // The double-click of step 4 collapsed a.php, and a collapsed file stays so.
+                // The double-click of step 7 collapsed a.php, and a collapsed file stays so.
                 expandPath("a.php", fullMatch = false)
                 waitOneContainsText("Outdated")
                 doubleClickPath("a.php", "#1", fullMatch = false)
@@ -368,7 +429,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(11)
+    @Order(13)
     fun `Resolve in the context menu of a thread of the tree resolves it`() {
         frame { tree("//div[@class='Tree']").rightClickPath("a.php", "#1", fullMatch = false) }
         driver.ui.x("//div[@class='ActionMenuItem' and @text='Resolve']").click()
@@ -376,7 +437,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(12)
+    @Order(14)
     fun `Group By › Directory lists the files under their directories, or flat once unchecked`() {
         Files.createDirectories(Path.of(worktree, "src"))
         Files.writeString(Path.of(worktree, "src/b.php"), "<?php\n")
@@ -399,7 +460,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(13)
+    @Order(15)
     fun `in the Diff view, a click on a thread of the file shown scrolls its diff there, an added file too`() {
         Files.createDirectories(Path.of(worktree, "src"))
         Files.writeString(Path.of(worktree, "src/c.php"), "<?php\n" + (1..60).joinToString("") { "// line $it\n" })
@@ -426,7 +487,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(14)
+    @Order(16)
     fun `Send in a thread adds my reply and sends the thread at once`() {
         frame {
             val thread = x("//div[@class='ThreadView' and .//div[@text='Thread #2 · Line +50']]")
@@ -440,7 +501,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(15)
+    @Order(17)
     fun `the diff folds the unchanged code, but not the lines of a thread`() {
         // Line 51 changes: lines 1 to 46 and 56 to 101 are unchanged, out of the 4 lines of context.
         Files.writeString(Path.of(worktree, "long.php"), "<?php\n" + (1..100).joinToString("") { if (it == 50) "// changed\n" else "// line $it\n" })
@@ -466,7 +527,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(16)
+    @Order(18)
     fun `a double click on a Resolved thread opens it in its own window, unfolded, where Unresolve reopens it`() {
         val id = session()["id"].asString
         post("/api/sessions/$id/threads/2/resolve", "{}")

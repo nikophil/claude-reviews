@@ -292,7 +292,9 @@ public final class ReviewDiffAction extends DumbAwareAction {
             @Override
             public void setSelected(AnActionEvent event, boolean viewed) {
                 Review review = review(event);
-                if (review != null) markViewed(project, id, review.path(), viewed, ReviewService.get(project)::refresh);
+                if (review == null) return;
+                markViewed(project, id, review.path(), viewed, ReviewService.get(project)::refresh);
+                if (viewed) ReviewToolWindow.viewedNext(project, review.path());
             }
         };
     }

@@ -221,11 +221,13 @@ async function chooseBase() {
     await refresh();
 }
 
-/** Marks `path` Viewed, or no longer, on the tree of the working tree. */
+/** Marks `path` Viewed, or no longer, on the tree of the working tree; once Viewed, the diff of the next file not Viewed opens, as in a pull request. */
 async function markViewed(/** @type {string} */ path, /** @type {boolean} */ viewed) {
     const tree = await shownTree();
     await call(`/api/sessions/${state.session.id}/viewed`, { path, tree, viewed });
     await refresh();
+    const next = viewed && state.session && review.nextNotViewed(state.files, state.session, path);
+    if (next) await diff.open(next);
 }
 
 /**

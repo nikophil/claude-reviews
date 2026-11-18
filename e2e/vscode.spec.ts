@@ -152,7 +152,7 @@ test('a new thread opens from the + of the gutter, its first message Pending', a
     expect(thread.messages).toMatchObject([{ author: 'me', body: 'Why three?', date: null }]);
 });
 
-test('the checkbox of a file marks it Viewed, until it is unchecked', async ({ page }) => {
+test('the checkbox of a file marks it Viewed and opens the diff of the next file, until it is unchecked, which opens nothing', async ({ page }) => {
     const { dir, session, listen } = await worktree(page);
     await listen();
     const view = await open(page, dir);
@@ -164,10 +164,12 @@ test('the checkbox of a file marks it Viewed, until it is unchecked', async ({ p
         expect(Object.keys((await session()).viewed)).toEqual(['a.txt']);
     }).toPass();
     await expect(view.getByText('2 files · 1 viewed')).toBeVisible();
+    await expect(page.getByRole('tab', { name: /b\.ts \([0-9a-f]{7} ↔ Working tree\)/ })).toBeVisible();
     await expect(async () => {
         await checkbox.uncheck({ timeout: 1000 });
         expect(Object.keys((await session()).viewed)).toEqual([]);
     }).toPass();
+    await expect(page.getByRole('tab', { name: /a\.txt \(/ })).toHaveCount(0);
 });
 
 test('an Outdated thread opens on the diff excerpt it was opened on, with Next Thread in its bar', async ({ page }) => {
@@ -299,7 +301,7 @@ test('a file opens in its diff against the base, with the threads of both sides'
     await expect(page.locator('.review-widget strong', { hasText: /^two$/ })).toBeVisible();
 });
 
-test('the toolbar of the diff marks its file Viewed, and unmarks it', async ({ page }) => {
+test('the toolbar of the diff marks its file Viewed and shows the diff of the next file, and unmarks it in place', async ({ page }) => {
     const { dir, session } = await worktree(page);
     const view = await open(page, dir);
     await view.getByRole('treeitem', { name: /^a\.txt/ }).click();
@@ -308,8 +310,12 @@ test('the toolbar of the diff marks its file Viewed, and unmarks it', async ({ p
 
     await expect.poll(async () => Object.keys((await session()).viewed)).toEqual(['a.txt']);
     await expect(view.getByRole('treeitem', { name: /^a\.txt/ }).getByRole('checkbox')).toBeChecked();
+    await expect(page.getByRole('tab', { name: /b\.ts \([0-9a-f]{7} ↔ Working tree\)/ })).toBeVisible();
+    await view.getByRole('treeitem', { name: /^a\.txt/ }).click();
     await page.locator('.editor-actions').getByRole('button', { name: 'Viewed' }).click();
     await expect.poll(async () => Object.keys((await session()).viewed)).toEqual([]);
+    await expect(page.locator('.editor-actions').getByRole('button', { name: 'Mark as Viewed' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /a\.txt \([0-9a-f]{7} ↔ Working tree\)/ })).toBeVisible();
 });
 
 test('the toolbar of the diff warns that the Claude session waits for my answer, until it no longer does', async ({ page }) => {

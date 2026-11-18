@@ -187,16 +187,28 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
 
         @Override
         public void actionPerformed(AnActionEvent event) {
-            if (event.getProject() == null) return;
-            ToolWindow window = ToolWindowManager.getInstance(event.getProject()).getToolWindow("Claude Reviews");
-            // The content of a tool window never shown is made here.
-            Content content = window == null ? null : window.getContentManager().getContent(0);
+            Panel panel = event.getProject() == null ? null : panel(event.getProject());
+            if (panel == null) return;
             // Where it was clicked or pressed: a diff, an editor, else the view of the tool window.
             Editor editor = event.getData(CommonDataKeys.EDITOR);
             boolean diff = event.getData(DiffDataKeys.DIFF_REQUEST) != null
                 || (editor == null || editor.getEditorKind() != EditorKind.MAIN_EDITOR) && ReviewService.get(event.getProject()).diffView();
-            if (content != null && content.getComponent() instanceof Panel panel) panel.step(forward, diff);
+            panel.step(forward, diff);
         }
+    }
+
+    /** The panel of the tool window of `project`, null without one. */
+    private static Panel panel(Project project) {
+        ToolWindow window = ToolWindowManager.getInstance(project).getToolWindow("Claude Reviews");
+        // The content of a tool window never shown is made here.
+        Content content = window == null ? null : window.getContentManager().getContent(0);
+        return content != null && content.getComponent() instanceof Panel panel ? panel : null;
+    }
+
+    /** Once `path` is marked Viewed in the bar of the diff: the diff shows the next file not Viewed of the tree, which selects it. */
+    static void viewedNext(Project project, String path) {
+        Panel panel = panel(project);
+        if (panel != null) panel.viewedNext(path, true);
     }
 
     /** « Previous Thread »: as Next Thread, backward. */
@@ -717,7 +729,33 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
 
         private void toggleViewed(JsonObject file) {
             String path = file.get("path").getAsString();
-            WriteIntentReadAction.run(() -> ReviewDiffAction.markViewed(project, state.id(), path, !ReviewService.viewed(state.session(), path), service::refresh));
+            boolean viewed = !ReviewService.viewed(state.session(), path);
+            WriteIntentReadAction.run(() -> ReviewDiffAction.markViewed(project, state.id(), path, viewed, service::refresh));
+            if (viewed) viewedNext(path, false);
+        }
+
+        /**
+         * Once `path` is marked Viewed, as in a pull request: selects the next file of the tree not Viewed, none after the last one, which opens as a click opens it;
+         * `inDiff`, from the bar of the diff, shows it in the diff whatever the view, a binary file left out as the diff leaves it out.
+         */
+        void viewedNext(String path, boolean inDiff) {
+            if (state != service.state()) show(service.state(), false);
+            boolean after = false;
+            for (Enumeration<TreeNode> all = ((DefaultMutableTreeNode) tree.getModel().getRoot()).preorderEnumeration(); all.hasMoreElements(); ) {
+                DefaultMutableTreeNode node = (DefaultMutableTreeNode) all.nextElement();
+                if (!(node.getUserObject() instanceof JsonObject file) || !checkable(file)) continue;
+                String next = file.get("path").getAsString();
+                if (next.equals(path)) after = true;
+                else if (after && !ReviewService.viewed(state.session(), next) && !(inDiff && file.get("binary").getAsBoolean())) {
+                    TreePath selection = new TreePath(node.getPath());
+                    rebuilding = inDiff;
+                    tree.setSelectionPath(selection);
+                    rebuilding = false;
+                    tree.scrollPathToVisible(selection);
+                    if (inDiff) ReviewDiffAction.open(project, next, Side.RIGHT, -1, true);
+                    return;
+                }
+            }
         }
 
         /** A file of the diff: a file that only threads name has nothing to view. */

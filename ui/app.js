@@ -675,6 +675,10 @@ function FileDiff({ id, file, viewed, threads, review }) {
                             onChange=${async event => {
                                 const value = event.target.checked;
                                 mark(value);
+                                // As on GitHub, the next file not Viewed comes to the top once this one folds; after the last one, the page stays.
+                                let next = value && event.target.closest('section').nextElementSibling;
+                                while (next && !next.querySelector('.file-viewed input:not(:checked)')) next = next.nextElementSibling;
+                                if (next) requestAnimationFrame(() => next.scrollIntoView());
                                 if (!await act('/viewed', { path: file.path, tree: diff.tree, viewed: value })) mark(!value);
                             }} />
                         Viewed

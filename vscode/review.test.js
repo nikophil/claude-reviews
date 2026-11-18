@@ -102,6 +102,15 @@ test('a file is Viewed when the session placed on the code shown keeps it in vie
     assert.equal(review.viewed({}, 'a.txt'), false);
 });
 
+test('the file after the one I mark Viewed is the next one of the tree not Viewed, none after the last one', () => {
+    // In the tree: src/a.ts, src/b.ts, README.md, z.md.
+    const files = [{ path: 'src/a.ts', status: 'modified' }, { path: 'README.md', status: 'added' }, { path: 'src/b.ts', status: 'deleted' }, { path: 'z.md', status: 'added' }];
+    const session = { viewed: { 'src/a.ts': 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391', 'src/b.ts': 'deleted' } };
+    assert.equal(review.nextNotViewed(files, session, 'src/a.ts'), 'README.md');
+    assert.equal(review.nextNotViewed(files, session, 'README.md'), 'z.md');
+    assert.equal(review.nextNotViewed(files, session, 'z.md'), undefined);
+});
+
 test('the bases come with a separator before each group, the one greyed until a Send says so, the chosen one marked', () => {
     const bases = [
         { ref: 'HEAD', name: 'Uncommitted changes' },
