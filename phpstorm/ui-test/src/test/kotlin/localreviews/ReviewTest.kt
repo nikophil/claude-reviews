@@ -3,6 +3,7 @@ package localreviews
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.intellij.driver.client.Driver
+import com.intellij.driver.model.OnDispatcher
 import com.intellij.driver.sdk.invokeAction
 import com.intellij.driver.sdk.ui.components.common.IdeaFrameUI
 import com.intellij.driver.sdk.ui.components.common.codeEditor
@@ -363,6 +364,32 @@ class ReviewTest {
                 Thread.sleep(200)
             }
             assertEquals(49, line, "the caret of the diff on the line of the thread")
+        }
+    }
+
+    @Test
+    @Order(12)
+    fun `the diff folds the unchanged code, but not the lines of a thread`() {
+        // Line 51 changes: lines 1 to 46 and 56 to 101 are unchanged, out of the 4 lines of context.
+        Files.writeString(Path.of(worktree, "long.php"), "<?php\n" + (1..100).joinToString("") { if (it == 50) "// changed\n" else "// line $it\n" })
+        post("/api/sessions/${session()["id"].asString}/threads", """{ "author": "claude", "path": "long.php", "side": "new", "start": 11, "end": 11, "body": "Unchanged" }""")
+        frame {
+            tree("//div[@class='Tree']").apply {
+                waitOneContainsText("Line +11")
+                clickPath("long.php", fullMatch = false)
+            }
+            fun diff() = xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java).list().singleOrNull { "// changed" in it.text }
+            repeat(50) { if (diff() == null) Thread.sleep(200) }
+            val editor = diff()!!.editor
+            // The visual line of a line from 1, which the EDT computes: the lines of a collapsed fold share one.
+            fun visual(line: Int) = driver.withContext(OnDispatcher.EDT) { editor.offsetToVisualPosition(editor.getDocument().getLineStartOffset(line - 1)).getLine() }
+            var shown = ""
+            repeat(50) {
+                shown = "lines 56 to 101 on ${visual(101) - visual(56) + 1} visual lines, lines 10 to 12 on ${visual(12) - visual(10) + 1}"
+                if (visual(101) - visual(56) < 45 && visual(12) - visual(10) == 2) return@frame
+                Thread.sleep(200)
+            }
+            throw AssertionError("the unchanged code folds, but not the line of the thread: $shown")
         }
     }
 }

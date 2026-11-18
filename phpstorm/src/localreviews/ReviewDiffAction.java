@@ -26,6 +26,9 @@ import com.intellij.diff.contents.DiffContent;
 import com.intellij.diff.requests.DiffRequest;
 import com.intellij.diff.requests.SimpleDiffRequest;
 import com.intellij.diff.tools.util.DiffDataKeys;
+import com.intellij.diff.impl.DiffSettingsHolder;
+import com.intellij.diff.tools.util.base.TextDiffSettingsHolder;
+import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.diff.util.DiffUserDataKeys;
 import com.intellij.diff.util.Side;
 import com.intellij.openapi.actionSystem.ActionManager;
@@ -50,6 +53,7 @@ import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.UserDataHolder;
 import com.intellij.openapi.vfs.LocalFileSystem;
+import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.ui.AnimatedIcon;
 import com.intellij.ui.ClientProperty;
@@ -155,6 +159,8 @@ public final class ReviewDiffAction extends DumbAwareAction {
                 if (last != null && last.session().equals(id) && last.base().equals(base) && last.paths().equals(paths) && reuse(project, last, index, scroll, focus)) return;
                 targets.get(index).line = scroll;
                 SimpleDiffRequestChain chain = SimpleDiffRequestChain.fromProducers(files, index);
+                foldUnchanged();
+                chain.putUserData(DiffUserDataKeys.PLACE, PLACE);
                 ActionManager actions = ActionManager.getInstance();
                 chain.putUserData(DiffUserDataKeys.CONTEXT_ACTIONS, List.of(
                     actions.getAction("localreviews.PreviousThread"), actions.getAction("localreviews.NextThread"), Separator.getInstance(),
@@ -164,6 +170,34 @@ public final class ReviewDiffAction extends DumbAwareAction {
                 DiffEditorTabFilesManager.getInstance(project).showDiffFile(file, focus);
             }, project.getDisposed());
         });
+    }
+
+    /** The place of the diff of the review: the IDE keeps its settings apart from those of its other diffs. */
+    private static final String PLACE = "localreviews.Review";
+
+    /**
+     * Folds the unchanged code of the diff of the review, as the Commit view does, once only:
+     * « Collapse Unchanged Fragments » in the settings of the diff then keeps my choice.
+     * The other settings of the place start from those of the default place, which the diff of the review had until then.
+     */
+    private static void foldUnchanged() {
+        PropertiesComponent properties = PropertiesComponent.getInstance();
+        if (properties.isTrueValue(PLACE + ".folded")) return;
+        TextDiffSettingsHolder.TextDiffSettings from = TextDiffSettingsHolder.TextDiffSettings.getSettings(null);
+        TextDiffSettingsHolder.TextDiffSettings to = TextDiffSettingsHolder.TextDiffSettings.getSettings(PLACE);
+        to.setHighlightPolicy(from.getHighlightPolicy());
+        to.setIgnorePolicy(from.getIgnorePolicy());
+        to.setShowWhitespaces(from.isShowWhitespaces());
+        to.setShowLineNumbers(from.isShowLineNumbers());
+        to.setShowIndentLines(from.isShowIndentLines());
+        to.setUseSoftWraps(from.isUseSoftWraps());
+        to.setHighlightingLevel(from.getHighlightingLevel());
+        to.setReadOnlyLock(from.isReadOnlyLock());
+        to.setBreadcrumbsPlacement(from.getBreadcrumbsPlacement());
+        to.setContextRange(from.getContextRange());
+        to.setExpandByDefault(false);
+        DiffSettingsHolder.DiffSettings.getSettings(PLACE).setDiffToolsOrder(DiffSettingsHolder.DiffSettings.getSettings(null).getDiffToolsOrder());
+        properties.setValue(PLACE + ".folded", true);
     }
 
     /** Shows the file `index` in the open tab of `opened`, scrolled to `scroll`; false when the tab is closed. */
@@ -217,6 +251,8 @@ public final class ReviewDiffAction extends DumbAwareAction {
                     }
                 }
                 VirtualFile file = status.equals("deleted") ? null : LocalFileSystem.getInstance().refreshAndFindFileByPath(review.root() + "/" + review.path());
+                // A file Claude just rewrote: its document would show its old text, a diff without change, until the IDE notices.
+                if (file != null) VfsUtil.markDirtyAndRefresh(false, false, false, file);
                 DiffContent right = file == null ? contents.createEmpty() : ReadAction.computeBlocking(() -> contents.create(project, file));
                 SimpleDiffRequest request = new SimpleDiffRequest(review.path(), left, right, review.base().substring(0, 7), "Working tree");
                 // The base is read only, the working tree is the file itself.

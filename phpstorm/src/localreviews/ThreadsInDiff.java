@@ -58,6 +58,12 @@ public final class ThreadsInDiff extends DiffExtension {
             poll.editors = List.of(left, right);
             right.putUserData(Threads.KEY, List.of(poll.threads.get(0)));
             left.putUserData(Threads.KEY, List.of(poll.threads.get(1)));
+            twoside.addListener(new DiffViewerListener() {
+                @Override
+                protected void onAfterRediff() {
+                    poll.unfold();
+                }
+            });
         } else if (viewer instanceof UnifiedDiffViewer unified) {
             Editor editor = unified.getEditor();
             poll.threads = List.of(
@@ -175,6 +181,15 @@ public final class ThreadsInDiff extends DiffExtension {
                 side.collapsed(collapsed);
                 side.show(shown, all);
             }
+            unfold();
+        }
+
+        /** Expands the folds of unchanged code over the threads, which each rediff folds again. */
+        void unfold() {
+            for (Editor editor : editors) {
+                if (editor.isDisposed()) return;
+            }
+            threads.forEach(Threads::unfold);
         }
 
         // Synchronized: a refresh after a write may run while the scheduled poll does.
