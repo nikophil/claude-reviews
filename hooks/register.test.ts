@@ -9,7 +9,7 @@ import { after, before, test } from 'node:test';
 import { dataHome, removeRepos, repo, write } from '../server/fixture.ts';
 import { notification, start } from '../server/main.ts';
 import { register } from './register.ts';
-import { prompt } from './watch.ts';
+import { forkPrompt, prompt } from './watch.ts';
 
 dataHome();
 const ROOT = join(import.meta.dirname, '..');
@@ -54,9 +54,10 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
     register(on as any, {} as any);
     const seen = {
         asked: [] as string[], fetched: [] as string[], submitted: [] as string[], appended: 0, run: [] as string[][], cwd: [] as (string | undefined)[], log: [] as string[], polls: [] as Function[], options: [] as string[][],
-        status: [] as (string | undefined)[], tools: [] as { name: string; description: string; inputSchema: any }[],
+        status: [] as (string | undefined)[], spawned: [] as any[], tools: [] as { name: string; description: string; inputSchema: any }[],
     };
     let answer: object = {};
+    let spawned: object = { model: 'opus', agentId: 'fork-1' };
     let root = cwd;
     const $ = {
         plugin: { name: 'local-reviews', root: ROOT },
@@ -89,6 +90,7 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
             after: (ms: number, fn: () => void) => { const timer = setTimeout(fn, ms); return { cancel: () => clearTimeout(timer) }; },
             sleep: () => sleep(),
         },
+        agent: { spawn: async (input: object) => (seen.spawned.push(input), spawned) },
         prompt: { submit: async ({ text }: { text: string }) => (seen.submitted.push(text), { text, ...await answer }) },
         session: { append: async () => { seen.appended++; }, root: async () => root },
         tool: { register: async (tool: { name: string; description: string; inputSchema: any }) => (seen.tools.push(tool), { tool: `mcp__local-reviews__${tool.name}` }) },
@@ -130,6 +132,8 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
         engine,
         /** How the engine answers the next prompts: entered, or `{ drop }`, or once a promise settles. */
         answer: (value: object) => { answer = value; },
+        /** How the engine answers the next spawns: `{ model, agentId }`, or `{ deny }`. */
+        spawn: (value: object) => { spawned = value; },
         /** Whether every request to the server fails with a 500. */
         down: (value: boolean) => { down = value; },
         /** Moves the session's root, as /cd or EnterWorktree do. */
@@ -158,11 +162,10 @@ async function send(id: string, body: string): Promise<void> {
     await api('POST', `/api/sessions/${id}/send`, { tree: shown.tree });
 }
 
-test('a Send seen during a turn calls $.prompt.submit with the text of #12, without $.session.append', async () => {
+test('a Send seen while Claude is idle calls $.prompt.submit with the text of #12, without $.session.append', async () => {
     const { dir, id } = await session([]);
     const claude = await mod(dir);
     await claude.poll();
-    await claude.fire('turn.start', { text: 'work', turnId: 't1' });
 
     await send(id, 'And this?');
     await claude.poll();
@@ -170,6 +173,49 @@ test('a Send seen during a turn calls $.prompt.submit with the text of #12, with
     assert.deepEqual(claude.seen.submitted, [prompt(1)]);
     assert.equal(prompt(1), 'claude-reviews: 1 thread is waiting for you. Read them with list_open_threads, reply in each with reply_to_thread, and change the code when a thread asks for it.');
     assert.equal(claude.seen.appended, 0);
+});
+
+test('a Send seen while Claude works on a turn of its own spawns one fork in the background, which answers instead of a prompt or a relaunch, and calls turn-complete at its end', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir);
+    const calls = () => claude.seen.fetched.filter(call => call === `POST /api/sessions/${id}/turn-complete`).length;
+    await claude.poll();
+    await claude.fire('turn.start', { text: 'work', turnId: 't1' });
+
+    await send(id, 'And this?');
+    await claude.poll();
+    await claude.poll();
+
+    assert.deepEqual(claude.seen.spawned, [{ subagentType: 'fork', description: 'Answer the claude-reviews threads', prompt: forkPrompt(1) }]);
+    assert.deepEqual(claude.seen.submitted, []);
+    assert.equal(claude.seen.status.at(-1), 'claude-reviews · 1 thread waiting for Claude · a fork answers in the background');
+    assert.match(forkPrompt(1), /^claude-reviews: 1 thread is waiting for you\./);
+    assert.match(forkPrompt(1), /main conversation keeps working in this same worktree/);
+
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
+    await claude.settle();
+    assert.deepEqual(claude.seen.submitted, [], 'the main loop is not relaunched for the threads of the fork');
+    assert.equal(calls(), 0);
+
+    await claude.fire('tool.call', { tool: 'mcp__local-reviews__reply_to_thread', id: 1, body: 'Because', agentId: 'fork-1' });
+    await claude.fire('turn.complete', { reason: 'answer', answer: 'Done', turnId: 'f', agentId: 'fork-1' });
+    await claude.settle();
+    assert.equal(calls(), 1);
+    assert.deepEqual(notified.at(-1), notification('Claude replied in 1 thread'));
+});
+
+test('a fork the engine denies leaves the Send to a prompt, as when Claude is idle', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir);
+    claude.spawn({ deny: 'no background tasks' });
+    await claude.poll();
+    await claude.fire('turn.start', { text: 'work', turnId: 't1' });
+
+    await send(id, 'And this?');
+    await claude.poll();
+
+    assert.equal(claude.seen.spawned.length, 1);
+    assert.deepEqual(claude.seen.submitted, [prompt(1)]);
 });
 
 test('the poll of the mod tells the server that a Claude session runs in the worktree', async () => {

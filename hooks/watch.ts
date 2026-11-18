@@ -14,12 +14,16 @@ export type Watch = {
     dropped: boolean;
     /** The session whose wake or relaunch opened a turn: the end of the last turn it owes notifies it. */
     notify: string | null;
+    /** Whether the main loop is in a turn. */
+    busy: boolean;
+    /** The fork answering a Send in the background while Claude works, with its agent once spawned: one at a time. */
+    forking: { owed: 'wake' | 'relaunch'; session: string; sends: number; agent?: string } | null;
 };
 
 /** The open session of the worktree as the mod sees it, or null without one. */
 export type Seen = { id: string; sends: number; waiting: number } | null;
 
-export const start: Watch = { sessions: {}, waiting: 0, owed: null, submitting: null, dropped: false, notify: null };
+export const start: Watch = { sessions: {}, waiting: 0, owed: null, submitting: null, dropped: false, notify: null, busy: false, forking: null };
 
 /** The text of a wake, a relaunch and the first message alike. */
 export function prompt(waiting: number): string {
@@ -27,11 +31,18 @@ export function prompt(waiting: number): string {
     return `claude-reviews: ${threads}. Read them with list_open_threads, reply in each with reply_to_thread, and change the code when a thread asks for it.`;
 }
 
+/** The prompt of a fork, which answers while the main conversation works: it must neither take over its task nor collide with its edits. */
+export function forkPrompt(waiting: number): string {
+    return `${prompt(waiting)} You are a fork answering them in the background: the main conversation keeps working in this same worktree at the same time. `
+        + 'Do not go on with its task, and do not edit the files it is working on: when a thread asks for a change there, say so in the thread instead.';
+}
+
 /** The status line: the threads waiting for Claude, and a wake a drop holds; undefined when none waits. */
 export function status(watch: Watch): string | undefined {
     if (!watch.waiting) return undefined;
     const threads = watch.waiting > 1 ? `${watch.waiting} threads` : '1 thread';
-    return `claude-reviews · ${threads} waiting for Claude${watch.dropped && watch.owed ? ' · wake held until the next prompt' : ''}`;
+    const held = watch.forking ? ' · a fork answers in the background' : watch.dropped && watch.owed ? ' · wake held until the next prompt' : '';
+    return `claude-reviews · ${threads} waiting for Claude${held}`;
 }
 
 /** A look at the session: a new Send wakes Claude if threads wait for him; nothing waiting, nothing is owed. */
@@ -55,7 +66,31 @@ export function turnEnded(watch: Watch, seen: Seen): Watch {
 
 /** Whether a prompt is to be submitted now. */
 export function due(watch: Watch): boolean {
-    return watch.owed !== null && !watch.submitting && !watch.dropped;
+    return watch.owed !== null && !watch.submitting && !watch.forking && !watch.dropped;
+}
+
+/** Whether the due prompt goes to a fork: Claude works on a turn of its own, which a prompt would wait for; a turn a wake or relaunch opened answers threads already. */
+export function forks(watch: Watch): boolean {
+    return watch.busy && !watch.notify;
+}
+
+/** The due prompt is going to a fork, for the Send of the session seen last. */
+export function forking(watch: Watch): Watch {
+    const session = watch.session!;
+    return { ...watch, owed: null, forking: { owed: watch.owed!, session, sends: watch.sessions[session].sends } };
+}
+
+/** The fork started as `agent`, and spends the relaunch of its Send; denied, the prompt it took is owed again, to submit instead. */
+export function forked(watch: Watch, agent?: string): Watch {
+    const fork = watch.forking!;
+    if (!agent) return { ...watch, forking: null, owed: watch.owed ?? fork.owed };
+    const known = watch.sessions[fork.session];
+    return { ...watch, forking: { ...fork, agent }, sessions: { ...watch.sessions, [fork.session]: { ...known, relaunched: fork.sends } } };
+}
+
+/** The end of the fork: the session to notify, if it answered and no prompt is owed after it. */
+export function forkEnded(watch: Watch, answered: boolean): { watch: Watch; session: string | null } {
+    return { watch: { ...watch, forking: null }, session: answered && !watch.owed ? watch.forking!.session : null };
 }
 
 /** The due prompt is being submitted, for the Send of the session seen last. */
@@ -79,6 +114,16 @@ export function submitted(watch: Watch, dropped: boolean): Watch {
  */
 export function notified(watch: Watch): { watch: Watch; session: string | null } {
     return { watch: { ...watch, notify: null }, session: watch.owed ? null : watch.notify };
+}
+
+/** A turn of the main loop starts: a dropped prompt may be submitted again, to a fork. */
+export function turnStarted(watch: Watch): Watch {
+    return { ...resumed(watch), busy: true };
+}
+
+/** A turn of the main loop ends, whatever its reason. */
+export function idle(watch: Watch): Watch {
+    return { ...watch, busy: false };
 }
 
 /** A prompt or a turn starts: a dropped prompt may be submitted again. */

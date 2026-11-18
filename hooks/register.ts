@@ -1,5 +1,5 @@
 import type { EngineInterface, Register } from 'claude-code';
-import { due, listeners, look, notified, prompt, resumed, sending, start, status, submitted, turnEnded, type Seen, type Watch } from './watch.ts';
+import { due, forked, forkEnded, forking, forkPrompt, forks, idle, listeners, look, notified, prompt, resumed, sending, start, status, submitted, turnEnded, turnStarted, type Seen, type Watch } from './watch.ts';
 
 type Session = { id: string; sends: number; reanchoredOn?: { base: string; tree: string }; threads: { id: number; status: string | null; anchor: any; at?: { start: number; end: number } | null; messages: { author: string; body: string; date: string | null }[] }[] };
 
@@ -159,12 +159,33 @@ function seen(open: Session | null): Seen {
 function apply($: EngineInterface, next: Watch): void {
     watch = next;
     if (!due(watch)) return;
+    if (forks(watch)) fork($);
+    else submit($);
+}
+
+function submit($: EngineInterface): void {
     watch = sending(watch);
     const sent = watch.submitting;
     // A watch started afresh for another worktree meanwhile is not this prompt's.
     const settled = (dropped: boolean) => { if (watch.submitting === sent) apply($, submitted(watch, dropped)); };
     // Never awaited: it resolves only once the session is idle and the prompt opened its turn.
     $.prompt.submit({ text: prompt(watch.waiting) }).then(result => settled(result.drop !== undefined), () => settled(true));
+}
+
+/** Answers in a fork of the Claude session, in the background: a prompt would wait for the end of the turn Claude works on. */
+function fork($: EngineInterface): void {
+    watch = forking(watch);
+    const started = watch.forking;
+    const spawned = (result: { agentId?: string; deny?: string }) => {
+        // A watch started afresh for another worktree meanwhile is not this fork's.
+        if (watch.forking !== started) return;
+        watch = forked(watch, result.agentId);
+        if (result.agentId) return;
+        $.ui.log(`claude-reviews: no fork to answer the threads (${result.deny}), they wait for the end of the turn`);
+        if (due(watch)) submit($);
+    };
+    $.agent.spawn({ subagentType: 'fork', description: 'Answer the claude-reviews threads', prompt: forkPrompt(watch.waiting) })
+        .then(spawned, (error: Error) => spawned({ deny: error.message }));
 }
 
 /** The call, or a rejection once `ms` passed without an answer: a port may accept and never answer. */
@@ -337,12 +358,22 @@ export const register: Register = on => {
     });
 
     on('turn.start', ($, e, next) => {
-        if (worktree && e.agentId === undefined) apply($, resumed(watch));
+        if (worktree && e.agentId === undefined) apply($, turnStarted(watch));
         return next(e);
     });
 
     on('turn.complete', async ($, e, next) => {
-        if (!worktree || e.agentId !== undefined) return next(e);
+        if (!worktree) return next(e);
+        if (e.agentId !== undefined) {
+            if (e.agentId === watch.forking?.agent) {
+                const done = forkEnded(watch, e.reason === 'answer');
+                // A Send held while the fork ran goes to a fork again, or to a prompt once Claude is idle.
+                apply($, done.watch);
+                if (done.session) void api($, 'POST', `/api/sessions/${done.session}/turn-complete`, {});
+            }
+            return next(e);
+        }
+        watch = idle(watch);
         // A turn interrupted (Esc) or ended on an error is not relaunched.
         if (e.reason === 'answer') {
             const found = await find($);

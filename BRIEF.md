@@ -55,12 +55,13 @@ Structural decisions: [docs/adr/](docs/adr/).
    - it links the Claude session to its Session by the worktree's path (`git rev-parse --show-toplevel` on the `cwd`);
    - without an open session, `open_thread` opens one; a closed session refuses Claude's messages, and the mod then stops relaunching Claude;
    - it polls the server, and on a Send injects "N threads are waiting for you" with `$.prompt.submit`;
+     while Claude works on a turn of its own, a fork of the Claude session answers in the background instead, warned that the main conversation keeps working in the worktree;
    - it never awaits `$.prompt.submit` in a hook, because the call resolves only once the session is idle, and a hook has only 10 s;
      a `{ drop }` (after an Esc, as long as nobody has typed) leaves the threads waiting, and the mod retries at the next prompt or turn start;
    - if Claude ends its turn while threads are still waiting for it, the mod relaunches it only once per Send:
      the relaunch counts when its prompt opens a turn, a `{ drop }` does not count, and a new Send allows another one;
    - when a Claude session starts in a worktree where threads are waiting, it adds "N threads are waiting for you" to the first message.
-5. **Notification**: at the end of Claude's turn that follows a Send, or of its relaunch if there is one, `notify-send` announces "Claude replied in N threads",
+5. **Notification**: at the end of Claude's turn that follows a Send, of its relaunch if there is one, or of the fork that answered it, `notify-send` announces "Claude replied in N threads",
    followed by "M still waiting" if any remain; Claude may have changed code after its last reply, hence the end of the turn rather than the last reply.
    The mod sees the end of the turn and calls the server, which sends the notification (`notify-send` or `osascript`).
 6. **Stack**: Node 25, TypeScript run without a build (type stripping), `node:http`, no npm dependency.
