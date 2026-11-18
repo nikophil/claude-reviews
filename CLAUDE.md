@@ -160,6 +160,9 @@ The server serves the UI and a JSON API, for the UI and the mod.
 
 - On `session.start`, the mod links the Claude session to the worktree through `git rev-parse --show-toplevel` on the `cwd`, registers its tools, then starts the server.
 - It then follows `$.session.root()`, which `/cd` and EnterWorktree move: another worktree starts again from a fresh state, like a Claude session that starts there.
+- It follows the same way the last worktree of the repository (same `--git-common-dir`) that the main loop touched:
+  the folder of the file of an Edit, a Write or a NotebookEdit neither refused nor failed, or the directory of the shell after a Bash call that changed it, a `cd` the shell kept;
+  `cd <dir> && …`, which the shell does not keep outside the working directories, or after which it goes back to the root, a subagent's call, a file of another repository, and any call while a fork answers leave the review where it is.
 - It finds the server through `<data>/endpoint`, from which it reads the port and the token; without a file, with a corrupt file, if another account listens on its port, or if the server it names does not answer, it starts one.
 - A call that gets no answer reads the `endpoint` again: when it names another server, which a newer mod of another Claude session started, the mod adopts it and makes the call once more.
 - It runs `node <plugin root>/server/main.ts` detached by `nohup`, under `umask 077`, from the root of the plugin, its output in `<data>/server.log`;

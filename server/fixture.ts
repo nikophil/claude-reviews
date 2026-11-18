@@ -31,6 +31,14 @@ export function repo(files: Record<string, string | Buffer>): string {
     return dir;
 }
 
+/** A worktree of the repository `dir`, on a branch of its own, removed with the repositories. */
+export function worktree(dir: string): string {
+    const parent = mkdtempSync(join(tmpdir(), 'claude-reviews-'));
+    repos.push(parent);
+    git(dir, 'worktree', 'add', '-q', '-b', `wt-${repos.length}`, join(parent, 'wt'));
+    return join(parent, 'wt');
+}
+
 /** Makes the worktree at `dir` disappear, as `git worktree remove` would, by moving it next to itself, removed with the repositories. */
 export function vanish(dir: string): void {
     renameSync(dir, `${dir}-gone`);

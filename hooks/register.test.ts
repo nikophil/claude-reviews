@@ -6,7 +6,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import { dataHome, removeRepos, repo, write } from '../server/fixture.ts';
+import { dataHome, removeRepos, repo, worktree, write } from '../server/fixture.ts';
 import { notification, start } from '../server/main.ts';
 import { register } from './register.ts';
 import { forkPrompt, prompt } from './watch.ts';
@@ -59,6 +59,7 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
     let answer: object = {};
     let spawned: object = { model: 'opus', agentId: 'fork-1' };
     let root = cwd;
+    let shell = cwd;
     const $ = {
         plugin: { name: 'local-reviews', root: ROOT },
         // A run of the tests over SSH must not change what the mod does.
@@ -92,7 +93,7 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
         },
         agent: { spawn: async (input: object) => (seen.spawned.push(input), spawned) },
         prompt: { submit: async ({ text }: { text: string }) => (seen.submitted.push(text), { text, ...await answer }) },
-        session: { append: async () => { seen.appended++; }, root: async () => root },
+        session: { append: async () => { seen.appended++; }, root: async () => root, cwd: async () => shell },
         tool: { register: async (tool: { name: string; description: string; inputSchema: any }) => (seen.tools.push(tool), { tool: `mcp__local-reviews__${tool.name}` }) },
         command: { register: async ({ name }: { name: string }) => ({ command: name }) },
         ui: {
@@ -138,6 +139,8 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
         down: (value: boolean) => { down = value; },
         /** Moves the session's root, as /cd or EnterWorktree do. */
         move: (dir: string) => { root = dir; },
+        /** Moves the shell's directory, as a cd the shell keeps does. */
+        cd: (dir: string) => { shell = dir; },
         /** What `cat /proc/net/tcp…` prints from now on: another account may take a port. */
         hold: (text: string) => { proc = text; },
         poll: async () => { for (const poll of seen.polls) await poll(); await settle(); },
@@ -145,9 +148,8 @@ async function mod(cwd: string, { serverPort = port as number | string, launcher
     };
 }
 
-/** A worktree with an open session, and a thread Waiting for Claude per message of mine in `waiting`. */
-async function session(waiting: string[] = ['Why?']): Promise<{ dir: string; id: string }> {
-    const dir = repo({ 'a.txt': 'one\ntwo\nthree\n' });
+/** A worktree, a repository of its own unless given, with an open session, and a thread Waiting for Claude per message of mine in `waiting`. */
+async function session(waiting: string[] = ['Why?'], dir = repo({ 'a.txt': 'one\ntwo\nthree\n' })): Promise<{ dir: string; id: string }> {
     write(dir, { 'a.txt': 'one\n2\nthree\n' });
     const { id } = await api('POST', '/api/sessions', { worktree: dir });
     const shown = await api('GET', `/api/sessions/${id}/diff`);
@@ -687,7 +689,7 @@ test('after /cd or EnterWorktree into another worktree, the mod polls it and its
     const first = await session(['First']);
     const second = await session(['Second']);
     const claude = await mod(first.dir);
-    const tops = () => claude.seen.run.filter(argv => argv.join(' ') === 'git rev-parse --show-toplevel').length;
+    const tops = () => claude.seen.run.filter(argv => argv[0] === 'git' && argv[1] === 'rev-parse').length;
     const typed = (text: string) => claude.fire('prompt.submit', { text, wait: false, origin: { kind: 'composer' } });
     await claude.tool('list_open_threads');
     await typed('Hello');
@@ -706,6 +708,88 @@ test('after /cd or EnterWorktree into another worktree, the mod polls it and its
     assert.equal((await api('GET', `/api/sessions/${first.id}`)).threads[0].messages.length, 1);
     assert.deepEqual(claude.seen.submitted, [], 'a Send made before the move wakes nobody, as at the start of a Claude session');
     assert.deepEqual(prompted.context, [prompt(1)], 'the next prompt counts the threads of the new worktree');
+});
+
+/** The last message of the first thread of the session `id`. */
+const last = async (id: string) => (await api('GET', `/api/sessions/${id}`)).threads[0].messages.at(-1).body;
+
+test('once Claude writes a file of another worktree of the repository, the poll, the tools and /review-local follow it, from a fresh state, until it writes elsewhere', async () => {
+    const first = await session(['First']);
+    const second = await session(['Second'], worktree(first.dir));
+    const claude = await mod(first.dir);
+    await claude.tool('list_open_threads');
+
+    await claude.fire('tool.call', { tool: 'Edit', file_path: join(second.dir, 'a.txt'), old_string: '2', new_string: 'two' });
+    await claude.fire('tool.call', { tool: 'Bash', command: `cd ${second.dir} && make` });
+    await claude.poll();
+    const replied = await claude.tool('reply_to_thread', { id: 1, body: 'Here' });
+    const opened = await claude.fire('command.run', { command: 'review-local', args: 'browser' });
+
+    assert.deepEqual(replied, { result: 'Replied in thread 1' });
+    assert.equal(await last(second.id), 'Here', 'a cd the shell did not keep leads nowhere');
+    assert.equal(await last(first.id), 'First');
+    assert.match(opened.text, new RegExp(`/s/${second.id}#`));
+    assert.deepEqual(claude.seen.submitted, [], 'a Send made before the move wakes nobody, as at the start of a Claude session');
+
+    await claude.fire('tool.call', { tool: 'Write', file_path: join(first.dir, 'b.txt'), content: '' });
+    await claude.tool('reply_to_thread', { id: 1, body: 'Back' });
+    assert.equal(await last(first.id), 'Back');
+});
+
+test('while a fork answers, a write of the main loop in another worktree of the repository leaves the review where the fork answers', async () => {
+    const first = await session([]);
+    const second = await session(['Second'], worktree(first.dir));
+    const claude = await mod(first.dir);
+    await claude.poll();
+    await claude.fire('turn.start', { text: 'work', turnId: 't1' });
+    await send(first.id, 'And this?');
+    await claude.poll();
+    await claude.fire('tool.call', { tool: 'mcp__local-reviews__list_open_threads', agentId: 'fork-1' });
+
+    await claude.fire('tool.call', { tool: 'Edit', file_path: join(second.dir, 'a.txt'), old_string: '2', new_string: 'two' });
+    await claude.fire('tool.call', { tool: 'mcp__local-reviews__reply_to_thread', id: 1, body: 'Because', agentId: 'fork-1' });
+
+    assert.equal(await last(first.id), 'Because');
+    assert.equal(await last(second.id), 'Second');
+});
+
+test('a cd the shell keeps into another worktree of the repository moves the review there, and the shell back in its start folder leaves it there', async () => {
+    const first = await session(['First']);
+    const second = await session(['Second'], worktree(first.dir));
+    const claude = await mod(first.dir);
+
+    claude.cd(second.dir);
+    await claude.fire('tool.call', { tool: 'Bash', command: `cd ${second.dir}` });
+    await claude.tool('reply_to_thread', { id: 1, body: 'Here' });
+    claude.cd(first.dir);
+    await claude.fire('tool.call', { tool: 'Bash', command: 'cd /tmp && ls' });
+    await claude.tool('reply_to_thread', { id: 1, body: 'Still here' });
+
+    assert.equal(await last(second.id), 'Still here', 'the shell back in its start folder after a cd it did not keep leaves the review where it is');
+    assert.equal(await last(first.id), 'First');
+});
+
+test('a write in another repository, a subagent\'s write or cd, a refused write and a failed one leave the review in its worktree', async () => {
+    const first = await session(['First']);
+    const second = await session(['Second'], worktree(first.dir));
+    const other = await session(['Other']);
+    const claude = await mod(first.dir);
+
+    await claude.fire('tool.call', { tool: 'Write', file_path: join(other.dir, 'b.txt'), content: '' });
+    await claude.fire('tool.call', { tool: 'Edit', file_path: join(second.dir, 'a.txt'), old_string: '2', new_string: 'two', agentId: 'a1' });
+    claude.cd(second.dir);
+    await claude.fire('tool.call', { tool: 'Bash', command: `cd ${second.dir}`, agentId: 'a1' });
+    claude.cd(first.dir);
+    claude.engine['tool.call'] = () => ({ deny: 'refused' });
+    await claude.fire('tool.call', { tool: 'Write', file_path: join(second.dir, 'b.txt'), content: '' });
+    claude.engine['tool.call'] = () => ({ result: 'String to replace not found in file.', text: 'String to replace not found in file.', isError: true });
+    await claude.fire('tool.call', { tool: 'Edit', file_path: join(second.dir, 'a.txt'), old_string: 'none', new_string: 'two' });
+    claude.engine['tool.call'] = () => ({ result: '' });
+    await claude.tool('reply_to_thread', { id: 1, body: 'Here' });
+
+    assert.equal(await last(first.id), 'Here');
+    assert.equal(await last(second.id), 'Second');
+    assert.equal(await last(other.id), 'Other');
 });
 
 test('a wake still in flight when the worktree changes settles without touching the watch of the new worktree', async () => {
