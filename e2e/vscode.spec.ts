@@ -206,15 +206,13 @@ test('Send in a thread adds my reply and sends this thread alone, or only its Pe
     await view.getByRole('treeitem', { name: /#2 · Line \+1/ }).click();
     const reply = page.locator('.review-widget .review-thread-reply-button');
     const send = page.locator('.review-widget').getByRole('button', { name: 'Send', exact: true });
-    // A poll that redraws the thread can take the first click away.
+    // A poll that redraws the thread closes its reply box: open it and click again, a Send without Pending message left sending nothing.
     await expect(async () => {
+        await listen();
         if (await reply.isVisible()) await reply.click();
-        await expect(send).toBeVisible({ timeout: 1000 });
+        await send.click({ timeout: 1000 });
+        expect((await session()).threads[1].messages[1].review).toBe(2);
     }).toPass();
-    await listen();
-    await send.click();
-
-    await expect.poll(async () => (await session()).threads[1].messages[1].review).toBe(2);
 });
 
 test('Send in a new thread opens it and sends it at once', async ({ page }) => {
