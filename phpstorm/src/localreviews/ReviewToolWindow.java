@@ -11,12 +11,15 @@ import com.google.gson.JsonObject;
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.ui.laf.darcula.ui.DarculaButtonUI;
 import com.intellij.openapi.actionSystem.ActionManager;
+import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.DefaultActionGroup;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.WriteIntentReadAction;
 import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.editor.EditorKind;
+import com.intellij.openapi.editor.markup.InspectionWidgetActionProvider;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
 import com.intellij.openapi.fileTypes.FileTypeManager;
@@ -118,6 +121,8 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         SystemNotifications.getInstance().notify("Local Reviews", "Claude Reviews", "The review of " + root + " is open in PhpStorm");
     }
 
+    static final String BLOCKED = "Claude is waiting for your answer in its session, to a permission or a question, before it replies in the threads.";
+
     @Override
     public void createToolWindowContent(Project project, ToolWindow toolWindow) {
         Panel panel = new Panel(project, toolWindow);
@@ -195,6 +200,27 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         }
     }
 
+    /** Previous Thread and Next Thread in the bar at the top right of an editor that shows threads, beside the arrows of its problems. */
+    public static final class EditorArrows implements InspectionWidgetActionProvider {
+        @Override
+        public AnAction createAction(Editor editor) {
+            // The editors of a diff have the arrows in the toolbar of the diff.
+            if (editor.getEditorKind() != EditorKind.MAIN_EDITOR) return null;
+            ActionManager actions = ActionManager.getInstance();
+            return new DefaultActionGroup(actions.getAction("localreviews.PreviousThread"), actions.getAction("localreviews.NextThread")) {
+                @Override
+                public ActionUpdateThread getActionUpdateThread() {
+                    return ActionUpdateThread.BGT;
+                }
+
+                @Override
+                public void update(AnActionEvent event) {
+                    event.getPresentation().setVisible(editor.getUserData(Threads.KEY) != null);
+                }
+            };
+        }
+    }
+
     /** A directory of the tree of the tool window: its path, and its name there, which takes those of the directories it merges. */
     record Dir(String path, String name) {
         /**
@@ -257,8 +283,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         private final JBLabel summary = new JBLabel();
         /** How to start a Claude session, or the warning that the Claude session waits for my answer; empty otherwise. */
         private final JPanel notice = new JPanel(new BorderLayout());
-        private final JBLabel blocked = new JBLabel("<html>Claude is waiting for your answer in its session, to a permission or a question, before it replies in the threads.</html>",
-            AllIcons.General.Warning, SwingConstants.LEFT);
+        private final JBLabel blocked = new JBLabel("<html>" + BLOCKED + "</html>", AllIcons.General.Warning, SwingConstants.LEFT);
         private final Tree tree = new Tree(new DefaultTreeModel(new DefaultMutableTreeNode()));
         // Made once: a new one at each change of the state would scroll back to the top, and take the focus from the tree.
         private final JBScrollPane scroll = new JBScrollPane(tree);

@@ -103,6 +103,17 @@ function tree(/** @type {File[]} */ files, /** @type {Thread[]} */ threads) {
     return nodes;
 }
 
+/**
+ * The id of the unresolved thread after `current` in the order of the view, or before it backward, around at the ends;
+ * the first, or the last, when `current` is not among them; undefined without any.
+ */
+function step(/** @type {File[]} */ files, /** @type {Thread[]} */ threads, /** @type {number | undefined} */ current, /** @type {boolean} */ forward) {
+    const ids = tree(files, threads).flatMap(node => 'dir' in node ? node.files : [node.file]).flatMap(file => threadsOf(threads, file.path)).map(thread => thread.id);
+    if (!ids.length) return undefined;
+    const i = ids.indexOf(/** @type {number} */ (current));
+    return ids[i < 0 ? (forward ? 0 : ids.length - 1) : (i + (forward ? 1 : ids.length - 1)) % ids.length];
+}
+
 /** The line, from 1, a file opens at: its first thread on the new side, else its first added line, else its top. */
 function firstLine(/** @type {File} */ file, /** @type {Thread[]} */ threads) {
     const placed = threads.find(thread => thread.anchor.side === 'new' && thread.at?.start);
@@ -163,4 +174,4 @@ function listeners(/** @type {string} */ text, /** @type {number} */ port) {
         .map(fields => Number(fields[7]));
 }
 
-module.exports = { status, lines, label, pending, counts, waiting, replied, claude, startClaude, threadsOf, tree, firstLine, sent, viewed, baseItems, outdatedText, noImages, listeners };
+module.exports = { status, lines, label, pending, counts, waiting, replied, claude, startClaude, threadsOf, tree, step, firstLine, sent, viewed, baseItems, outdatedText, noImages, listeners };

@@ -244,6 +244,42 @@ test('the toolbar of the diff marks its file Viewed, and unmarks it', async ({ p
     await expect.poll(async () => Object.keys((await session()).viewed)).toEqual([]);
 });
 
+test('the toolbar of the diff warns that the Claude session waits for my answer, until it no longer does', async ({ page }) => {
+    const { dir, route, listen } = await worktree(page, { claude: true });
+    await page.request.post(`${route}/threads/1/messages`, { data: { author: 'me', body: 'Because.' } });
+    await page.request.post(`${route}/send`, { data: { tree: (await (await page.request.get(`${route}/diff`)).json()).tree } });
+    await listen('&blocked');
+    const view = await open(page, dir);
+    await view.getByRole('treeitem', { name: /^a\.txt/ }).click();
+    const warning = page.locator('.editor-actions').getByRole('button', { name: /^Claude is waiting for your answer in its session/ });
+    await expect(warning).toBeVisible();
+
+    await listen();
+
+    await expect(warning).toBeHidden({ timeout: 10_000 });
+});
+
+test('Next Thread and Previous Thread go from thread to thread, in the diff from its toolbar, in the editor from its own', async ({ page }) => {
+    const { dir, thread } = await worktree(page, { claude: true });
+    await thread('src/b.ts', 'new', 1, 'Why 2?');
+    const view = await open(page, dir);
+    const actions = page.locator('.editor-actions');
+    const tab = (name: RegExp) => page.getByRole('tab', { name, selected: true });
+    await view.getByRole('treeitem', { name: /^a\.txt/ }).click();
+
+    await actions.getByRole('button', { name: 'Next Thread' }).click();
+    await expect(tab(/^a\.txt \(/)).toBeVisible();
+    await actions.getByRole('button', { name: 'Next Thread' }).click();
+    await expect(tab(/^b\.ts \(/)).toBeVisible();
+    await actions.getByRole('button', { name: 'Previous Thread' }).click();
+    await expect(tab(/^a\.txt \(/)).toBeVisible();
+
+    await view.getByRole('treeitem', { name: /Line \+2/ }).click();
+    await expect(tab(/^a\.txt(?! \()/)).toBeVisible();
+    await actions.getByRole('button', { name: 'Next Thread' }).click();
+    await expect(tab(/^b\.ts(?! \()/)).toBeVisible();
+});
+
 test('/review-local shows the view, once, when VS Code reads a recent request', async ({ page }) => {
     const { dir, route } = await worktree(page);
     await page.request.post(`${route}/show`, { data: {} });

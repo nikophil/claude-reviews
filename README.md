@@ -25,7 +25,7 @@ The project's context and decisions are in [BRIEF.md](BRIEF.md), its vocabulary 
   When that Claude session waits for your answer to a permission or a question, the review says so.
 - Follow the threads: they stay on their line when the code moves, and become Outdated when their lines disappear.
 - Mark a file Viewed, until its content changes;
-  go from one thread to another with `j` and `k`, or through the conversations menu.
+  go from one thread to another with `j` and `k`, the arrows beside the conversations menu, or through that menu.
 - Copy the threads as markdown, for a PR description, then close the session with Approve.
 
 The Reviews screen lists the sessions of all worktrees, those waiting for Claude first, and the closed sessions in a separate tab.

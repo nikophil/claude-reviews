@@ -421,7 +421,7 @@ test('while a thread waits for Claude, the page says the Claude session waits fo
     await expect(warning).toBeHidden({ timeout: 5000 });
 });
 
-test('j and k go from thread to thread, the Conversations menu lists them and marks those Claude replied in since my last Send', async ({ page, request }) => {
+test('j and k, or the arrows beside Conversations, go from thread to thread, the Conversations menu lists them and marks those Claude replied in since my last Send', async ({ page, request }) => {
     const dir = repo({ 'a.txt': 'one\n', 'b.txt': 'one\n' });
     write(dir, { 'a.txt': 'ONE\n', 'b.txt': 'ONE\n' });
     const { id } = await (await request.post('/api/sessions', { data: { worktree: dir } })).json();
@@ -440,6 +440,11 @@ test('j and k go from thread to thread, the Conversations menu lists them and ma
     await expect(page).toHaveURL(/#thread-2$/);
     await expect(page.locator('#thread-2')).toBeVisible();
     await page.keyboard.press('k');
+    await expect(page).toHaveURL(/#thread-1$/);
+
+    await page.getByRole('button', { name: 'Next thread' }).click();
+    await expect(page).toHaveURL(/#thread-2$/);
+    await page.getByRole('button', { name: 'Previous thread' }).click();
     await expect(page).toHaveURL(/#thread-1$/);
 
     await page.getByRole('button', { name: '2 conversations' }).click();

@@ -13,6 +13,7 @@
     <toolWindow id="Claude Reviews" anchor="left" factoryClass="localreviews.ReviewToolWindow" icon="AllIcons.Toolwindows.ToolWindowMessages"/>
     <projectService serviceImplementation="localreviews.ReviewService"/>
     <diff.DiffExtension implementation="localreviews.ThreadsInDiff"/>
+    <iw.actionProvider implementation="localreviews.ReviewToolWindow$EditorArrows"/>
     <notificationGroup id="Local Reviews" displayType="BALLOON"/>
   </extensions>
   <actions>

@@ -50,14 +50,14 @@ Read `BRIEF.md`, `GLOSSARY.md` and `docs/adr/` before changing the code, and nam
 - `hooks/watch.ts`: the decisions of the mod (wake, relaunch, stay silent, resume after a `{ drop }`), and the sockets listening on a port read from `/proc/net/tcp`, as pure functions.
 - `phpstorm/`: the PhpStorm plugin, in Java and Swing: the "Claude Reviews" tool window (base, Send, Approve, changed files and their threads), the threads in the editor and in the diff of the IDE;
   its Editor view opens a file in the editor, its Diff view in the diff of the IDE, with the Viewed checkbox of each file in the tree and in the bar of the diff;
-  it edits and deletes my Pending messages, moves from one thread not Resolved to the next (Next Thread and Previous Thread, Alt+Shift+Page Down and Page Up), marks "Replied" those, not Resolved, where Claude replied since my last Send,
+  it edits and deletes my Pending messages, moves from one thread not Resolved to the next (Next Thread and Previous Thread, Alt+Shift+Page Down and Page Up, also in the bar of the diff and at the top right of the editor), marks "Replied" those, not Resolved, where Claude replied since my last Send,
   resolves or reopens a thread from its context menu in the tree, opens an Outdated thread in a window of its own, scrolled when long,
   groups its files under their directories, or lists them flat each followed by its directory (Group By › Directory, as in the Commit tool window),
   and offers Suggest Change, Comment on File and Copy Threads as Markdown, in the same format as the web UI; it only talks to the API, like any client ([ADR 0004](docs/adr/0004-clients-and-mod-separated-by-the-api.md)).
 - `phpstorm/ui-test/`: the UI tests of the plugin, in Kotlin, with JetBrains' Starter and Driver, under Gradle in Docker ([ADR 0005](docs/adr/0005-phpstorm-ui-tests-with-gradle-in-docker.md));
   there, `run.sh` runs in sequence `build.sh`, the Plugin Verifier, which fails on any verdict other than "Compatible", and `gradle test`.
 - `vscode/`: the VS Code extension, in CommonJS JS checked by `// @ts-check`, without a build: the "Claude Reviews" view (base, Send, Approve, changed files with their Viewed checkbox and their threads), the threads through the Comments API in the editor and in the diff of VS Code;
-  a click on a file opens its diff, the Viewed checkbox is also in the bar of the diff, and an Outdated thread opens on its diff excerpt; `vscode/review.js` holds the pure functions, tested by `node --test`.
+  a click on a file opens its diff, the Viewed checkbox is also in the bar of the diff, Next Thread and Previous Thread in the bar of the editor and of the diff, and an Outdated thread opens on its diff excerpt; `vscode/review.js` holds the pure functions, tested by `node --test`.
 - No npm dependency at runtime: what is missing gets written, or vendored as a single file in `ui/vendor/`.
 
 ## HTTP contract
@@ -120,7 +120,7 @@ The server serves the UI and a JSON API, for the UI and the mod.
 - A read only waits for the write queue to close a session; an unreadable session file is ignored, with a line in the server log, without being deleted or rewritten.
 - Each returned session carries `claudeSession`, true when the mod read its worktree with `&claude` in the last 10 seconds, kept in memory; without it, the PhpStorm plugin grays out its Sends, the VS Code extension refuses them, and both show, instead of waiting for Claude, the command that starts a Claude session.
 - It also carries `claudeBlocked`, true when that last read also carried `&blocked` and a thread is Waiting for Claude;
-  the page, the PhpStorm tool window and the VS Code view then warn that Claude is waiting for my answer in its session.
+  the page, the PhpStorm tool window and the bar of its diff, the VS Code view and the bar of its diff then warn that Claude is waiting for my answer in its session.
 - The notification counts the threads where Claude wrote since the last Send, and the Waiting for Claude threads; `start(port, notify)` receives the command to run, which the tests record without running it.
 - Except for `/diff`, `/tree`, `/lines`, `/bases` and the list of sessions, each route of a session returns the whole session, in the file format, and each thread there also carries its `status`: `resolved`, `waiting-for-claude` when my message is the last published one, `open` when it is Claude's, or `null` as long as no message is published; the clients do not display `open`.
 - A route that returns the session and receives `?base=<id>&tree=<id>` (the code displayed by the UI), or `?reanchor` (the base of the session and the working tree, for the mod), re-anchors each thread on this code: each thread then also carries `at`, `null` if it is Outdated, otherwise `{ start, end, context }`.

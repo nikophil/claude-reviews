@@ -157,6 +157,27 @@ class ReviewTest {
         }
 
         private fun frame(action: IdeaFrameUI.() -> Unit) = driver.ui.ideFrame { action() }
+
+        /** Runs `action` with the tool windows hidden, whose arrows would match too, then shows the Claude Reviews one again. */
+        private fun withoutToolWindows(action: IdeaFrameUI.() -> Unit) = frame {
+            driver.invokeAction("HideAllWindows", component = component)
+            try {
+                action()
+            } finally {
+                driver.invokeAction("ActivateClaudeReviewsToolWindow", component = component)
+            }
+        }
+
+        /** Waits for the caret that `line` reads to reach `expected`, from 0. */
+        private fun caretLine(expected: Int, line: () -> Int) {
+            var last = -1
+            repeat(50) {
+                last = line()
+                if (last == expected) return
+                Thread.sleep(200)
+            }
+            assertEquals(expected, last, "the caret on the line of the thread")
+        }
     }
 
     @Test
@@ -223,6 +244,20 @@ class ReviewTest {
 
     @Test
     @Order(5)
+    fun `in the Editor view, Previous Thread in the bar of the editor goes to the thread`() {
+        withoutToolWindows {
+            // Not the editor of the reply under the thread.
+            val editor = xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java).list().single { "echo 3;" in it.text }
+            editor.moveCaretToOffset(0)
+            x("//div[contains(@myaction, 'Previous Thread')]").click()
+            caretLine(3) { editor.editor.getCaretModel().getLogicalPosition().getLine() }
+            // Back to the top: the caret of the diff, at the next steps, is the only one on line 4.
+            editor.moveCaretToOffset(0)
+        }
+    }
+
+    @Test
+    @Order(6)
     fun `Viewed in the diff marks the file viewed`() {
         frame {
             radioButton("//div[@text='Diff']").click()
@@ -233,7 +268,25 @@ class ReviewTest {
     }
 
     @Test
-    @Order(6)
+    @Order(7)
+    fun `the bar of the diff warns that the Claude session waits for my answer, and Next Thread goes to the thread`() {
+        val warning = "//div[@class='JBLabel' and @text='Claude is waiting for your answer in its session']"
+        claudeQuery = "&blocked"
+        frame { x(warning).shouldBe(enabled) }
+        claudeQuery = ""
+        frame {
+            repeat(50) { if (x(warning).present()) Thread.sleep(200) }
+            assert(!x(warning).present()) { "the warning is gone" }
+        }
+        withoutToolWindows {
+            x("//div[contains(@myaction, 'Next Thread')]").click()
+            // The working tree, on the right of the diff, at line 4.
+            caretLine(3) { xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java).list().maxOf { it.editor.getCaretModel().getLogicalPosition().getLine() } }
+        }
+    }
+
+    @Test
+    @Order(8)
     fun `an Outdated thread opens in its own window, the thread in a scroll pane`() {
         // Line 4 changes again: the thread of step 2 no longer finds its line.
         Files.writeString(Path.of(worktree, "a.php"), "<?php\n\necho 1;\necho 4;\n")
@@ -250,7 +303,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(7)
+    @Order(9)
     fun `Resolve in the context menu of a thread of the tree resolves it`() {
         frame { tree("//div[@class='Tree']").rightClickPath("a.php", "#1", fullMatch = false) }
         driver.ui.x("//div[@class='ActionMenuItem' and @text='Resolve']").click()
@@ -258,7 +311,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(8)
+    @Order(10)
     fun `Group By › Directory lists the files under their directories, or flat once unchecked`() {
         Files.createDirectories(Path.of(worktree, "src"))
         Files.writeString(Path.of(worktree, "src/b.php"), "<?php\n")
@@ -281,7 +334,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(9)
+    @Order(11)
     fun `in the Diff view, a click on a thread of the file shown scrolls its diff there, an added file too`() {
         Files.createDirectories(Path.of(worktree, "src"))
         Files.writeString(Path.of(worktree, "src/c.php"), "<?php\n" + (1..60).joinToString("") { "// line $it\n" })

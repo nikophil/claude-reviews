@@ -11,6 +11,7 @@ const threads = require('./threads.js');
 /** The endpoint file this account's server writes, with its port and token; read fresh on each call, as both change on a restart. */
 const ENDPOINT = join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'claude-reviews', 'endpoint');
 const SILENT = `The claude-reviews server does not answer (no server at ${ENDPOINT}): start a Claude session with the local-reviews mod, or npm start.`;
+const BLOCKED = 'Claude is waiting for your answer in its session, to a permission or a question, before it replies in the threads.';
 /** The scheme of the files of the view: their own decorations, not those of git against HEAD. */
 const FILE = 'local-reviews-file';
 
@@ -209,13 +210,29 @@ async function openFile(path, line) {
     await vscode.window.showTextDocument(vscode.Uri.file(`${state.root}/${path}`), { preview: true, selection: new vscode.Range(at, 0, at, 0) });
 }
 
-/** A thread opens where its code is: the editor for the new code, the diff for the old one, its excerpt when Outdated. */
-async function openThread(/** @type {number} */ id) {
+/** @type {number | undefined} The thread opened last, where Next Thread and Previous Thread start from. */
+let current;
+
+/**
+ * A thread opens where its code is: the editor for the new code, the diff for the old one, or for both `inDiff`, its excerpt when Outdated.
+ * @param {number} id
+ * @param {boolean} [inDiff]
+ */
+async function openThread(id, inDiff = false) {
     const thread = state.session?.threads.find((/** @type {any} */ thread) => thread.id === id);
     if (!thread) return;
+    current = id;
     if (!thread.at) return diff.openOutdated(thread);
-    if (thread.anchor.side === 'old') return diff.open(thread.anchor.path, 'old', thread.at.start);
+    if (inDiff || thread.anchor.side === 'old') return diff.open(thread.anchor.path, thread.anchor.side, thread.at.start || undefined);
     return openFile(thread.anchor.path, thread.at.start || 1);
+}
+
+/** Next Thread, or Previous Thread backward, in the order of the view: in the diff from the toolbar of a diff, as its arrows of changes. */
+async function step(/** @type {boolean} */ forward) {
+    const session = state.session;
+    const id = session && review.step(state.files, session.threads, current, forward);
+    if (id === undefined) return;
+    await openThread(id, vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff);
 }
 
 /** The files of the diff, then those only threads name, each with its unresolved threads. */
@@ -311,7 +328,10 @@ function activate(/** @type {vscode.ExtensionContext} */ context) {
         vscode.commands.registerCommand('localReviews.chooseBase', guard(chooseBase)),
         vscode.commands.registerCommand('localReviews.openFile', guard(async node => openFile(typeof node === 'string' ? node : node.file.path))),
         vscode.commands.registerCommand('localReviews.openDiff', guard(async node => diff.open(typeof node === 'string' ? node : node.file.path))),
-        vscode.commands.registerCommand('localReviews.openThread', guard(openThread)),
+        vscode.commands.registerCommand('localReviews.openThread', guard(id => openThread(id))),
+        vscode.commands.registerCommand('localReviews.nextThread', guard(() => step(true))),
+        vscode.commands.registerCommand('localReviews.previousThread', guard(() => step(false))),
+        vscode.commands.registerCommand('localReviews.blocked', () => vscode.window.showWarningMessage(BLOCKED)),
         vscode.commands.registerCommand('localReviews.copyStartClaude', guard(async () => {
             if (state.session) await vscode.env.clipboard.writeText(review.startClaude(state.session));
         })),
@@ -329,10 +349,14 @@ function activate(/** @type {vscode.ExtensionContext} */ context) {
         await vscode.commands.executeCommand('setContext', 'localReviews.changed', changedFiles);
         await vscode.commands.executeCommand('setContext', 'localReviews.viewed', viewed);
         await vscode.commands.executeCommand('setContext', 'localReviews.unviewed', changedFiles.filter(path => !viewed.includes(path)));
+        await vscode.commands.executeCommand('setContext', 'localReviews.blocked', !!session?.claudeBlocked);
+        // The editors of the files of the view, while a thread is not Resolved.
+        const threaded = session ? session.threads.filter((/** @type {any} */ thread) => !thread.resolved).map((/** @type {any} */ thread) => `${state.root}/${thread.anchor.path}`) : [];
+        await vscode.commands.executeCommand('setContext', 'localReviews.navigable', threaded.length ? [...new Set([...changedFiles, ...threaded])] : []);
         view.badge = counts.pending ? { value: counts.pending, tooltip: `${counts.pending} pending` } : undefined;
         view.message = state.error ?? (!session ? undefined : !review.claude(session)
             ? `Start a Claude session in this worktree to send to Claude: ${review.startClaude(session)}`
-            : session.claudeBlocked ? '⚠ Claude is waiting for your answer in its session, to a permission or a question, before it replies in the threads.'
+            : session.claudeBlocked ? `⚠ ${BLOCKED}`
             : `${state.files.length} files · ${viewed.length} viewed · ${counts.waiting} waiting for Claude`);
         files.emitter.fire(undefined);
         decorations.fire(undefined);

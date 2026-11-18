@@ -143,3 +143,15 @@ test('the listeners of a port are the sockets listening on it, IPv4 or IPv6, wit
     assert.deepEqual(review.listeners(proc, 7778), [1001], 'any address, 0.0.0.0 included');
     assert.deepEqual(review.listeners(proc, 1234), []);
 });
+
+test('Next Thread and Previous Thread go through the unresolved threads in the order of the view, around at the ends', () => {
+    const files = [{ path: 'src/b.ts', status: 'modified' }, { path: 'a.txt', status: 'modified' }, { path: 'src/c.ts', status: 'modified' }];
+    const threads = [thread(1, { path: 'a.txt' }), thread(2, { path: 'src/c.ts' }), thread(3, { path: 'src/b.ts' }), thread(4, { path: 'a.txt', resolved: true })];
+    assert.equal(review.step(files, threads, undefined, true), 3, 'the first, without a current thread');
+    assert.equal(review.step(files, threads, undefined, false), 1, 'the last, backward');
+    assert.equal(review.step(files, threads, 3, true), 2, 'src/c.ts under src, with src/b.ts');
+    assert.equal(review.step(files, threads, 1, true), 3, 'around at the end');
+    assert.equal(review.step(files, threads, 3, false), 1, 'around at the start');
+    assert.equal(review.step(files, threads, 4, true), 3, 'a Resolved thread is no longer in the order');
+    assert.equal(review.step(files, [], undefined, true), undefined);
+});

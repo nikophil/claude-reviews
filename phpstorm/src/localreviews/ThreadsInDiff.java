@@ -13,6 +13,7 @@ import com.intellij.diff.tools.util.base.DiffViewerListener;
 import com.intellij.diff.tools.util.side.OnesideTextDiffViewer;
 import com.intellij.diff.tools.util.side.TwosideTextDiffViewer;
 import com.intellij.diff.util.Side;
+import com.intellij.ide.ActivityTracker;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.editor.Document;
@@ -190,6 +191,8 @@ public final class ThreadsInDiff extends DiffExtension {
             SESSIONS.put(review.session(), session);
             if (session.equals(last)) return;
             last = session;
+            // The toolbar of the diff updates on an input only: Send, Approve and the warning of a Blocked Claude session follow the session.
+            ActivityTracker.getInstance().inc();
             ApplicationManager.getApplication().invokeLater(() -> show(session, false), modality);
         }
     }
