@@ -164,11 +164,21 @@ final class ThreadView extends JPanel implements Disposable {
             readonly = new JBCheckBox("Answer without changing code", thread.has("readonly") && thread.get("readonly").getAsBoolean());
             readonly.setToolTipText("Claude replies in this thread without editing any file");
             JBCheckBox box = readonly;
-            box.addActionListener(e -> write(null, error, List.of(box), body -> {
-                JsonObject checked = new JsonObject();
-                checked.addProperty("readonly", box.isSelected());
-                Server.post(route + "/readonly", checked);
-            }, written));
+            box.addActionListener(e -> {
+                boolean checked = box.isSelected();
+                ModalityState modality = ModalityState.stateForComponent(box);
+                write(null, error, List.of(box), body -> {
+                    JsonObject readonlyBody = new JsonObject();
+                    readonlyBody.addProperty("readonly", checked);
+                    try {
+                        Server.post(route + "/readonly", readonlyBody);
+                    } catch (IOException | RuntimeException failure) {
+                        // The box must say what the server holds: Claude reads the server.
+                        ApplicationManager.getApplication().invokeLater(() -> box.setSelected(!checked), modality);
+                        throw failure;
+                    }
+                }, written);
+            });
         }
         // Send spins, the only spinner, until Claude answers the thread.
         spin(send, ReviewService.get(project).spinning("thread:" + id, thread), AllIcons.Actions.Upload);

@@ -256,3 +256,25 @@ test('the wake counts the readonly threads, and carries the review message and i
     assert.equal(prompt(1, 0, { body: 'Mind the tests', readonly: true }), `${prompt(1)}\n\nThe review message, to answer without changing any file:\n\nMind the tests`);
     assert.equal(prompt(0, 0, { body: 'Rename it', readonly: false }), 'claude-reviews: a review message is waiting for you, with no thread waiting: answer it here.\n\nRename it');
 });
+
+test('a relaunch held by a drop is cancelled once no thread waits, even when the last Send carried a review message', () => {
+    const review = { body: 'Rename it', readonly: false };
+    let watch = look(start, { id: 's', sends: 0, waiting: 0 });
+    watch = submit(look(watch, { id: 's', sends: 1, waiting: 1, review }));
+    watch = turnEnded(watch, { id: 's', sends: 1, waiting: 1, review });
+    watch = submit(watch, true);
+
+    watch = resumed(look(watch, { id: 's', sends: 1, waiting: 0, review }));
+
+    assert.equal(watch.owed, null);
+});
+
+test('a wake held by a drop for a review message alone stays owed until it opens its turn', () => {
+    const review = { body: 'Rename it', readonly: false };
+    let watch = look(start, { id: 's', sends: 0, waiting: 0 });
+    watch = submit(look(watch, { id: 's', sends: 1, waiting: 0, review }), true);
+
+    watch = resumed(look(watch, { id: 's', sends: 1, waiting: 0, review }));
+
+    assert.equal(watch.owed, 'wake');
+});

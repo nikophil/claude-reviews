@@ -64,8 +64,11 @@ export function look(watch: Watch, seen: Seen): Watch {
     const sends = Math.max(known.sends, seen.sends);
     const review = seen.review ?? null;
     const next = { ...watch, session: seen.id, waiting: seen.waiting, readonly: seen.readonly ?? 0, review, sessions: { ...watch.sessions, [seen.id]: { ...known, sends } } };
-    // A review message wakes Claude on its own, but only threads relaunch him: he answers it in the conversation, where nothing tells it answered.
-    if (!seen.waiting && !review) return { ...next, owed: null };
+    if (!seen.waiting) {
+        // A review message alone is owed one wake, until it opens its turn, and never a relaunch: Claude answers it in the conversation, where nothing tells it answered.
+        const wake = review && (seen.sends > known.sends || watch.owed === 'wake');
+        return { ...next, owed: wake ? 'wake' : null };
+    }
     return seen.sends > known.sends ? { ...next, owed: 'wake' } : next;
 }
 

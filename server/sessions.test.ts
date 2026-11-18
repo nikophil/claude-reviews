@@ -310,7 +310,7 @@ test('a Send refuses threads that are not a list of thread ids of the session, b
 
 test('a thread is not readonly until I check it, and a readonly that is not a boolean is refused', async () => {
     const { id, path } = await sessionWithThread();
-    assert.equal((await api('GET', `/api/sessions/${id}`)).body.threads[0].readonly ?? false, false);
+    assert.equal((await api('GET', `/api/sessions/${id}`)).body.threads[0].readonly, false);
 
     const checked = await api('POST', `${path}/readonly`, { readonly: true });
     assert.equal(checked.status, 200);
@@ -1335,4 +1335,16 @@ test('a thread on a whole file has no lines, stays placed while its file is ther
     assert.equal(gone.body.threads[0].at, null);
     assert.equal(claude.status, 200);
     assert.equal((await api('POST', `/api/sessions/${id}/threads`, { author: 'me', base: shown.base, tree: shown.tree, path: 'a.txt', side: 'new', start: 0, end: 1, body: 'x' })).status, 400);
+});
+
+test('at turn-complete after a Send that left no thread waiting but carried a review message, the server notifies that Claude answered it', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id), body: 'Rename it' });
+    notified.length = 0;
+
+    await api('POST', `/api/sessions/${id}/turn-complete`, {});
+
+    const text = 'Claude answered the review message';
+    assert.deepEqual(notified, [process.platform === 'darwin' ? notification(text, 'darwin') : ['notify-send', 'claude-reviews', text]]);
 });

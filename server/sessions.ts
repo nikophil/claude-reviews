@@ -547,6 +547,7 @@ export async function openThread(id: string, input: Record<string, unknown>) {
             lines: lines.slice(from - 1, to), before: lines.slice(Math.max(0, from - 4), from - 1), after: lines.slice(to, to + 3), hunk,
         },
         resolved: false,
+        readonly: false,
         messages: [first],
     });
     await save(session);
@@ -692,6 +693,8 @@ export async function show(id: string) {
 export function replies(session: Session): string {
     const replied = session.threads.filter(thread => thread.messages.some(message => message.author === 'claude' && message.date! >= (session.sentAt ?? ''))).length;
     const waiting = session.threads.filter(thread => status(thread) === 'waiting-for-claude').length;
+    // A wake for a review message alone: Claude answered it in its conversation.
+    if (!replied && !waiting && session.reviews?.some(review => review.review === session.sends && review.body)) return 'Claude answered the review message';
     return `Claude replied in ${replied} thread${replied === 1 ? '' : 's'}${waiting ? `, ${waiting} still waiting` : ''}`;
 }
 

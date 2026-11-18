@@ -164,7 +164,8 @@ async function send(/** @type {(() => Promise<number | undefined>) | undefined} 
     }
     // The Send of the whole session carries a review message and its readonly; cancelled, nothing is sent.
     const asked = thread === undefined ? await reviewMessage() : {};
-    if (!asked) return;
+    // The session may have closed while the box was open.
+    if (!asked || state.session?.id !== session.id) return;
     const tree = await shownTree();
     const sent = await call(`/api/sessions/${session.id}/send`, thread === undefined ? { tree, ...asked } : { tree, threads: [thread] });
     const count = review.sent(sent);

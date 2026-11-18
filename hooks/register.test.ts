@@ -1102,3 +1102,18 @@ test('the tools tell Claude to answer a readonly thread without changing any fil
     }
     assert.match(claude.seen.tools.find(tool => tool.name === 'list_open_threads')!.description, /review is the message of the last Send/);
 });
+
+test('the relaunch does not repeat the review message the wake gave', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir);
+    await claude.poll();
+    const shown = await api('GET', `/api/sessions/${id}/diff`);
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'me', base: shown.base, tree: shown.tree, path: 'a.txt', side: 'new', start: 1, end: 1, body: 'Why?' });
+    await api('POST', `/api/sessions/${id}/send`, { tree: shown.tree, body: 'Rename it' });
+    await claude.poll();
+
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
+    await claude.settle();
+
+    assert.deepEqual(claude.seen.submitted, [prompt(1, 0, { body: 'Rename it', readonly: false }), prompt(1)]);
+});

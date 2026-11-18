@@ -210,7 +210,8 @@ function submit($: EngineInterface): void {
     // A watch started afresh for another worktree meanwhile is not this prompt's.
     const settled = (dropped: boolean) => { if (watch.submitting === sent) apply($, submitted(watch, dropped)); };
     // Never awaited: it resolves only once the session is idle and the prompt opened its turn.
-    $.prompt.submit({ text: prompt(watch.waiting, watch.readonly, watch.review) }).then(result => settled(result.drop !== undefined), () => settled(true));
+    // The wake alone carries the review message: a relaunch would have Claude carry it out again.
+    $.prompt.submit({ text: prompt(watch.waiting, watch.readonly, sent!.owed === 'wake' ? watch.review : null) }).then(result => settled(result.drop !== undefined), () => settled(true));
 }
 
 /** Answers in a fork of the Claude session, in the background: a prompt would wait for the end of the turn Claude works on. */
