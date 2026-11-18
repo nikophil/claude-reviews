@@ -20,9 +20,10 @@ The project's context and decisions are in [BRIEF.md](BRIEF.md), its vocabulary 
   HEAD, the code of my last Send, the default branch, the base branch, an open PR or any branch.
 - Open a thread on a line, a range (Shift+click) or a whole file, with a message in markdown.
 - Propose a change with a `suggestion` block: Claude applies it when it reads the thread.
-- Send my messages with Send, which wakes the Claude session of the worktree, even an idle one,
+- Send my messages with Send, which wakes the Claude session of the worktree, even an idle one, with a review message for the whole Send if I want,
   or a single thread at once with the Send of its box;
   edit or delete a message as long as it is not sent.
+- Check "Answer without changing code" on a thread, or on a whole Send, for Claude to reply without editing any file.
   When that Claude session waits for your answer to a permission or a question, the review says so.
 - Follow the threads: they stay on their line when the code moves, and become Outdated when their lines disappear.
 - Mark a file Viewed, until its content changes;

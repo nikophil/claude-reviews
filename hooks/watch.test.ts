@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { due, forked, forkEnded, forking, forks, idle, listeners, look, notified, resumed, sending, start, status, submitted, touched, turnEnded, turnStarted, type Watch } from './watch.ts';
+import { due, forked, forkEnded, forking, forks, idle, listeners, look, notified, prompt, resumed, sending, start, status, submitted, touched, turnEnded, turnStarted, type Watch } from './watch.ts';
 
 /** What the glue does once the decision says a prompt is due: submit it, then learn whether it entered. */
 function submit(watch: Watch, dropped = false): Watch {
@@ -237,4 +237,22 @@ test('a shell back in the folder the Claude session started in leads nowhere: it
 
 test('a call that writes nothing leads nowhere', () => {
     assert.equal(touched({ tool: 'Read', file_path: '/b/a.ts' }, at), undefined);
+});
+
+test('a Send with a review message wakes Claude even without a waiting thread, and relaunches nobody at the end of its turn', () => {
+    let watch = look(start, { id: 's', sends: 0, waiting: 0 });
+    watch = look(watch, { id: 's', sends: 1, waiting: 0, review: { body: 'Rename it', readonly: false } });
+    assert.equal(watch.owed, 'wake');
+    watch = submit(watch);
+
+    watch = turnEnded(watch, { id: 's', sends: 1, waiting: 0, review: { body: 'Rename it', readonly: false } });
+    assert.equal(due(watch), false);
+    assert.equal(status(watch), undefined, 'a review message is no waiting thread');
+});
+
+test('the wake counts the readonly threads, and carries the review message and its readonly', () => {
+    assert.equal(prompt(2, 1), 'claude-reviews: 2 threads are waiting for you, 1 of them readonly. Read them with list_open_threads, reply in each with reply_to_thread, '
+        + 'and change the code when a thread asks for it, but answer a readonly thread without changing any file.');
+    assert.equal(prompt(1, 0, { body: 'Mind the tests', readonly: true }), `${prompt(1)}\n\nThe review message, to answer without changing any file:\n\nMind the tests`);
+    assert.equal(prompt(0, 0, { body: 'Rename it', readonly: false }), 'claude-reviews: a review message is waiting for you, with no thread waiting: answer it here.\n\nRename it');
 });

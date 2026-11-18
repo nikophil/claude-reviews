@@ -32,6 +32,7 @@ import com.intellij.ui.ColorUtil;
 import com.intellij.ui.EditorTextField;
 import com.intellij.ui.JBColor;
 import com.intellij.ui.RoundedLineBorder;
+import com.intellij.ui.components.JBCheckBox;
 import com.intellij.ui.components.JBHtmlPane;
 import com.intellij.ui.components.JBLabel;
 import com.intellij.ui.components.panels.HorizontalLayout;
@@ -50,6 +51,7 @@ import kotlin.text.CharsKt;
 import kotlin.text.StringsKt;
 
 import javax.imageio.ImageIO;
+import javax.swing.AbstractButton;
 import javax.swing.BorderFactory;
 import javax.swing.Icon;
 import javax.swing.JButton;
@@ -130,6 +132,8 @@ final class ThreadView extends JPanel implements Disposable {
     private static final Color PENDING = new JBColor(new Color(0xB86E00), new Color(0xD9A343));
     private final JButton add = button("Add pending", null);
     private final JButton send = button("Send", AllIcons.Actions.Upload);
+    /** « Answer without changing code », on a thread not Resolved; null otherwise. */
+    private JBCheckBox readonly;
     private final JBLabel shortcutHint = hint(KeymapUtil.getFirstKeyboardShortcutText(CommonShortcuts.getCtrlEnter()) + " to add pending");
     private boolean folded;
     private boolean resolved;
@@ -156,6 +160,16 @@ final class ThreadView extends JPanel implements Disposable {
         other = resolved ? button("Unresolve", AllIcons.Actions.Rollback) : button("Resolve", AllIcons.Actions.Checked);
         String toggle = route + (resolved ? "/unresolve" : "/resolve");
         other.addActionListener(e -> write(field, error, List.of(other, add), body -> Server.post(toggle, new JsonObject()), written));
+        if (!resolved) {
+            readonly = new JBCheckBox("Answer without changing code", thread.has("readonly") && thread.get("readonly").getAsBoolean());
+            readonly.setToolTipText("Claude replies in this thread without editing any file");
+            JBCheckBox box = readonly;
+            box.addActionListener(e -> write(null, error, List.of(box), body -> {
+                JsonObject checked = new JsonObject();
+                checked.addProperty("readonly", box.isSelected());
+                Server.post(route + "/readonly", checked);
+            }, written));
+        }
         // Send spins, the only spinner, until Claude answers the thread.
         spin(send, ReviewService.get(project).spinning("thread:" + id, thread), AllIcons.Actions.Upload);
         finish(project, sessionId, Placement.sendRefusal(session), pending(thread) ? id : null, body -> {
@@ -422,6 +436,7 @@ final class ThreadView extends JPanel implements Disposable {
         content.add(error);
         // In a narrow column, the hint and the buttons wrap onto more rows rather than running out of the card.
         JPanel footer = row();
+        if (readonly != null) footer.add(readonly);
         if (lines != null) footer.add(suggest(lines));
         footer.add(shortcutHint);
         footer.add(other);
@@ -452,10 +467,10 @@ final class ThreadView extends JPanel implements Disposable {
 
     /**
      * Runs a write of the text of `source` off the EDT, `buttons` greyed meanwhile:
-     * on success the field empties and `written` runs, on failure the error shows in `failed` and the text stays.
+     * on success the field empties and `written` runs, on failure the error shows in `failed` and the text stays; a null `source` writes no text.
      */
-    private void write(EditorTextField source, JBLabel failed, List<JButton> buttons, ThrowableConsumer<String, IOException> action, Runnable written) {
-        String body = source.getText().strip();
+    private void write(EditorTextField source, JBLabel failed, List<? extends AbstractButton> buttons, ThrowableConsumer<String, IOException> action, Runnable written) {
+        String body = source == null ? "" : source.getText().strip();
         buttons.forEach(button -> button.setEnabled(false));
         ModalityState modality = ModalityState.stateForComponent(this);
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
@@ -474,7 +489,7 @@ final class ThreadView extends JPanel implements Disposable {
                 failed.setText(shown);
                 failed.setVisible(shown != null);
                 if (shown == null) {
-                    source.setText("");
+                    if (source != null) source.setText("");
                     written.run();
                 }
                 revalidate();

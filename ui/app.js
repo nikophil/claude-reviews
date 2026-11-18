@@ -499,7 +499,7 @@ function App() {
                         })}
                     </select>
                     ${review.readOnly ? html`<span class="Label Label--done">${session.closedBecause ? 'Closed' : 'Approved'}</span>` : html`
-                        <button class="btn mr-2" disabled=${busy} onClick=${() => act('/send', { tree: diff.tree })}>Send</button>
+                        <${SendReview} busy=${busy} onSend=${(body, readonly) => act('/send', { tree: diff.tree, body, readonly })} />
                         <button class="btn btn-primary" disabled=${busy || pending} onClick=${approve}>Approve</button>`}
                 </div>
                 ${flash && html`<div class="flash flash-error mb-3">${flash}</div>`}
@@ -896,6 +896,7 @@ function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act, sen
     // The Pending message of mine being edited, by its rank, and its text.
     const [editing, setEditing] = useState(null);
     const edit = useState('');
+    const [readonly, setReadonly] = useState(null);
     const save = async body => {
         const done = await act(`/threads/${thread.id}/messages/${editing}`, { body });
         if (done) setEditing(null);
@@ -941,7 +942,14 @@ function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act, sen
                                     : act('/send', { tree, threads: [thread.id] })}
                                 pending=${thread.messages.some(message => !message.date)}
                                 suggest=${thread.anchor.side === 'new' && !whole ? thread.anchor.lines : null} />
-                            <button class="btn btn-sm mt-2" disabled=${busy} onClick=${() => act(`/threads/${thread.id}/resolve`, {})}>Resolve</button>`}
+                            <button class="btn btn-sm mt-2" disabled=${busy} onClick=${() => act(`/threads/${thread.id}/resolve`, {})}>Resolve</button>
+                            <label class="ml-3 f6"><input type="checkbox" class="mr-1" checked=${readonly ?? !!thread.readonly} disabled=${busy}
+                                onChange=${async event => {
+                                    // Checked at once, not after the write: the session answered holds it then.
+                                    setReadonly(event.target.checked);
+                                    await act(`/threads/${thread.id}/readonly`, { readonly: event.target.checked });
+                                    setReadonly(null);
+                                }} />Answer without changing code</label>`}
                 </div>`}
         </details>`;
 }
@@ -963,6 +971,29 @@ function Excerpt({ anchor: { path, side, start, lines, hunk } }) {
                     <td class="diff-code" dangerouslySetInnerHTML=${{ __html: highlight(line.text, line.type === 'note' ? null : lang) }}></td>
                 </tr>`)}
         </tbody></table>`;
+}
+
+/** Send, with a review message and « Answer without changing code » for the whole Send, as GitHub's Finish your review; both cleared once sent. */
+function SendReview({ busy, onSend }) {
+    const details = useRef(null);
+    const [text, setText] = useState('');
+    const [readonly, setReadonly] = useState(false);
+    const submit = async event => {
+        event.preventDefault();
+        if (!await onSend(text, readonly)) return;
+        setText('');
+        setReadonly(false);
+        details.current.open = false;
+    };
+    return html`
+        <details ref=${details} class="details-reset details-overlay position-relative mr-2" onKeyDown=${event => { if (event.key === 'Escape') details.current.open = false; }}>
+            <summary class="btn" role="button">Send</summary>
+            <form class="dropdown-menu dropdown-menu-sw send-review p-2" onSubmit=${submit}>
+                <textarea class="form-control width-full mb-2" aria-label="Review message" placeholder="Review message, optional (markdown)" value=${text} onInput=${event => setText(event.target.value)}></textarea>
+                <label class="d-block mb-2 f6"><input type="checkbox" class="mr-1" checked=${readonly} onChange=${event => setReadonly(event.target.checked)} />Answer without changing code</label>
+                <button class="btn btn-sm btn-primary" type="submit" disabled=${busy}>Send review</button>
+            </form>
+        </details>`;
 }
 
 /**

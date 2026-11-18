@@ -91,8 +91,32 @@ test('a reply stays Pending until Send, which publishes it', async ({ page }) =>
     expect((await session()).threads[0].messages[1]).toMatchObject({ author: 'me', body: 'Because.', date: null });
     await listen();
     await view.getByRole('button', { name: 'Send' }).click();
+    // The review message, left empty.
+    await page.locator('.quick-input-widget input').press('Enter');
     await expect(page.getByText('1 message sent to Claude', { exact: true })).toBeVisible();
     expect((await session()).threads[0].messages[1]).toMatchObject({ body: 'Because.', review: 1 });
+});
+
+test('a thread takes Answer Without Changing Code, and a Send a review message and its own', async ({ page }) => {
+    const { dir, route, session, listen } = await worktree(page, { claude: true });
+    await page.request.post(`${route}/threads/1/messages`, { data: { author: 'me', body: 'Because.' } });
+    await listen();
+    const view = await open(page, dir);
+    await view.getByRole('treeitem', { name: /#1 · Line \+2/ }).click();
+
+    await page.locator('.review-widget').getByRole('button', { name: 'Answer Without Changing Code' }).click();
+    await expect(page.locator('.review-widget').getByText(/Answer without changing code/)).toBeVisible();
+    expect((await session()).threads[0].readonly).toBe(true);
+
+    await listen();
+    await view.getByRole('button', { name: 'Send' }).click();
+    const box = page.locator('.quick-input-widget');
+    await box.locator('input').fill('Only explain');
+    await box.getByRole('button', { name: 'Answer without changing code: off' }).click();
+    await expect(box.getByRole('button', { name: 'Answer without changing code: on' })).toBeVisible();
+    await box.locator('input').press('Enter');
+    await expect(page.getByText('1 message sent to Claude', { exact: true })).toBeVisible();
+    expect((await session()).reviews).toEqual([{ review: 1, body: 'Only explain', readonly: true }]);
 });
 
 test('while a thread waits for Claude, the view says the Claude session waits for my answer, until it no longer does', async ({ page }) => {

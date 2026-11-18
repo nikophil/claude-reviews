@@ -1,10 +1,13 @@
 import type { EngineInterface, Register } from 'claude-code';
 import { due, forked, forkEnded, forking, forkPrompt, forks, idle, listeners, look, notified, prompt, resumed, sending, start, status, submitted, touched, turnEnded, turnStarted, type Seen, type Watch } from './watch.ts';
 
-type Session = { id: string; sends: number; reanchoredOn?: { base: string; tree: string }; threads: { id: number; status: string | null; anchor: any; at?: { start: number; end: number } | null; messages: { author: string; body: string; date: string | null }[] }[] };
+type Thread = { id: number; status: string | null; readonly?: boolean; anchor: any; at?: { start: number; end: number } | null; messages: { author: string; body: string; date: string | null; review?: number }[] };
+type Session = { id: string; sends: number; reanchoredOn?: { base: string; tree: string }; reviews?: { review: number; body: string; readonly: boolean }[]; threads: Thread[] };
 
 const SUGGESTION = 'A message of the user may hold a ```suggestion code block, the code the user proposes in place of the lines start to end of the thread, on side new: '
     + 'apply it to the working tree unless you disagree, then reply in the thread.';
+
+const READONLY = 'A thread with readonly true is to answer without changing any file, even if it seems to ask for a change or holds a suggestion: reply only.';
 
 const TOOLS = [
     {
@@ -14,12 +17,13 @@ const TOOLS = [
             + 'start and end are the range reanchored on that base for side old, on the working tree for side new, and lines the lines the thread was opened on. '
             + 'outdated is true when those lines are no longer found: start and end are then the original range, and hunk the original diff excerpt, as unified diff (null if the lines were out of the diff). '
             + 'A thread with start and end at 0 is on the whole file, without lines, and outdated only once the file is gone. '
-            + SUGGESTION,
+            + 'review is the message of the last Send, for the whole review, null without one; with readonly true, answer it without changing any file. '
+            + `${READONLY} ${SUGGESTION}`,
         inputSchema: { type: 'object', properties: {} },
     },
     {
         name: 'reply_to_thread',
-        description: `Replies in a claude-reviews thread, published at once. Reply in every thread waiting for you; change the code when a thread asks for it. ${SUGGESTION}`,
+        description: `Replies in a claude-reviews thread, published at once. Reply in every thread waiting for you; change the code when a thread asks for it. ${READONLY} ${SUGGESTION}`,
         inputSchema: {
             type: 'object',
             properties: { id: { type: 'integer', description: 'The thread id, from list_open_threads' }, body: { type: 'string', description: 'Markdown' } },
@@ -174,8 +178,22 @@ async function find($: EngineInterface, query = ''): Promise<{ open: Session | n
     return { error: res.status === 200 ? silent() : res.body?.error ?? silent() };
 }
 
+/** Whether Claude answers the thread without changing the code: checked on it, or the last Send of my messages in it was readonly. */
+function readonly(open: Session, thread: Thread): boolean {
+    const sent = thread.messages.findLast(message => message.author === 'me' && message.review)?.review;
+    return !!thread.readonly || !!open.reviews?.some(review => review.review === sent && review.readonly);
+}
+
+/** The review message of the last Send, null without one. */
+function review(open: Session | null): { body: string; readonly: boolean } | null {
+    const last = open?.reviews?.find(review => review.review === open.sends && review.body);
+    return last ? { body: last.body, readonly: last.readonly } : null;
+}
+
 function seen(open: Session | null): Seen {
-    return open && { id: open.id, sends: open.sends, waiting: open.threads.filter(thread => thread.status === 'waiting-for-claude').length };
+    if (!open) return null;
+    const waiting = open.threads.filter(thread => thread.status === 'waiting-for-claude');
+    return { id: open.id, sends: open.sends, waiting: waiting.length, readonly: waiting.filter(thread => readonly(open, thread)).length, review: review(open) };
 }
 
 // ponytail: two Claude sessions in one worktree both wake and both reply; the brief accepts it, as Orca rarely does it.
@@ -192,7 +210,7 @@ function submit($: EngineInterface): void {
     // A watch started afresh for another worktree meanwhile is not this prompt's.
     const settled = (dropped: boolean) => { if (watch.submitting === sent) apply($, submitted(watch, dropped)); };
     // Never awaited: it resolves only once the session is idle and the prompt opened its turn.
-    $.prompt.submit({ text: prompt(watch.waiting) }).then(result => settled(result.drop !== undefined), () => settled(true));
+    $.prompt.submit({ text: prompt(watch.waiting, watch.readonly, watch.review) }).then(result => settled(result.drop !== undefined), () => settled(true));
 }
 
 /** Answers in a fork of the Claude session, in the background: a prompt would wait for the end of the turn Claude works on. */
@@ -377,8 +395,8 @@ export const register: Register = on => {
         // ponytail: a /clear starts a conversation that gets no count; reset greeted at session.end if it matters.
         // ponytail: while the server does not answer, each prompt waits for it, up to 2 s; stop asking after a few if it shows.
         const found = await find($);
-        const waiting = 'open' in found && seen(found.open)?.waiting;
-        const result = await next(waiting ? { ...e, context: [...(e.context ?? []), prompt(waiting)] } : e);
+        const first = 'open' in found && seen(found.open);
+        const result = await next(first && first.waiting ? { ...e, context: [...(e.context ?? []), prompt(first.waiting, first.readonly, first.review)] } : e);
         // A count the server could not give waits for the next prompt.
         if (result.drop === undefined && 'open' in found) greeted = true;
         return result;
@@ -426,11 +444,15 @@ export const register: Register = on => {
         return {
             result: JSON.stringify({
                 base: open?.reanchoredOn?.base ?? null,
-                threads: threads.map(({ id, status, anchor, at, messages }) => ({
-                    id, status, outdated: !at, file: anchor.path, side: anchor.side, start: (at ?? anchor).start, end: (at ?? anchor).end, lines: anchor.lines,
-                    ...(!at && { hunk: excerpt(anchor.hunk) }),
-                    messages: messages.filter(message => message.date).map(({ author, body, date }) => ({ author, body, date })),
-                })),
+                review: review(open),
+                threads: threads.map(thread => {
+                    const { id, status, anchor, at, messages } = thread;
+                    return {
+                        id, status, readonly: readonly(open!, thread), outdated: !at, file: anchor.path, side: anchor.side, start: (at ?? anchor).start, end: (at ?? anchor).end, lines: anchor.lines,
+                        ...(!at && { hunk: excerpt(anchor.hunk) }),
+                        messages: messages.filter(message => message.date).map(({ author, body, date }) => ({ author, body, date })),
+                    };
+                }),
             }, null, 2),
         };
     });

@@ -49,6 +49,7 @@ import com.intellij.openapi.fileTypes.FileTypeManager;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.UserDataHolder;
@@ -57,7 +58,10 @@ import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.ui.AnimatedIcon;
 import com.intellij.ui.ClientProperty;
+import com.intellij.ui.components.JBCheckBox;
 import com.intellij.ui.components.JBLabel;
+import com.intellij.ui.components.JBScrollPane;
+import com.intellij.ui.components.JBTextArea;
 import com.intellij.util.ui.JBUI;
 
 import javax.swing.Icon;
@@ -327,18 +331,23 @@ public final class ReviewDiffAction extends DumbAwareAction {
      * the documents saved, the tree of the working tree is the one the diff and the editors show. Needs the write-intent lock.
      */
     static void send(Project project, String id, Integer thread, String from, Runnable done) {
+        JsonObject body = new JsonObject();
+        // The Send of the whole session carries a review message and its readonly, as a review on GitHub its body; cancelled, nothing is sent.
+        if (thread == null && !review(project, body)) {
+            done.run();
+            return;
+        }
         ReviewService.get(project).sentFrom(thread != null ? "thread:" + thread : from);
         FileDocumentManager.getInstance().saveAllDocuments();
         background(project, () -> {
             try {
-                JsonObject tree = new JsonObject();
-                tree.add("tree", Server.get("/api/sessions/" + id + "/tree").get("tree"));
+                body.add("tree", Server.get("/api/sessions/" + id + "/tree").get("tree"));
                 if (thread != null) {
                     JsonArray threads = new JsonArray();
                     threads.add(thread);
-                    tree.add("threads", threads);
+                    body.add("threads", threads);
                 }
-                JsonObject session = Server.post("/api/sessions/" + id + "/send", tree);
+                JsonObject session = Server.post("/api/sessions/" + id + "/send", body);
                 ThreadsInDiff.SESSIONS.put(id, session);
                 int count = sent(session);
                 notify(project, count + (count == 1 ? " message sent to Claude" : " messages sent to Claude"), ThreadView.Avatars.CLAUDE_SMALL);
@@ -346,6 +355,40 @@ public final class ReviewDiffAction extends DumbAwareAction {
                 ApplicationManager.getApplication().invokeLater(done);
             }
         });
+    }
+
+    /** Asks the review message and « Answer without changing code » of a Send into `body`; false once cancelled. */
+    private static boolean review(Project project, JsonObject body) {
+        JBTextArea message = new JBTextArea(5, 50);
+        message.setLineWrap(true);
+        message.setWrapStyleWord(true);
+        JBCheckBox readonly = new JBCheckBox("Answer without changing code");
+        readonly.setToolTipText("Claude replies in the threads of this Send without editing any file");
+        DialogWrapper dialog = new DialogWrapper(project) {
+            {
+                setTitle("Send to Claude");
+                setOKButtonText("Send");
+                init();
+            }
+
+            @Override
+            protected JComponent createCenterPanel() {
+                JPanel panel = new JPanel(new BorderLayout(0, JBUI.scale(8)));
+                panel.add(new JBLabel("Review message, optional"), BorderLayout.NORTH);
+                panel.add(new JBScrollPane(message), BorderLayout.CENTER);
+                panel.add(readonly, BorderLayout.SOUTH);
+                return panel;
+            }
+
+            @Override
+            public JComponent getPreferredFocusedComponent() {
+                return message;
+            }
+        };
+        if (!dialog.showAndGet()) return false;
+        body.addProperty("body", message.getText());
+        body.addProperty("readonly", readonly.isSelected());
+        return true;
     }
 
     private static AnAction approve(Project project, String id) {

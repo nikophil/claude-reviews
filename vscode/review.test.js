@@ -32,6 +32,7 @@ test('the label of a thread names it, its lines, its status, the old code and Ou
     assert.equal(review.label(thread(12, { side: 'old', at: null }), session), '#12 · Line -2 · Waiting for Claude · old code · Outdated');
     assert.equal(review.label(thread(3, { status: 'open' }), session), '#3 · Line +2');
     assert.equal(review.label(thread(3), { claudeSession: false }), '#3 · Line +2 · No Claude session');
+    assert.equal(review.label({ ...thread(3, { status: 'open' }), readonly: true }, session), '#3 · Line +2 · Answer without changing code');
 });
 
 test('the counts of a file are its threads waiting for Claude, the Pending messages a Send would publish, and its Resolved threads', () => {

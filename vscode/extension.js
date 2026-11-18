@@ -162,11 +162,36 @@ async function send(/** @type {(() => Promise<number | undefined>) | undefined} 
         if (copy) await vscode.env.clipboard.writeText(review.startClaude(session));
         return;
     }
+    // The Send of the whole session carries a review message and its readonly; cancelled, nothing is sent.
+    const asked = thread === undefined ? await reviewMessage() : {};
+    if (!asked) return;
     const tree = await shownTree();
-    const sent = await call(`/api/sessions/${session.id}/send`, thread === undefined ? { tree } : { tree, threads: [thread] });
+    const sent = await call(`/api/sessions/${session.id}/send`, thread === undefined ? { tree, ...asked } : { tree, threads: [thread] });
     const count = review.sent(sent);
     vscode.window.showInformationMessage(`${count} ${count === 1 ? 'message' : 'messages'} sent to Claude`);
     await refresh();
+}
+
+/**
+ * The review message of a Send, and « Answer without changing code », a button of the input box that toggles; undefined once cancelled.
+ * @returns {Promise<{ body: string, readonly: boolean } | undefined>}
+ */
+function reviewMessage() {
+    const box = vscode.window.createInputBox();
+    let readonly = false;
+    const toggle = () => {
+        box.buttons = [{ iconPath: new vscode.ThemeIcon(readonly ? 'lock' : 'unlock'), tooltip: `Answer without changing code: ${readonly ? 'on' : 'off'}` }];
+    };
+    box.title = 'Send to Claude';
+    box.prompt = 'Review message, optional';
+    toggle();
+    return new Promise(resolve => {
+        box.onDidTriggerButton(() => { readonly = !readonly; toggle(); });
+        box.onDidAccept(() => { resolve({ body: box.value, readonly }); box.dispose(); });
+        // After an accept, the dispose hides it: resolve then keeps the first answer.
+        box.onDidHide(() => { resolve(undefined); box.dispose(); });
+        box.show();
+    });
 }
 
 async function approve() {

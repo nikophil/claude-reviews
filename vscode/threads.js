@@ -32,7 +32,7 @@ function fill(/** @type {vscode.CommentThread} */ shown, /** @type {any} */ thre
     // A Resolved thread takes no message until its Unresolve.
     shown.canReply = !thread.resolved;
     shown.state = thread.resolved ? vscode.CommentThreadState.Resolved : vscode.CommentThreadState.Unresolved;
-    shown.contextValue = thread.resolved ? 'resolved' : 'unresolved';
+    shown.contextValue = `${thread.resolved ? 'resolved' : 'unresolved'} ${thread.readonly ? 'readonly' : 'writable'}`;
     if (fold) shown.collapsibleState = thread.resolved ? vscode.CommentThreadCollapsibleState.Collapsed : vscode.CommentThreadCollapsibleState.Expanded;
 }
 
@@ -140,6 +140,11 @@ function register(/** @type {vscode.ExtensionContext} */ context, /** @type {any
             await app.call(`${route(shown)}/unresolve`, {});
             await app.refresh();
         })),
+        ...[['localReviews.readonly', true], ['localReviews.allowChanges', false]].map(([command, readonly]) =>
+            vscode.commands.registerCommand(String(command), app.guard(async (/** @type {vscode.CommentThread} */ shown) => {
+                await app.call(`${route(shown)}/readonly`, { readonly });
+                await app.refresh();
+            }))),
     );
 }
 

@@ -51,6 +51,8 @@
       { "command": "localReviews.replyAndSend", "title": "Send" },
       { "command": "localReviews.resolve", "title": "Resolve", "icon": "$(check)" },
       { "command": "localReviews.unresolve", "title": "Unresolve", "icon": "$(discard)" },
+      { "command": "localReviews.readonly", "title": "Answer Without Changing Code", "icon": "$(lock)" },
+      { "command": "localReviews.allowChanges", "title": "Allow Code Changes", "icon": "$(unlock)" },
       { "command": "localReviews.copyStartClaude", "title": "Copy the Command That Starts Claude", "category": "Claude Reviews" },
       { "command": "localReviews.previousThread", "title": "Previous Thread", "category": "Claude Reviews", "icon": "$(arrow-up)" },
       { "command": "localReviews.nextThread", "title": "Next Thread", "category": "Claude Reviews", "icon": "$(arrow-down)" },
@@ -70,6 +72,8 @@
         { "command": "localReviews.replyAndSend", "when": "false" },
         { "command": "localReviews.resolve", "when": "false" },
         { "command": "localReviews.unresolve", "when": "false" },
+        { "command": "localReviews.readonly", "when": "false" },
+        { "command": "localReviews.allowChanges", "when": "false" },
         { "command": "localReviews.blocked", "when": "false" }
       ],
       "view/title": [
@@ -93,7 +97,9 @@
       ],
       "comments/commentThread/title": [
         { "command": "localReviews.resolve", "when": "commentController == local-reviews && commentThread =~ /^unresolved/", "group": "inline@2" },
-        { "command": "localReviews.unresolve", "when": "commentController == local-reviews && commentThread =~ /^resolved/", "group": "inline@2" }
+        { "command": "localReviews.unresolve", "when": "commentController == local-reviews && commentThread =~ /^resolved/", "group": "inline@2" },
+        { "command": "localReviews.readonly", "when": "commentController == local-reviews && commentThread =~ /^unresolved writable/", "group": "inline@3" },
+        { "command": "localReviews.allowChanges", "when": "commentController == local-reviews && commentThread =~ /^unresolved readonly/", "group": "inline@3" }
       ],
       "comments/commentThread/context": [
         { "command": "localReviews.createThread", "when": "commentController == local-reviews && commentThreadIsEmpty", "group": "inline@1" },

@@ -19,7 +19,10 @@ type Anchor = {
     /** The diff hunk up to the end of the range, as GitHub's diff_hunk; null outside the diff. */
     hunk: Hunk | null;
 };
-type Thread = { id: number; anchor: Anchor; resolved: boolean; messages: Message[] };
+/** `readonly`: Claude answers the thread without changing the code; absent from threads opened before it. */
+type Thread = { id: number; anchor: Anchor; resolved: boolean; readonly?: boolean; messages: Message[] };
+/** The review message and readonly of a Send, under its number; only for a Send that carries one of them. */
+type Review = { review: number; body: string; readonly: boolean };
 /**
  * `base` is the last base chosen: HEAD, last-review, origin/HEAD, refs/heads/<branch> or refs/remotes/<remote>/<branch>.
  * `commonDir` is the repository shared by the worktrees, where the refs stay once the worktree is gone; absent from sessions opened before it was kept.
@@ -27,10 +30,11 @@ type Thread = { id: number; anchor: Anchor; resolved: boolean; messages: Message
  * `closedBecause` tells a session closed because its worktree is gone from an approved one.
  * `viewed` maps each file marked Viewed to the id of its content in the tree it was marked on, DELETED for a file absent from it;
  * absent from sessions opened before Viewed.
+ * `reviews` holds the review message and readonly of each Send that carries one; absent before the first.
  */
 export type Session = {
     id: string; worktree: string; commonDir?: string; createdAt: string; approvedAt: string | null; closedBecause?: 'worktree-gone';
-    base: string; sends: number; sentAt?: string; threads: Thread[]; viewed?: Record<string, string>;
+    base: string; sends: number; sentAt?: string; threads: Thread[]; viewed?: Record<string, string>; reviews?: Review[];
 };
 
 const DELETED = 'deleted';
@@ -624,6 +628,20 @@ export async function deleteMessage(id: string, threadId: number, index: number)
     return view(session);
 }
 
+function checkReadonly(readonly: unknown): asserts readonly is boolean {
+    if (typeof readonly !== 'boolean') throw httpError(400, 'readonly must be a boolean');
+}
+
+/** Checks or unchecks "Answer without changing code" on the thread. */
+export async function setReadonly(id: string, threadId: number, readonly: unknown) {
+    const session = await writable(id);
+    const thread = findThread(session, threadId);
+    checkReadonly(readonly);
+    thread.readonly = readonly;
+    await save(session);
+    return view(session);
+}
+
 export async function resolve(id: string, threadId: number, resolved = true) {
     const session = await writable(id);
     findThread(session, threadId).resolved = resolved;
@@ -634,13 +652,17 @@ export async function resolve(id: string, threadId: number, resolved = true) {
 // The commit only carries the tree, so it must not depend on the user's identity.
 const SNAPSHOT_AUTHOR = { GIT_AUTHOR_NAME: 'claude-reviews', GIT_AUTHOR_EMAIL: 'claude-reviews@localhost', GIT_COMMITTER_NAME: 'claude-reviews', GIT_COMMITTER_EMAIL: 'claude-reviews@localhost' };
 
-/** Takes a Snapshot of the displayed `tree`, then publishes the Pending messages of the threads not Resolved, dated now, after the messages already published. */
-/** Send: the Snapshot of the displayed tree, then the Pending messages of the session, or of `threads` only when given. */
-export async function send(id: string, tree: unknown, threads?: unknown) {
+/**
+ * Send: the Snapshot of the displayed tree, then the Pending messages of the session, or of `threads` only when given,
+ * with the review message `body` and `readonly`, kept under the number of the Send when it carries one of them.
+ */
+export async function send(id: string, { tree, threads, body = '', readonly = false }: Record<string, unknown>) {
     const session = await writable(id);
     if (threads !== undefined && !(Array.isArray(threads) && threads.every(Number.isInteger))) {
         throw httpError(400, 'threads must be a list of thread ids');
     }
+    if (typeof body !== 'string') throw httpError(400, 'body must be a string');
+    checkReadonly(readonly);
     const sent = threads === undefined ? session.threads : (threads as number[]).map(n => findThread(session, n));
     const shown = await checkObject(session.worktree, tree, 'tree', ['tree']);
     const commit = await git(session.worktree, ['commit-tree', '-m', `claude-reviews session ${id}`, shown], SNAPSHOT_AUTHOR);
@@ -654,6 +676,7 @@ export async function send(id: string, tree: unknown, threads?: unknown) {
     }
     session.sends = review;
     session.sentAt = date;
+    if (body.trim() || readonly) (session.reviews ??= []).push({ review, body: body.trim() ? body : '', readonly });
     await save(session);
     return view(session);
 }

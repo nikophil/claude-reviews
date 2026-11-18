@@ -55,11 +55,13 @@ Read `BRIEF.md`, `GLOSSARY.md` and `docs/adr/` before changing the code, and nam
   it edits and deletes my Pending messages, moves from one thread not Resolved to the next (Next Thread and Previous Thread, Alt+Shift+Page Down and Page Up, also in the bar of the diff and at the top right of the editor), marks "Replied" those, not Resolved, where Claude replied since my last Send,
   resolves or reopens a thread from its context menu in the tree, opens an Outdated thread, or a Resolved one, in a window of its own, scrolled when long,
   groups its files under their directories, or lists them flat each followed by its directory (Group By › Directory, as in the Commit tool window),
-  and offers Suggest Change, Comment on File and Copy Threads as Markdown, in the same format as the web UI; it only talks to the API, like any client ([ADR 0004](docs/adr/0004-clients-and-mod-separated-by-the-api.md)).
+  and offers Suggest Change, Comment on File and Copy Threads as Markdown, in the same format as the web UI;
+  each thread not Resolved has its "Answer without changing code" checkbox, and the Send of the whole session asks for a review message and its own checkbox in a dialog; it only talks to the API, like any client ([ADR 0004](docs/adr/0004-clients-and-mod-separated-by-the-api.md)).
 - `phpstorm/ui-test/`: the UI tests of the plugin, in Kotlin, with JetBrains' Starter and Driver, under Gradle in Docker ([ADR 0005](docs/adr/0005-phpstorm-ui-tests-with-gradle-in-docker.md));
   there, `run.sh` runs in sequence `build.sh`, the Plugin Verifier, which fails on any verdict other than "Compatible", and `gradle test`.
 - `vscode/`: the VS Code extension, in CommonJS JS checked by `// @ts-check`, without a build: the "Claude Reviews" view (base, Send, Approve, changed files with their Viewed checkbox and their threads), the threads through the Comments API in the editor and in the diff of VS Code;
   a click on a file opens its diff, the Viewed checkbox is also in the bar of the diff, Next Thread and Previous Thread in the bar of the editor and of the diff, and an Outdated thread opens on its diff excerpt; `vscode/review.js` holds the pure functions, tested by `node --test`.
+  "Answer Without Changing Code" and "Allow Code Changes" are actions of the thread, and the Send of the whole session asks for a review message in an input box, whose lock button is its "Answer without changing code".
 - No npm dependency at runtime: what is missing gets written, or vendored as a single file in `ui/vendor/`.
 
 ## HTTP contract
@@ -109,9 +111,10 @@ The server serves the UI and a JSON API, for the UI and the mod.
 | `POST /api/sessions/<id>/threads/<n>/messages/<i>` `{ body }` | Edits my Pending message at index `i`, counted from 0, in the thread. |
 | `POST /api/sessions/<id>/threads/<n>/messages/<i>/delete` `{}` | Deletes my Pending message at index `i`; a thread that has no message left goes with it. |
 | `POST /api/sessions/<id>/threads/<n>/resolve` `{}` | Resolves the thread. |
+| `POST /api/sessions/<id>/threads/<n>/readonly` `{ readonly }` | Checks or unchecks "Answer without changing code" on the thread. |
 | `POST /api/sessions/<id>/viewed` `{ path, tree, viewed }` | Marks the file Viewed on the displayed tree, or unmarks it. |
 | `POST /api/sessions/<id>/threads/<n>/unresolve` `{}` | Reopens the Resolved thread. |
-| `POST /api/sessions/<id>/send` `{ tree, threads? }` | Send: Snapshot of the displayed tree, then publication of the Pending messages, only those of the threads in `threads` when it is given. |
+| `POST /api/sessions/<id>/send` `{ tree, threads?, body?, readonly? }` | Send: Snapshot of the displayed tree, then publication of the Pending messages, only those of the threads in `threads` when it is given; `body`, the review message, and `readonly` are kept in `reviews` under the number of the Send when it carries one of them. |
 | `POST /api/sessions/<id>/approve` `{}` | Approve: archives the session, then deletes its refs. |
 | `POST /api/sessions/<id>/show` `{}` | Asks the IDE clients to show the session: it then carries `showRequestedAt`, the date of the request, kept in memory. |
 | `POST /api/sessions/<id>/turn-complete` `{}` | Notifies "Claude replied in N threads", followed by ", M still waiting" if some remain, through `notify-send` (Linux) or `osascript` (macOS). |
@@ -173,14 +176,19 @@ The server serves the UI and a JSON API, for the UI and the mod.
 - It stops an older version of claude-reviews through `POST /api/shutdown` then starts it again; it uses a newer version as is, so that two Claude sessions of different versions do not stop each other's server.
 - When the port of the `endpoint`, held by its account, answers something other than claude-reviews, or does not answer within 2 s, nothing starts: the mod reports it through `$.ui.log`, a line of the transcript that the model does not read, and polls anyway.
 - `list_open_threads()` returns `base`, the commit of the base of the session, and, except for Resolved threads and threads without a published message, the id, the status, `outdated`, the file, the side, the range re-anchored on this base on the `old` side and on the working tree on the `new` side (the one of the Anchor if it is Outdated), the lines of the Anchor and the published messages.
+- It also returns `review`, `{ body, readonly }` of the review message of the last Send, `null` without one, and per thread `readonly`:
+  true when the thread is checked "Answer without changing code", or when the Send that published my last message in it was readonly.
+  The descriptions of the tools ask Claude to answer such a thread, and a readonly review message, without changing any file.
 - An Outdated thread also carries `hunk` there, the original diff excerpt as a unified diff, `null` if the Anchor was outside the diff.
 - A thread on the whole file has `start` and `end` at 0 there and no lines; `open_thread` without `lines` opens one.
 - A ```` ```suggestion ```` block in one of my messages is the code I propose in place of the lines of the thread, on the `new` side: the descriptions of the tools ask Claude to apply it to the working tree unless it disagrees, then to reply.
 - The poll keeps a status line through `$.ui.status`: "claude-reviews · N threads waiting for Claude", followed by "· a fork answers in the background" while a fork runs, or by "· wake held until the next prompt" when a wake waits after a `{ drop }`, and nothing without a thread waiting for Claude.
-- It polls `GET /api/sessions?worktree=<path>&claude` every 2 s; a Send that leaves Waiting for Claude threads makes it wake Claude through `$.prompt.submit`, never awaited in a hook.
+- It polls `GET /api/sessions?worktree=<path>&claude` every 2 s; a Send that leaves Waiting for Claude threads, or that carries a review message, makes it wake Claude through `$.prompt.submit`, never awaited in a hook.
 - While Claude works on a turn of its own, one that no wake or relaunch opened, the mod spawns instead a fork of the Claude session in the background (`$.agent.spawn` with `subagentType: 'fork'`), which answers the threads with the same tools, in the same worktree:
   its prompt warns it that the main conversation keeps working there, to leave its task and the files it edits alone, and to say so in the thread instead.
   Following another worktree keeps the turn running: a Send there still goes to a fork. One fork runs at a time: a Send seen meanwhile waits for its end, then goes to a fork again, or to a prompt once Claude is idle; a fork the engine denies leaves the Send to the prompt.
+- The prompt, and the one of a fork, counts the threads waiting and the readonly ones among them, followed by the review message of the last Send;
+  a review message without a thread waiting asks Claude to answer it in the conversation, and relaunches nothing.
 - Each of its reads adds `&blocked` while a loop of its Claude session, the main one or a subagent's, is Blocked:
   from a `classic.PermissionRequest` that no settings hook answers, or a `tool.call` of `AskUserQuestion`, until a tool call of that loop ends.
   The `next` of `classic.PermissionRequest` resolves once the settings hooks answered, not the person, hence the end of the tool call, run or refused, as the end of the wait.
@@ -225,6 +233,7 @@ The data folder is `$XDG_DATA_HOME/claude-reviews`, otherwise `~/.local/share/cl
   "sends": 1,
   "sentAt": "2026-11-14T10:05:00.000Z",
   "viewed": { "src/b.ts": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391" },
+  "reviews": [{ "review": 1, "body": "Explain, change nothing yet", "readonly": true }],
   "threads": [{
     "id": 1,
     "anchor": {
@@ -233,6 +242,7 @@ The data folder is `$XDG_DATA_HOME/claude-reviews`, otherwise `~/.local/share/cl
       "hunk": { "header": "@@ -1,6 +1,6 @@", "lines": [{ "type": "add", "oldNo": null, "newNo": 2, "text": "…" }] }
     },
     "resolved": false,
+    "readonly": false,
     "messages": [
       { "author": "me", "body": "Why?", "date": "2026-11-14T10:05:00.000Z", "review": 1 },
       { "author": "claude", "body": "Because…", "date": "2026-11-14T10:06:00.000Z" },
@@ -249,6 +259,8 @@ The data folder is `$XDG_DATA_HOME/claude-reviews`, otherwise `~/.local/share/cl
 - `sends`: the number of Sends, hence the number of the last ref.
 - `sentAt`: the date of the last Send, absent before the first one.
 - `viewed`: each file marked Viewed, with the id of its content in the displayed tree when I checked it, `deleted` for a file absent from this tree; absent from older sessions.
+- `reviews`: the review message (`body`, empty without one) and `readonly` of each Send that carries one of them, under its number in `review`; absent before the first.
+- `readonly`: on a thread, "Answer without changing code", false at its opening; absent from older threads.
 - `closedBecause`: `worktree-gone` for a session closed because its worktree disappeared, absent otherwise, even after an Approve.
 - `anchor`: up to 3 neighboring lines in `before` and `after`, and `hunk`, the excerpt of the diff up to the end of the range, `null` outside the diff; no SHA.
 - A message without `date` is Pending; a Send dates it, gives it its number in `review`, and places it after the messages already published.

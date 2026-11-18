@@ -5,7 +5,7 @@
 
 /** @typedef {{ author: 'me' | 'claude', body: string, date: string | null, review?: number }} Message */
 /** @typedef {{ path: string, side: 'old' | 'new', start: number, end: number, lines: string[], hunk: { header: string, lines: { type: string, text: string }[] } | null }} Anchor */
-/** @typedef {{ id: number, anchor: Anchor, resolved: boolean, status: string | null, at?: { start: number, end: number } | null, messages: Message[] }} Thread */
+/** @typedef {{ id: number, anchor: Anchor, resolved: boolean, readonly?: boolean, status: string | null, at?: { start: number, end: number } | null, messages: Message[] }} Thread */
 /** @typedef {{ path: string, status: string, hunks?: { lines: { type: string, newNo: number | null }[] }[] }} File */
 
 /** « Pending » before any Send, « Waiting for Claude », « Resolved », or '' when Claude spoke last. */
@@ -24,7 +24,7 @@ function lines(/** @type {Thread} */ thread) {
 /** « #12 · Line +5 · Waiting for Claude · old code · Outdated »; without a Claude session, nobody answers. */
 function label(/** @type {Thread} */ thread, /** @type {any} */ session) {
     const shown = status(thread) === 'Waiting for Claude' && !claude(session) ? 'No Claude session' : status(thread);
-    return [`#${thread.id}`, lines(thread), shown, thread.anchor.side === 'old' && 'old code', !thread.at && 'Outdated'].filter(Boolean).join(' · ');
+    return [`#${thread.id}`, lines(thread), shown, thread.anchor.side === 'old' && 'old code', !thread.at && 'Outdated', thread.readonly && 'Answer without changing code'].filter(Boolean).join(' · ');
 }
 
 function pending(/** @type {Thread} */ thread) {

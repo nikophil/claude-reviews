@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from './fixtures.ts';
+import { expect, send, test, type APIRequestContext, type Page } from './fixtures.ts';
 import { git, removeRepos, repo, vanish, write } from '../server/fixture.ts';
 
 test.afterAll(removeRepos);
@@ -60,17 +60,17 @@ test('Send is active without Pending message, and Approve is grayed out with one
     await claudeThread(request, dir, 2, 'Is this right?');
     await open(page, dir);
 
-    const send = page.getByRole('button', { name: 'Send', exact: true });
+    const sendButton = page.getByRole('button', { name: 'Send', exact: true });
     const approve = page.getByRole('button', { name: 'Approve' });
-    await expect(send).toBeEnabled();
+    await expect(sendButton).toBeEnabled();
     await expect(approve).toBeEnabled();
     await page.getByRole('textbox').fill('Yes');
     await page.getByRole('button', { name: 'Add message' }).click();
     await expect(page.locator('.thread')).toContainText('Pending');
     await expect(approve).toBeDisabled();
-    await expect(send).toBeEnabled();
+    await expect(sendButton).toBeEnabled();
 
-    await send.click();
+    await send(page);
 
     await expect(page.locator('.thread')).not.toContainText('Pending');
     await expect(page.locator('.thread')).toContainText('Waiting for Claude');
@@ -128,6 +128,26 @@ test('a Send of a thread that fails after adding my message leaves it Pending an
     await expect(page.locator('.flash-error')).toHaveText('refused');
     await expect(thread).toContainText('Pending');
     await expect(thread.getByRole('textbox')).toHaveValue('');
+});
+
+test('a thread takes Answer without changing code, and a Send a review message and its own', async ({ page, request }) => {
+    const dir = changed();
+    const { id } = await claudeThread(request, dir, 2, 'Is this right?');
+    await open(page, dir);
+    const readonly = page.locator('.thread').getByRole('checkbox', { name: 'Answer without changing code' });
+
+    await expect(readonly).not.toBeChecked();
+    await readonly.check();
+    await expect(readonly).toBeChecked();
+    await page.locator('.thread').getByRole('textbox').fill('Why?');
+    await page.getByRole('button', { name: 'Add message' }).click();
+    await send(page, { message: 'Only explain', readonly: true });
+
+    await expect(page.locator('.thread')).toContainText('Waiting for Claude');
+    await expect(page.locator('.send-review')).toBeHidden();
+    const session = await (await request.get(`/api/sessions/${id}`)).json();
+    expect(session.threads[0].readonly).toBe(true);
+    expect(session.reviews).toEqual([{ review: 1, body: 'Only explain', readonly: true }]);
 });
 
 test('a Resolved thread folds, opens again on a click, takes no message, and takes them again once Unresolved', async ({ page, request }) => {
@@ -241,7 +261,8 @@ test('a double click on Add message or Send writes once', async ({ page }) => {
 
     await page.getByRole('button', { name: 'Add message' }).dblclick();
     await expect(page.locator('.thread')).toContainText('Pending');
-    await page.getByRole('button', { name: 'Send', exact: true }).dblclick();
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await page.getByRole('button', { name: 'Send review' }).dblclick();
     await expect(page.locator('.thread')).toContainText('Waiting for Claude');
 
     expect(posts).toEqual(['threads', 'send']);

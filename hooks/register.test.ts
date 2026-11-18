@@ -314,7 +314,7 @@ test('list_open_threads gives, but for Resolved threads and threads without publ
     const { date } = result.threads[0].messages[0];
     assert.match(date, /^\d{4}-\d\d-\d\dT/);
     assert.deepEqual(result.threads[0], {
-        id: 1, status: 'waiting-for-claude', outdated: false, file: 'a.txt', side: 'new', start: 2, end: 2, lines: ['2'],
+        id: 1, status: 'waiting-for-claude', readonly: false, outdated: false, file: 'a.txt', side: 'new', start: 2, end: 2, lines: ['2'],
         messages: [{ author: 'me', body: 'Waiting', date }],
     });
 });
@@ -1060,4 +1060,45 @@ test('a launch of an earlier registration of the module neither probes nor adopt
     await new Promise(resolve => setTimeout(resolve, 100));
 
     assert.deepEqual(other.paths, ['GET /api/health'], 'only the second registration probed it');
+});
+
+test('list_open_threads gives each thread readonly when checked, or when the last Send of my messages in it was readonly, and the review message of the last Send', async () => {
+    const { dir, id } = await session(['Checked', 'By the review', 'Neither']);
+    await api('POST', `/api/sessions/${id}/threads/1/readonly`, { readonly: true });
+    const shown = await api('GET', `/api/sessions/${id}/diff`);
+    await api('POST', `/api/sessions/${id}/threads/2/messages`, { author: 'me', body: 'Explain' });
+    await api('POST', `/api/sessions/${id}/send`, { tree: shown.tree, threads: [2], body: 'Only explain', readonly: true });
+    const claude = await mod(dir);
+
+    const result = JSON.parse((await claude.tool('list_open_threads')).result);
+
+    assert.deepEqual(result.threads.map((thread: any) => [thread.id, thread.readonly]), [[1, true], [2, true], [3, false]]);
+    assert.deepEqual(result.review, { body: 'Only explain', readonly: true });
+    await api('POST', `/api/sessions/${id}/send`, { tree: shown.tree });
+    assert.equal(JSON.parse((await claude.tool('list_open_threads')).result).review, null, 'a Send without a review message');
+});
+
+test('a Send wakes Claude with the readonly threads counted and its review message, even one that leaves no thread waiting', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir);
+    await claude.poll();
+    const shown = await api('GET', `/api/sessions/${id}/diff`);
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'me', base: shown.base, tree: shown.tree, path: 'a.txt', side: 'new', start: 1, end: 1, body: 'Why?' });
+    await api('POST', `/api/sessions/${id}/send`, { tree: shown.tree, body: 'Mind the tests', readonly: true });
+    await claude.poll();
+    await api('POST', `/api/sessions/${id}/threads/1/resolve`, {});
+    await claude.fire('turn.complete', { reason: 'answer' });
+    await api('POST', `/api/sessions/${id}/send`, { tree: shown.tree, body: 'Rename it' });
+    await claude.poll();
+
+    assert.deepEqual(claude.seen.submitted, [prompt(1, 1, { body: 'Mind the tests', readonly: true }), prompt(0, 0, { body: 'Rename it', readonly: false })]);
+});
+
+test('the tools tell Claude to answer a readonly thread without changing any file', async () => {
+    const claude = await mod(repo({ 'a.txt': 'a\n' }));
+
+    for (const name of ['list_open_threads', 'reply_to_thread']) {
+        assert.match(claude.seen.tools.find(tool => tool.name === name)!.description, /readonly.*without changing any file/, name);
+    }
+    assert.match(claude.seen.tools.find(tool => tool.name === 'list_open_threads')!.description, /review is the message of the last Send/);
 });

@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from './fixtures.ts';
+import { expect, send, test, type APIRequestContext, type Page } from './fixtures.ts';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { crc32 } from 'node:zlib';
@@ -79,7 +79,7 @@ test('the images of the README', async ({ page, request }) => {
     await composer.getByRole('button', { name: 'Add message' }).click();
     await expect(cart.locator('.thread')).toHaveCount(3);
     await frame(1600);
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await send(page);
     const thread = page.locator('#thread-3');
     await expect(thread).toContainText('Waiting for Claude');
     // The click scrolled up to Send: back to the thread.
