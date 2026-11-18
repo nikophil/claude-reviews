@@ -21,6 +21,7 @@ import com.intellij.driver.sdk.waitForProjectOpen
 import com.intellij.ide.starter.di.di
 import com.intellij.ide.starter.driver.engine.BackgroundRun
 import com.intellij.ide.starter.driver.engine.runIdeWithDriver
+import com.intellij.ide.starter.ide.IDETestContext
 import com.intellij.ide.starter.ide.IdeDistributionFactory
 import com.intellij.ide.starter.ide.IdeInstaller
 import com.intellij.ide.starter.models.IdeInfo
@@ -65,6 +66,7 @@ class ReviewTest {
         /** What the stand-in for the mod adds to its read every 2 s: `&blocked` while its Claude session waits for my answer. */
         @Volatile
         private var claudeQuery = ""
+        private lateinit var context: IDETestContext
         private lateinit var ide: BackgroundRun
         private val driver: Driver get() = ide.driver
 
@@ -101,14 +103,14 @@ class ReviewTest {
                     override suspend fun install(ideInfo: IdeInfo) = home.fileName.toString() to di.direct.instance<IdeDistributionFactory>().installIDE(home.parent, "phpstorm")
                 }
             })
-            ide = Starter.newContext("review", TestCase(phpStorm, LocalProjectInfo(Path.of(worktree))))
+            context = Starter.newContext("review", TestCase(phpStorm, LocalProjectInfo(Path.of(worktree))))
                 .apply { pluginConfigurator.installPluginFromPath(Path.of(System.getProperty("plugin"))) }
                 // XDG_DATA_HOME so the plugin reads the endpoint file, port and token, the server wrote.
                 .applyVMOptionsPatch {
                     withEnv("CLAUDE_REVIEWS_PORT", PORT)
                     withEnv("XDG_DATA_HOME", data.toString())
                 }
-                .runIdeWithDriver()
+            ide = context.runIdeWithDriver()
             driver.waitForProjectOpen(3.minutes)
         }
 
@@ -179,6 +181,10 @@ class ReviewTest {
             }
             assertEquals(expected, last, "the caret on the line of the thread")
         }
+
+        /** The idea.log of the PhpStorm of the test, where an exception of the plugin lands as an IDE Internal Error. */
+        private fun ideaLog(): String = Files.walk(context.paths.testHome).use { paths -> paths.filter { it.fileName.toString() == "idea.log" }.toList() }
+            .joinToString("") { Files.readString(it) }
     }
 
     @Test
@@ -411,5 +417,18 @@ class ReviewTest {
         driver.ui.x("$window//div[@text='Unresolve']").click()
         awaitSession("the thread is no longer Resolved") { !it.getAsJsonArray("threads")[1].asJsonObject["resolved"].asBoolean }
         driver.ui.button("Close").click()
+    }
+
+    @Test
+    @Order(14)
+    fun `an Approve while the tree has the focus empties the tool window without an exception`() {
+        frame { tree("//div[@class='Tree']").clickPath("c.php", "Line +50", fullMatch = false) }
+        val before = ideaLog().length
+        // As the browser would: the tree keeps the focus, and loses it once the tool window no longer shows the session.
+        post("/api/sessions/${session()["id"].asString}/approve", "{}")
+        frame { x("//div[@class='JBLabel' and @text='No review of this worktree yet.']").shouldBe(enabled) }
+        Thread.sleep(2000)
+        val logged = ideaLog().substring(before)
+        assert("at localreviews." !in logged) { "an exception of the plugin after the Approve:\n$logged" }
     }
 }
