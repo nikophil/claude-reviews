@@ -141,6 +141,19 @@ export function resumed(watch: Watch): Watch {
     return { ...watch, dropped: false };
 }
 
+/**
+ * The directory a call of the main loop leads the mod to: the folder of the file Edit, Write or NotebookEdit wrote, a relative path read from `cwd`,
+ * or `cwd`, the shell's directory after a Bash call, once it differs from `shell`, the one before; undefined for any other call.
+ */
+export function touched(e: { tool: string; [argument: string]: unknown }, shell: string, cwd: string): string | undefined {
+    // `cd x && make` leaves the shell where it was outside the working directories: only a cd it keeps leads there.
+    if (e.tool === 'Bash') return cwd !== shell ? cwd : undefined;
+    const file = e.tool === 'NotebookEdit' ? e.notebook_path : e.tool === 'Edit' || e.tool === 'Write' ? e.file_path : undefined;
+    if (typeof file !== 'string') return undefined;
+    const path = file.startsWith('/') ? file : `${cwd}/${file}`;
+    return path.slice(0, path.lastIndexOf('/')) || '/';
+}
+
 /** The uids of the sockets listening on `port`, from the text of /proc/net/tcp and /proc/net/tcp6. */
 export function listeners(text: string, port: number): number[] {
     const local = `:${port.toString(16).toUpperCase().padStart(4, '0')}`;

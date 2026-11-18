@@ -1,5 +1,5 @@
 import type { EngineInterface, Register } from 'claude-code';
-import { due, forked, forkEnded, forking, forkPrompt, forks, idle, listeners, look, notified, prompt, resumed, sending, start, status, submitted, turnEnded, turnStarted, type Seen, type Watch } from './watch.ts';
+import { due, forked, forkEnded, forking, forkPrompt, forks, idle, listeners, look, notified, prompt, resumed, sending, start, status, submitted, touched, turnEnded, turnStarted, type Seen, type Watch } from './watch.ts';
 
 type Session = { id: string; sends: number; reanchoredOn?: { base: string; tree: string }; threads: { id: number; status: string | null; anchor: any; at?: { start: number; end: number } | null; messages: { author: string; body: string; date: string | null }[] }[] };
 
@@ -47,8 +47,12 @@ let base = '';
 let token = '';
 /** The session's root at the last look, undefined while the mod is off: the Claude session did not start in a worktree. */
 let root: string | undefined;
-/** The worktree the root lies in, undefined once the root left every worktree. */
+/** The worktree the mod follows: the root's, or the one Claude last wrote in or kept a cd to; undefined once the root left every worktree. */
 let worktree: string | undefined;
+/** The repository of the worktree (its common dir): Claude writing in another repository leaves the review where it is. */
+let common: string | undefined;
+/** The shell's directory at the last call of the main loop: a Bash call that changes it is a cd the shell kept. */
+let shell = '';
 /** The session Claude's tools write to: the last one listed or opened. An approved one refuses them. */
 let session: string | undefined;
 let watch = start;
@@ -123,21 +127,36 @@ async function foreign($: EngineInterface, port: number): Promise<boolean> {
     return listeners(stdout, port).some(owner => String(owner) !== uid);
 }
 
-/** The top of the worktree `dir` lies in, undefined outside one. */
-async function top($: EngineInterface, dir: string): Promise<string | undefined> {
-    const found = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { cwd: dir });
-    return found.exitCode === 0 ? found.stdout.trim() : undefined;
+/** The top of the worktree `dir` lies in and its repository, undefined outside one, or for a directory gone. */
+async function top($: EngineInterface, dir: string): Promise<{ top: string; common: string } | undefined> {
+    const found = await $.process.run(['git', 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'], { cwd: dir }).catch(() => null);
+    if (found?.exitCode !== 0) return undefined;
+    const [top, common] = found.stdout.trim().split('\n');
+    return { top, common };
 }
 
-/** Follows the session's root, which /cd and EnterWorktree move: another worktree starts afresh, as a Claude session starting there. */
+/** Moves to the worktree `next`: another worktree starts afresh, as a Claude session starting there. */
+function enter(next: { top: string; common: string } | undefined): void {
+    // The turn running goes on in the other worktree: a Send there still goes to a fork.
+    if (next?.top !== worktree) [worktree, common, session, watch, greeted] = [next?.top, next?.common, undefined, { ...start, busy: watch.busy }, false];
+}
+
+/** Follows the worktree of the repository a call of the main loop wrote in, or kept a cd to, as when the root moves. */
+async function moved($: EngineInterface, e: { tool: string; [argument: string]: unknown }): Promise<void> {
+    const cwd = await $.session.cwd();
+    const dir = touched(e, shell, cwd);
+    shell = cwd;
+    const found = dir && await top($, dir);
+    if (found && found.common === common) enter(found);
+}
+
+/** Follows the session's root, which /cd and EnterWorktree move. */
 async function follow($: EngineInterface): Promise<void> {
     if (root === undefined) return;
     const now = await $.session.root();
     if (now === root) return;
     root = now;
-    const next = await top($, now);
-    // The turn running goes on in the other worktree: a Send there still goes to a fork.
-    if (next !== worktree) [worktree, session, watch, greeted] = [next, undefined, { ...start, busy: watch.busy }, false];
+    enter(await top($, now));
 }
 
 /** The open session of the worktree, null when the server says it has none or out of a worktree, or why the server did not say. */
@@ -292,19 +311,23 @@ function excerpt(hunk: { header: string; lines: { type: 'context' | 'add' | 'del
 // ponytail: the matchers spell the plugin's name, local-reviews; renaming the plugin means renaming them.
 export const register: Register = on => {
     // Each register starts afresh, as a reloaded module does: the node tests register it several times.
-    [base, token, root, worktree, session, watch, greeted, shown, uid, blocked] = ['', '', undefined, undefined, undefined, start, false, undefined, undefined, new Set()];
+    [base, token, root, worktree, common, shell, session, watch, greeted, shown, uid, blocked] = ['', '', undefined, undefined, undefined, '', undefined, start, false, undefined, undefined, new Set()];
     registered++;
 
     // Registered first, so that it holds every tool call, this mod's own included: a call that waited for my answer ends with it, run or refused.
     // ponytail: any call ending in a loop ends that loop's wait, even one that ran beside the call still asking; key the wait by call if parallel asks show.
+    // It also follows the worktree Claude works in, once the call ran: a subagent's leads nowhere, one with a worktree of its own (isolation: worktree) writes where no review looks.
     on('tool.call', async ($, e, next) => {
         const loop = e.agentId ?? '';
         if (e.tool === 'AskUserQuestion') blocked.add(loop);
+        let result;
         try {
-            return await next(e);
+            result = await next(e);
         } finally {
             blocked.delete(loop);
         }
+        if (root !== undefined && e.agentId === undefined && result.deny === undefined) await moved($, e);
+        return result;
     });
 
     // Fires as the dialog opens; its next resolves once the settings hooks beneath answered, not the person.
@@ -319,9 +342,9 @@ export const register: Register = on => {
 
     // ponytail: a Claude session that starts out of a worktree leaves the mod off, even once /cd takes it into one.
     on('session.start', async ($, e, next) => {
-        worktree = await top($, e.cwd);
+        enter(await top($, e.cwd));
         if (!worktree) return next(e);
-        root = e.cwd;
+        [root, shell] = [e.cwd, e.cwd];
         // The endpoint file, if a server already wrote it, so the poll and the first prompt have a server to call before serve() returns.
         const ep = await endpoint($);
         if (ep) adopt(ep);

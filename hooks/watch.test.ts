@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { due, forked, forkEnded, forking, forks, idle, listeners, look, notified, resumed, sending, start, status, submitted, turnEnded, turnStarted, type Watch } from './watch.ts';
+import { due, forked, forkEnded, forking, forks, idle, listeners, look, notified, resumed, sending, start, status, submitted, touched, turnEnded, turnStarted, type Watch } from './watch.ts';
 
 /** What the glue does once the decision says a prompt is due: submit it, then learn whether it entered. */
 function submit(watch: Watch, dropped = false): Watch {
@@ -210,4 +210,19 @@ test('the listeners of a port are the sockets listening on it, IPv4 or IPv6, wit
     assert.deepEqual(listeners(PROC, 7778), [1001], 'any address, 0.0.0.0 included');
     assert.deepEqual(listeners(PROC, 1234), []);
     assert.deepEqual(listeners('', 7778), []);
+});
+
+test('a write of the main loop leads to the folder of its file, a relative path read from the shell\'s directory', () => {
+    assert.equal(touched({ tool: 'Edit', file_path: '/b/src/a.ts' }, '/a', '/a'), '/b/src');
+    assert.equal(touched({ tool: 'Write', file_path: 'src/a.ts' }, '/a', '/a/web'), '/a/web/src');
+    assert.equal(touched({ tool: 'NotebookEdit', notebook_path: '/b/n.ipynb' }, '/a', '/a'), '/b');
+});
+
+test('a Bash call of the main loop leads to the shell\'s directory only once a cd changed it', () => {
+    assert.equal(touched({ tool: 'Bash', command: 'cd /b' }, '/a', '/b'), '/b');
+    assert.equal(touched({ tool: 'Bash', command: 'cd /b && make' }, '/a', '/a'), undefined, 'a cd the shell did not keep');
+});
+
+test('a call that writes nothing leads nowhere', () => {
+    assert.equal(touched({ tool: 'Read', file_path: '/b/a.ts' }, '/a', '/a'), undefined);
 });
