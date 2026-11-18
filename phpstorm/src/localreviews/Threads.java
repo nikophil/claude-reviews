@@ -200,10 +200,7 @@ final class Threads {
         });
     }
 
-    /**
-     * Expands the folds of unchanged code of the diff over the lines of the threads shown: a fold does not hide a thread.
-     * A fold of the whole file, of a diff without change, stays: the diff would expand every fold of its next rediff in its range.
-     */
+    /** Expands the folds of unchanged code of the diff over the lines of the threads shown: a fold does not hide a thread. */
     void unfold() {
         Document document = editor.getDocument();
         FoldingModel folding = editor.getFoldingModel();
@@ -216,8 +213,7 @@ final class Threads {
             int from = document.getLineStartOffset(start - 1);
             int to = document.getLineEndOffset(end - 1);
             for (FoldRegion region : folding.getAllFoldRegions()) {
-                boolean whole = region.getStartOffset() == 0 && document.getLineNumber(region.getEndOffset()) == document.getLineCount() - 1;
-                if (!region.isExpanded() && !whole && region.getStartOffset() <= to && region.getEndOffset() >= from) region.setExpanded(true);
+                if (!region.isExpanded() && region.getStartOffset() <= to && region.getEndOffset() >= from) region.setExpanded(true);
             }
         }));
     }
