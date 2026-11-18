@@ -230,6 +230,8 @@ final class PlacementCheck {
               #1
             """), "the files under their directories, the directories first, a directory that holds only a directory merged with it");
         check(((ReviewToolWindow.Dir) ((DefaultMutableTreeNode) root.getFirstChild().getChildAt(0)).getUserObject()).path().equals("src/Mapping/Driver"), "a merged directory keeps the path of the deepest");
+
+        check(Placement.newest(session) == 6, "the thread a write just opened has the largest id of the session");
         System.out.println("PlacementCheck: ok");
     }
 

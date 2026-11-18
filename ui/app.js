@@ -325,7 +325,7 @@ function App() {
             const answer = await api(`/api/sessions/${session.id}${path}${placedOn(diff)}`, body);
             // Placed on a diff no longer displayed: the next poll places the write on the displayed one.
             if (diff === shown.current) setSession(answer);
-            await then?.();
+            await then?.(answer);
             setFlash(null);
             return true;
         } catch (error) {
@@ -359,7 +359,7 @@ function App() {
     const refresh = () => load().then(fresh => fresh && setForward(session.sends > 0 && fresh.ref !== 'last-review'), error => setFlash(error.message));
     const choose = ref => {
         setForward(false);
-        act('/base', { base: ref }, load);
+        act('/base', { base: ref }, () => load());
     };
     const message = id => [messages[id] ?? '', text => setMessages(all => ({ ...all, [id]: typeof text === 'function' ? text(all[id] ?? '') : text }))];
     const fold = thread => {
@@ -379,7 +379,12 @@ function App() {
         }
     };
     const avatar = me && { ...me, login: avatarBroken ? null : me.login, broken: () => setAvatarBroken(true) };
-    const review = { readOnly: !!session.approvedAt, busy, selection, setSelection, draft, message, fold, act, diff, now, split, lines, avatar, current, reveal };
+    // Send of the thread `n` alone, from within the write that added my message to it.
+    const sendThread = async n => {
+        const answer = await api(`/api/sessions/${session.id}/send${placedOn(diff)}`, { tree: diff.tree, threads: [n] });
+        if (diff === shown.current) setSession(answer);
+    };
+    const review = { readOnly: !!session.approvedAt, busy, selection, setSelection, draft, message, fold, act, sendThread, diff, now, split, lines, avatar, current, reveal };
     // As GitHub's, the menu closes once a view is chosen, and on Escape; the focus goes back to its button.
     const closeSettings = () => {
         settings.current.open = false;
@@ -674,7 +679,7 @@ function FileDiff({ id, file, viewed, threads, review }) {
             <div hidden=${folded}>
                 ${threads.filter(thread => !thread.at || !open || thread.at.end === 0).map(thread => html`<div key=${thread.id}>${threadBox(thread, review)}</div>`)}
                 ${!readOnly && selection?.path === file.path && selection.end === 0 && html`
-                    <div class="Box m-2 p-2"><${Composer} draft=${draft} busy=${busy} onSubmit=${openThread} onCancel=${cancel} /></div>`}
+                    <div class="Box m-2 p-2"><${Composer} draft=${draft} busy=${busy} onSubmit=${openThread} onSend=${body => openThread(body, true)} onCancel=${cancel} /></div>`}
                 ${file.binary ? html`<div class="Box-body color-fg-muted">Binary file not shown</div>`
                     : hunks.length === 0 ? file.status !== 'unchanged' && html`<div class="Box-body color-fg-muted">${file.status === 'modified' ? 'File mode changed' : 'Empty file'}</div>`
                     : !open ? html`<div class="Box-body text-center"><button class="btn-link" onClick=${() => setOpen(true)}>Load diff</button></div>`
@@ -727,19 +732,22 @@ function gaps(hunks, lineCount) {
     });
 }
 
-function threadBox(thread, { message, fold, readOnly, busy, act, avatar, diff, current }) {
+function threadBox(thread, { message, fold, readOnly, busy, act, sendThread, avatar, diff, current }) {
     // Outdated says the lines are gone from the code shown: a session without code shows none.
-    return html`<${Thread} thread=${thread} draft=${message(thread.id)} fold=${fold(thread)} readOnly=${readOnly} busy=${busy} act=${act} avatar=${avatar}
+    return html`<${Thread} thread=${thread} draft=${message(thread.id)} fold=${fold(thread)} readOnly=${readOnly} busy=${busy} act=${act} sendThread=${sendThread} avatar=${avatar}
+        tree=${diff.tree}
         outdated=${!thread.at && !!diff.tree} current=${current === thread.id} />`;
 }
 
 /** Opens a thread of mine on the selection, or drops it; text typed or a selection made while it opens stays, with the selection and its draft. */
-function newThread({ selection, setSelection, draft, act, diff, now }) {
+function newThread({ selection, setSelection, draft, act, sendThread, diff, now }) {
     return {
-        openThread: async body => {
+        // With `send`, sends it at once: the thread just opened has the largest id of the session.
+        openThread: async (body, send) => {
             const sent = selection;
             const { path, side, start, end } = sent;
-            const done = await act('/threads', { author: 'me', path, side, start, end, body, base: diff.base, tree: diff.tree })
+            const done = await act('/threads', { author: 'me', path, side, start, end, body, base: diff.base, tree: diff.tree },
+                send && (answer => sendThread(Math.max(...answer.threads.map(thread => thread.id)))))
                 && now.current.selection === sent && now.current.text === body;
             if (done) setSelection(null);
             return done;
@@ -818,7 +826,7 @@ function rows(file, threads, review) {
             ...threads.filter(thread => thread.at && ends({ ...thread.anchor, ...thread.at })).map(thread => html`<div key=${`t${thread.id}`}>${threadBox(thread, review)}</div>`),
             !readOnly && ends(selection) && html`
                 <div key="selection" class="Box m-2 p-2">
-                    <${Composer} draft=${draft} busy=${busy} onSubmit=${openThread} onCancel=${cancel} suggest=${suggest} />
+                    <${Composer} draft=${draft} busy=${busy} onSubmit=${openThread} onSend=${body => openThread(body, true)} onCancel=${cancel} suggest=${suggest} />
                 </div>`,
         ].filter(Boolean) : [];
     };
@@ -878,7 +886,7 @@ function rows(file, threads, review) {
         .filter(Boolean);
 }
 
-function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act, avatar, outdated, current }) {
+function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act, sendThread, avatar, tree, outdated, current }) {
     const [label, color] = STATUS[thread.status] ?? [];
     const whole = thread.anchor.end === 0;
     // The Pending message of mine being edited, by its rank, and its text.
@@ -925,6 +933,9 @@ function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act, ava
                         ? html`<button class="btn btn-sm" disabled=${busy} onClick=${() => act(`/threads/${thread.id}/unresolve`, {})}>Unresolve</button>`
                         : html`
                             <${Composer} draft=${draft} busy=${busy} onSubmit=${body => act(`/threads/${thread.id}/messages`, { author: 'me', body })}
+                                onSend=${body => body.trim() ? act(`/threads/${thread.id}/messages`, { author: 'me', body }, () => sendThread(thread.id))
+                                    : act('/send', { tree, threads: [thread.id] })}
+                                pending=${thread.messages.some(message => !message.date)}
                                 suggest=${thread.anchor.side === 'new' && !whole ? thread.anchor.lines : null} />
                             <button class="btn btn-sm mt-2" disabled=${busy} onClick=${() => act(`/threads/${thread.id}/resolve`, {})}>Resolve</button>`}
                 </div>`}
@@ -950,20 +961,26 @@ function Excerpt({ anchor: { path, side, start, lines, hunk } }) {
         </tbody></table>`;
 }
 
-/** A message being written, kept across polls, and cleared once the server took it, unless typed on meanwhile. */
-function Composer({ draft, busy, onSubmit, onCancel, label = 'Add message', suggest }) {
+/**
+ * A message being written, kept across polls, and cleared once the server took it, unless typed on meanwhile.
+ * Send adds it then sends its thread alone, or sends the `pending` messages of the thread with nothing typed.
+ */
+function Composer({ draft, busy, onSubmit, onSend, pending, onCancel, label = 'Add message', suggest }) {
     const [text, setText] = draft;
     // A suggestion block with the lines it replaces, to change in place: Claude applies it.
     const insert = () => setText(text => `${text}${text && !text.endsWith('\n') ? '\n' : ''}\`\`\`suggestion\n${suggest.join('\n')}\n\`\`\`\n`);
-    const submit = async event => {
+    const submit = async (event, write = onSubmit) => {
         event.preventDefault();
         const sent = text;
-        if (await onSubmit(sent)) setText(current => current === sent ? '' : current);
+        if (await write(sent)) setText(current => current === sent ? '' : current);
     };
     return html`
         <form onSubmit=${submit}>
             <textarea class="form-control width-full mb-2" aria-label="Message" placeholder="Leave a message (markdown)" value=${text} onInput=${event => setText(event.target.value)}></textarea>
             <button class="btn btn-sm btn-primary" type="submit" disabled=${busy || !text.trim()}>${label}</button>
+            ${onSend && html`
+                <button class="btn btn-sm ml-2" type="button" aria-label="Send thread" title="Add the message, then send this thread alone to Claude"
+                    disabled=${busy || (!text.trim() && !pending)} onClick=${event => submit(event, onSend)}>Send</button>`}
             ${suggest && html`<button class="btn btn-sm ml-2" type="button" onClick=${insert}>Suggest change</button>`}
             ${onCancel && html`<button class="btn btn-sm ml-2" type="button" onClick=${onCancel}>Cancel</button>`}
         </form>`;

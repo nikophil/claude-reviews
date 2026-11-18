@@ -39,6 +39,7 @@ import com.intellij.ui.components.panels.VerticalLayout;
 import com.intellij.ui.hover.HoverStateListener;
 import com.intellij.util.IconUtil;
 import com.intellij.util.ThrowableConsumer;
+import com.intellij.util.ThrowableConvertor;
 import com.intellij.util.text.DateFormatUtil;
 import com.intellij.util.io.HttpRequests;
 import com.intellij.util.ui.ImageUtil;
@@ -95,7 +96,7 @@ import java.util.regex.Pattern;
 
 /**
  * A thread under its lines, written into as in the review of the GitHub plugin:
- * a field, and Ctrl+Enter adds a Pending message.
+ * a field, Ctrl+Enter adds a Pending message, and Send adds it then sends this thread alone.
  * Only the field takes the focus: a key typed elsewhere in the thread would reach the actions of the editor around it.
  */
 final class ThreadView extends JPanel implements Disposable {
@@ -128,7 +129,7 @@ final class ThreadView extends JPanel implements Disposable {
     private int editingIndex;
     private static final Color PENDING = new JBColor(new Color(0xB86E00), new Color(0xD9A343));
     private final JButton add = button("Add pending", null);
-    private JButton send;
+    private final JButton send = button("Send", AllIcons.Actions.Upload);
     private final JBLabel shortcutHint = hint(KeymapUtil.getFirstKeyboardShortcutText(CommonShortcuts.getCtrlEnter()) + " to add pending");
     private boolean folded;
     private boolean resolved;
@@ -155,43 +156,34 @@ final class ThreadView extends JPanel implements Disposable {
         other = resolved ? button("Unresolve", AllIcons.Actions.Rollback) : button("Resolve", AllIcons.Actions.Checked);
         String toggle = route + (resolved ? "/unresolve" : "/resolve");
         other.addActionListener(e -> write(field, error, List.of(other, add), body -> Server.post(toggle, new JsonObject()), written));
-        // Sends this thread alone, without the Pending messages of the others; it spins, the only spinner, until Claude answers the thread.
-        boolean spinning = ReviewService.get(project).spinning("thread:" + id, thread);
-        if (!resolved && claude && (pending(thread) || spinning)) {
-            JButton button = button("Send thread", AllIcons.Actions.Upload);
-            send = button;
-            spin(button, spinning, AllIcons.Actions.Upload);
-            button.setEnabled(pending(thread));
-            button.addActionListener(e -> {
-                button.setEnabled(false);
-                spin(button, true, AllIcons.Actions.Upload);
-                // Enabled again once the Send ends: a Send that fails leaves the thread as it was, and its view too.
-                WriteIntentReadAction.run(() -> ReviewDiffAction.send(project, sessionId, id, null, () -> {
-                    button.setEnabled(true);
-                    spin(button, false, AllIcons.Actions.Upload);
-                    written.run();
-                }));
-            });
-        }
-        finish(body -> Server.post(route + "/messages", reply(body)), resolved ? null : lines, written);
+        // Send spins, the only spinner, until Claude answers the thread.
+        spin(send, ReviewService.get(project).spinning("thread:" + id, thread), AllIcons.Actions.Upload);
+        finish(project, sessionId, Placement.sendRefusal(session), pending(thread) ? id : null, body -> {
+            Server.post(route + "/messages", reply(body));
+            return id;
+        }, resolved ? null : lines, written);
         if (resolved) {
             field.setVisible(false);
             add.setVisible(false);
+            send.setVisible(false);
             shortcutHint.setVisible(false);
         }
         // A Resolved thread shows folded, its discussion one click away.
         if (resolved) fold();
     }
 
-    /** A new thread, saved by `create` with its first message; `lines` as for an open thread. */
-    ThreadView(Project project, ThrowableConsumer<String, IOException> create, Supplier<String> lines, Runnable cancel, Runnable written) {
+    /**
+     * A new thread of the session `sessionId`, opened by `create` with its first message, which gives its id;
+     * `sendRefusal` as Placement gives it, `lines` as for an open thread.
+     */
+    ThreadView(Project project, String sessionId, String sendRefusal, ThrowableConvertor<String, Integer, IOException> create, Supplier<String> lines, Runnable cancel, Runnable written) {
         super(null);
         card.add(header("New thread", ""));
         field = field(project, "Comment", "");
         other = button("Cancel", null);
         // Removing the inlay changes the editor: a bare Swing listener needs the write-intent lock for it.
         other.addActionListener(e -> WriteIntentReadAction.run(cancel));
-        finish(create, lines, written);
+        finish(project, sessionId, sendRefusal, null, create, lines, written);
         // A new thread left empty closes once the focus goes elsewhere, the IDE losing it aside.
         field.addFocusListener(new FocusAdapter() {
             @Override
@@ -396,9 +388,33 @@ final class ThreadView extends JPanel implements Disposable {
         });
     }
 
-    private void finish(ThrowableConsumer<String, IOException> addPending, Supplier<String> lines, Runnable written) {
+    /**
+     * The field and its buttons: Add pending writes the text through `addPending`, which gives the id of its thread;
+     * Send does the same, then sends this thread alone, without the Pending messages of the others, or, with nothing typed,
+     * the thread `pending` when it has Pending messages.
+     */
+    private void finish(Project project, String sessionId, String sendRefusal, Integer pending, ThrowableConvertor<String, Integer, IOException> addPending, Supplier<String> lines, Runnable written) {
+        // A write gives its buttons back once done: not a Send greyed for its refusal.
+        List<JButton> buttons = sendRefusal == null ? List.of(other, add, send) : List.of(other, add);
         add.addActionListener(e -> {
-            if (!field.getText().isBlank()) write(field, error, List.of(other, add), addPending, written);
+            if (!field.getText().isBlank()) write(field, error, buttons, addPending::convert, written);
+        });
+        send.setEnabled(sendRefusal == null);
+        send.setToolTipText(sendRefusal != null ? sendRefusal : "Add the message, then send this thread alone to Claude");
+        int[] thread = {pending == null ? 0 : pending};
+        Runnable sendThread = () -> {
+            send.setEnabled(false);
+            spin(send, true, AllIcons.Actions.Upload);
+            // Enabled again once the Send ends: a Send that fails leaves the thread as it was, and its view too.
+            WriteIntentReadAction.run(() -> ReviewDiffAction.send(project, sessionId, thread[0], null, () -> {
+                send.setEnabled(true);
+                spin(send, false, AllIcons.Actions.Upload);
+                written.run();
+            }));
+        };
+        send.addActionListener(e -> {
+            if (!field.getText().isBlank()) write(field, error, buttons, body -> thread[0] = addPending.convert(body), sendThread);
+            else if (pending != null) sendThread.run();
         });
         ClientProperty.put(add, DarculaButtonUI.DEFAULT_STYLE_KEY, true);
         DumbAwareAction.create(e -> add.doClick()).registerCustomShortcutSet(CommonShortcuts.getCtrlEnter(), field);
@@ -408,8 +424,8 @@ final class ThreadView extends JPanel implements Disposable {
         JPanel footer = row();
         if (lines != null) footer.add(suggest(lines));
         footer.add(shortcutHint);
-        if (send != null) footer.add(send);
         footer.add(other);
+        footer.add(send);
         footer.add(add);
         content.add(footer);
         content.setOpaque(false);

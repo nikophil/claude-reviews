@@ -143,7 +143,7 @@ public final class ReviewService implements Disposable {
     }
 
     /**
-     * The Send button that sent last, the one spinning while Claude answers: `thread:<id>` (Send thread), `diff` (the toolbar of the diff),
+     * The Send button that sent last, the one spinning while Claude answers: `thread:<id>` (the Send of a thread), `diff` (the toolbar of the diff),
      * or `tool-window`, also for a Send this IDE did not make.
      */
     private volatile String sentFrom = SENT_FROM_TOOL_WINDOW;
@@ -154,7 +154,7 @@ public final class ReviewService implements Disposable {
         sentFrom = from;
     }
 
-    /** Whether the Send button `from` spins: it sent last, and Claude has yet to answer a thread it waits in, `thread` for Send thread. */
+    /** Whether the Send button `from` spins: it sent last, and Claude has yet to answer a thread it waits in, `thread` for the Send of a thread. */
     boolean spinning(String from, JsonObject thread) {
         JsonObject session = state.session();
         if (!from.equals(sentFrom) || session == null || !Placement.claude(session)) return false;

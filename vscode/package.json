@@ -45,11 +45,12 @@
       { "command": "localReviews.markViewed", "title": "Mark as Viewed", "icon": "$(circle-large-outline)" },
       { "command": "localReviews.unmarkViewed", "title": "Viewed", "icon": "$(pass-filled)" },
       { "command": "localReviews.createThread", "title": "Add Pending" },
+      { "command": "localReviews.createThreadAndSend", "title": "Send" },
       { "command": "localReviews.cancelThread", "title": "Cancel" },
       { "command": "localReviews.reply", "title": "Add Pending" },
+      { "command": "localReviews.replyAndSend", "title": "Send" },
       { "command": "localReviews.resolve", "title": "Resolve", "icon": "$(check)" },
       { "command": "localReviews.unresolve", "title": "Unresolve", "icon": "$(discard)" },
-      { "command": "localReviews.sendThread", "title": "Send Thread", "icon": "$(send)" },
       { "command": "localReviews.copyStartClaude", "title": "Copy the Command That Starts Claude", "category": "Claude Reviews" },
       { "command": "localReviews.previousThread", "title": "Previous Thread", "category": "Claude Reviews", "icon": "$(arrow-up)" },
       { "command": "localReviews.nextThread", "title": "Next Thread", "category": "Claude Reviews", "icon": "$(arrow-down)" },
@@ -63,11 +64,12 @@
         { "command": "localReviews.markViewed", "when": "false" },
         { "command": "localReviews.unmarkViewed", "when": "false" },
         { "command": "localReviews.createThread", "when": "false" },
+        { "command": "localReviews.createThreadAndSend", "when": "false" },
         { "command": "localReviews.cancelThread", "when": "false" },
         { "command": "localReviews.reply", "when": "false" },
+        { "command": "localReviews.replyAndSend", "when": "false" },
         { "command": "localReviews.resolve", "when": "false" },
         { "command": "localReviews.unresolve", "when": "false" },
-        { "command": "localReviews.sendThread", "when": "false" },
         { "command": "localReviews.blocked", "when": "false" }
       ],
       "view/title": [
@@ -90,14 +92,15 @@
         { "command": "localReviews.send", "when": "isInDiffEditor && resourcePath in localReviews.changed", "group": "navigation@5" }
       ],
       "comments/commentThread/title": [
-        { "command": "localReviews.sendThread", "when": "commentController == local-reviews && commentThread =~ /pending/", "group": "inline@1" },
         { "command": "localReviews.resolve", "when": "commentController == local-reviews && commentThread =~ /^unresolved/", "group": "inline@2" },
         { "command": "localReviews.unresolve", "when": "commentController == local-reviews && commentThread =~ /^resolved/", "group": "inline@2" }
       ],
       "comments/commentThread/context": [
         { "command": "localReviews.createThread", "when": "commentController == local-reviews && commentThreadIsEmpty", "group": "inline@1" },
-        { "command": "localReviews.cancelThread", "when": "commentController == local-reviews && commentThreadIsEmpty", "group": "inline@2" },
-        { "command": "localReviews.reply", "when": "commentController == local-reviews && !commentThreadIsEmpty", "group": "inline@1" }
+        { "command": "localReviews.createThreadAndSend", "when": "commentController == local-reviews && commentThreadIsEmpty", "group": "inline@2" },
+        { "command": "localReviews.cancelThread", "when": "commentController == local-reviews && commentThreadIsEmpty", "group": "inline@3" },
+        { "command": "localReviews.reply", "when": "commentController == local-reviews && !commentThreadIsEmpty", "group": "inline@1" },
+        { "command": "localReviews.replyAndSend", "when": "commentController == local-reviews && !commentThreadIsEmpty", "group": "inline@2" }
       ]
     }
   }

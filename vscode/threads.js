@@ -32,9 +32,7 @@ function fill(/** @type {vscode.CommentThread} */ shown, /** @type {any} */ thre
     // A Resolved thread takes no message until its Unresolve.
     shown.canReply = !thread.resolved;
     shown.state = thread.resolved ? vscode.CommentThreadState.Resolved : vscode.CommentThreadState.Unresolved;
-    // Send thread sends its Pending messages alone; without a Claude session, nobody would answer.
-    const sendable = !thread.resolved && review.pending(thread) && review.claude(session);
-    shown.contextValue = `${thread.resolved ? 'resolved' : 'unresolved'}${sendable ? ' pending' : ''}`;
+    shown.contextValue = thread.resolved ? 'resolved' : 'unresolved';
     if (fold) shown.collapsibleState = thread.resolved ? vscode.CommentThreadCollapsibleState.Collapsed : vscode.CommentThreadCollapsibleState.Expanded;
 }
 
@@ -101,28 +99,39 @@ function register(/** @type {vscode.ExtensionContext} */ context, /** @type {any
 
     const route = (/** @type {vscode.CommentThread} */ shown) => `/api/sessions/${app.state().session.id}/threads/${ids.get(shown)}`;
 
+    /** A new thread on the lines of the draft, with its first message, Pending until a Send: its id, which the thread just opened has as the largest of the session. */
+    async function create(/** @type {vscode.CommentReply} */ reply) {
+        const draft = reply.thread;
+        const state = app.state();
+        const place = diff.where(draft.uri, state);
+        if (!reply.text.trim() || !place || !draft.range || !state.session) return undefined;
+        const tree = await app.shownTree();
+        const session = await app.call(`/api/sessions/${state.session.id}/threads`, {
+            author: 'me', path: place.path, side: place.side, start: draft.range.start.line + 1, end: draft.range.end.line + 1,
+            body: reply.text, base: place.base, tree,
+        });
+        draft.dispose();
+        await app.refresh();
+        return Math.max(...session.threads.map((/** @type {any} */ thread) => thread.id));
+    }
+
+    /** Adds my message to the thread: its id; with nothing typed, its id only while it has Pending messages, for a Send of them. */
+    async function answer(/** @type {vscode.CommentReply} */ reply) {
+        const id = ids.get(reply.thread);
+        if (id === undefined) return undefined;
+        if (!reply.text.trim()) return review.pending(app.state().session.threads.find((/** @type {any} */ thread) => thread.id === id)) ? id : undefined;
+        await app.call(`${route(reply.thread)}/messages`, { author: 'me', body: reply.text });
+        await app.refresh();
+        return id;
+    }
+
     context.subscriptions.push(controller,
         app.onChange(show),
-        // A new thread on the lines of the draft, with its first message: Pending until a Send.
-        vscode.commands.registerCommand('localReviews.createThread', app.guard(async (/** @type {vscode.CommentReply} */ reply) => {
-            const draft = reply.thread;
-            const state = app.state();
-            const place = diff.where(draft.uri, state);
-            if (!reply.text.trim() || !place || !draft.range || !state.session) return;
-            const tree = await app.shownTree();
-            await app.call(`/api/sessions/${state.session.id}/threads`, {
-                author: 'me', path: place.path, side: place.side, start: draft.range.start.line + 1, end: draft.range.end.line + 1,
-                body: reply.text, base: place.base, tree,
-            });
-            draft.dispose();
-            await app.refresh();
-        })),
+        vscode.commands.registerCommand('localReviews.createThread', app.guard(async (/** @type {vscode.CommentReply} */ reply) => { await create(reply); })),
+        vscode.commands.registerCommand('localReviews.createThreadAndSend', app.guard(async (/** @type {vscode.CommentReply} */ reply) => app.send(() => create(reply)))),
         vscode.commands.registerCommand('localReviews.cancelThread', (/** @type {vscode.CommentThread} */ draft) => draft.dispose()),
-        vscode.commands.registerCommand('localReviews.reply', app.guard(async (/** @type {vscode.CommentReply} */ reply) => {
-            if (!reply.text.trim() || !ids.has(reply.thread)) return;
-            await app.call(`${route(reply.thread)}/messages`, { author: 'me', body: reply.text });
-            await app.refresh();
-        })),
+        vscode.commands.registerCommand('localReviews.reply', app.guard(async (/** @type {vscode.CommentReply} */ reply) => { await answer(reply); })),
+        vscode.commands.registerCommand('localReviews.replyAndSend', app.guard(async (/** @type {vscode.CommentReply} */ reply) => app.send(() => answer(reply)))),
         vscode.commands.registerCommand('localReviews.resolve', app.guard(async (/** @type {vscode.CommentThread} */ shown) => {
             await app.call(`${route(shown)}/resolve`, {});
             await app.refresh();
@@ -131,7 +140,6 @@ function register(/** @type {vscode.ExtensionContext} */ context, /** @type {any
             await app.call(`${route(shown)}/unresolve`, {});
             await app.refresh();
         })),
-        vscode.commands.registerCommand('localReviews.sendThread', app.guard(async (/** @type {vscode.CommentThread} */ shown) => app.send(ids.get(shown)))),
     );
 }
 

@@ -75,7 +75,7 @@ test('a session archived because its worktree is gone shows read-only at its URL
 
     await expect(page.locator('.thread')).toContainText('Is this right?');
     await expect(page.getByText('Closed', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Send' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Send', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
     await expect(page.getByRole('textbox')).toHaveCount(0);
 });

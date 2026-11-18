@@ -79,7 +79,7 @@ test('the images of the README', async ({ page, request }) => {
     await composer.getByRole('button', { name: 'Add message' }).click();
     await expect(cart.locator('.thread')).toHaveCount(3);
     await frame(1600);
-    await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
     const thread = page.locator('#thread-3');
     await expect(thread).toContainText('Waiting for Claude');
     // The click scrolled up to Send: back to the thread.

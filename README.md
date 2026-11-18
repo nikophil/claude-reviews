@@ -20,7 +20,8 @@ The project's context and decisions are in [BRIEF.md](BRIEF.md), its vocabulary 
   HEAD, the code of my last Send, the default branch, the base branch, an open PR or any branch.
 - Open a thread on a line, a range (Shift+click) or a whole file, with a message in markdown.
 - Propose a change with a `suggestion` block: Claude applies it when it reads the thread.
-- Send my messages with Send, which wakes the Claude session of the worktree, even an idle one;
+- Send my messages with Send, which wakes the Claude session of the worktree, even an idle one,
+  or a single thread at once with the Send of its box;
   edit or delete a message as long as it is not sent.
   When that Claude session waits for your answer to a permission or a question, the review says so.
 - Follow the threads: they stay on their line when the code moves, and become Outdated when their lines disappear.
@@ -49,7 +50,8 @@ it writes its port and its token to `~/.local/share/claude-reviews/endpoint`, wh
 ## Usage
 
 1. In a Claude session, run `/review-local`: the review session of the worktree opens in the browser, or in PhpStorm or VS Code, as you choose, when they are installed.
-2. Click a line number, write, then Add message; the message stays Pending until the Send.
+2. Click a line number, write, then Add message; the message stays Pending until the Send, which delivers them all.
+   The Send of the box instead adds the message and sends its thread at once.
 3. Send: Claude wakes up, replies in each thread waiting for it, and changes the code when a thread asks for it.
    A status line under its prompt counts the threads waiting for it.
 4. Refresh when the banner says the code changed, reply, resolve the threads, then Approve.

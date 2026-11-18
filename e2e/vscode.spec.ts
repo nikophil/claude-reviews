@@ -186,21 +186,52 @@ test('Approve, once confirmed, closes the session', async ({ page }) => {
     await expect(view.getByText('No review of this worktree yet.')).toBeVisible();
 });
 
-test('Send thread publishes the Pending messages of its thread alone', async ({ page }) => {
+test('Send in a thread adds my reply and sends this thread alone, or only its Pending messages with nothing typed', async ({ page }) => {
     const { dir, route, thread, session, listen } = await worktree(page, { claude: true });
     await thread('src/b.ts', 'new', 1, 'Why 2?');
-    await page.request.post(`${route}/threads/1/messages`, { data: { author: 'me', body: 'First.' } });
     await page.request.post(`${route}/threads/2/messages`, { data: { author: 'me', body: 'Second.' } });
     await listen();
     const view = await open(page, dir);
     await view.getByRole('treeitem', { name: /#1 · Line \+2/ }).click();
 
-    await page.locator('.review-widget').getByRole('button', { name: 'Send Thread' }).click();
+    await page.locator('.review-widget .review-thread-reply-button').click();
+    await page.keyboard.type('First.');
+    await page.locator('.review-widget').getByRole('button', { name: 'Send', exact: true }).click();
 
     await expect(page.getByText('1 message sent to Claude', { exact: true })).toBeVisible();
     const [first, second] = (await session()).threads;
     expect(first.messages[1]).toMatchObject({ body: 'First.', review: 1 });
     expect(second.messages[1]).toMatchObject({ body: 'Second.', date: null });
+
+    await view.getByRole('treeitem', { name: /#2 · Line \+1/ }).click();
+    const reply = page.locator('.review-widget .review-thread-reply-button');
+    const send = page.locator('.review-widget').getByRole('button', { name: 'Send', exact: true });
+    // A poll that redraws the thread can take the first click away.
+    await expect(async () => {
+        if (await reply.isVisible()) await reply.click();
+        await expect(send).toBeVisible({ timeout: 1000 });
+    }).toPass();
+    await listen();
+    await send.click();
+
+    await expect.poll(async () => (await session()).threads[1].messages[1].review).toBe(2);
+});
+
+test('Send in a new thread opens it and sends it at once', async ({ page }) => {
+    const { dir, session, listen } = await worktree(page);
+    await listen();
+    const view = await open(page, dir);
+    await expect(async () => {
+        await view.getByRole('treeitem', { name: /^a\.txt/ }).hover();
+        await view.getByRole('button', { name: 'Open File' }).click({ timeout: 1000 });
+    }).toPass();
+
+    await draft(page, 3);
+    await page.keyboard.type('Why three?');
+    await page.locator('.review-widget').getByRole('button', { name: 'Send', exact: true }).click();
+
+    await expect(page.getByText('1 message sent to Claude', { exact: true })).toBeVisible();
+    expect((await session()).threads[0].messages).toMatchObject([{ author: 'me', body: 'Why three?', review: 1 }]);
 });
 
 test('Resolve folds a thread and takes it out of the view, Unresolve gives it back', async ({ page }) => {
