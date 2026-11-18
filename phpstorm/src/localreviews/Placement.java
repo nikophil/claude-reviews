@@ -1,5 +1,6 @@
 package localreviews;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
@@ -54,6 +55,22 @@ final class Placement {
     static boolean claude(JsonObject session) {
         JsonElement claude = session.get("claudeSession");
         return claude == null || claude.getAsBoolean();
+    }
+
+    /** Whether the editor of `path` shows Previous Thread and Next Thread: a file of the diff, `files`, or of a thread, while a thread is not Resolved. */
+    static boolean navigable(JsonObject session, JsonArray files, String path) {
+        boolean open = false;
+        for (JsonElement element : session.getAsJsonArray("threads")) {
+            JsonObject thread = element.getAsJsonObject();
+            if (thread.get("resolved").getAsBoolean()) continue;
+            if (thread.getAsJsonObject("anchor").get("path").getAsString().equals(path)) return true;
+            open = true;
+        }
+        if (!open) return false;
+        for (JsonElement file : files) {
+            if (file.getAsJsonObject().get("path").getAsString().equals(path)) return true;
+        }
+        return false;
     }
 
     /** Whether the Claude session waits for my answer, to a permission or a question, while a thread waits for Claude; false from a server without the field. */

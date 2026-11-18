@@ -82,8 +82,8 @@
         { "command": "localReviews.openDiff", "when": "view == localReviews.files && viewItem =~ /^file/", "group": "navigation@2" }
       ],
       "editor/title": [
-        { "command": "localReviews.previousThread", "when": "resourcePath in localReviews.navigable", "group": "navigation@1" },
-        { "command": "localReviews.nextThread", "when": "resourcePath in localReviews.navigable", "group": "navigation@2" },
+        { "command": "localReviews.previousThread", "when": "resourcePath in localReviews.navigable || resourceScheme == local-reviews-outdated", "group": "navigation@1" },
+        { "command": "localReviews.nextThread", "when": "resourcePath in localReviews.navigable || resourceScheme == local-reviews-outdated", "group": "navigation@2" },
         { "command": "localReviews.markViewed", "when": "isInDiffEditor && resourcePath in localReviews.unviewed", "group": "navigation@3" },
         { "command": "localReviews.unmarkViewed", "when": "isInDiffEditor && resourcePath in localReviews.viewed", "group": "navigation@3" },
         { "command": "localReviews.blocked", "when": "isInDiffEditor && localReviews.blocked && resourcePath in localReviews.changed", "group": "navigation@4" },

@@ -104,14 +104,20 @@ function tree(/** @type {File[]} */ files, /** @type {Thread[]} */ threads) {
 }
 
 /**
- * The id of the unresolved thread after `current` in the order of the view, or before it backward, around at the ends;
- * the first, or the last, when `current` is not among them; undefined without any.
+ * The id of the unresolved thread after `current` in the order of the view, or before it backward, around at the ends,
+ * `current` placed among all the threads, so that a thread just Resolved keeps its place; the first, or the last, without `current`; undefined without any.
  */
 function step(/** @type {File[]} */ files, /** @type {Thread[]} */ threads, /** @type {number | undefined} */ current, /** @type {boolean} */ forward) {
-    const ids = tree(files, threads).flatMap(node => 'dir' in node ? node.files : [node.file]).flatMap(file => threadsOf(threads, file.path)).map(thread => thread.id);
-    if (!ids.length) return undefined;
-    const i = ids.indexOf(/** @type {number} */ (current));
-    return ids[i < 0 ? (forward ? 0 : ids.length - 1) : (i + (forward ? 1 : ids.length - 1)) % ids.length];
+    const paths = tree(files, threads).flatMap(node => 'dir' in node ? node.files : [node.file]).map(file => file.path);
+    for (const thread of threads) if (!paths.includes(thread.anchor.path)) paths.push(thread.anchor.path);
+    const all = paths.flatMap(path => threads.filter(thread => thread.anchor.path === path));
+    const at = all.findIndex(thread => thread.id === current);
+    const from = at >= 0 ? at : forward ? -1 : all.length;
+    for (let i = 1; i <= all.length; i++) {
+        const thread = all[(((from + (forward ? i : -i)) % all.length) + all.length) % all.length];
+        if (!thread.resolved) return thread.id;
+    }
+    return undefined;
 }
 
 /** The line, from 1, a file opens at: its first thread on the new side, else its first added line, else its top. */

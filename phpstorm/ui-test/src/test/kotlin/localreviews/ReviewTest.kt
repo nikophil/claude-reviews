@@ -244,7 +244,8 @@ class ReviewTest {
 
     @Test
     @Order(5)
-    fun `in the Editor view, Previous Thread in the bar of the editor goes to the thread`() {
+    fun `even in the Diff view, Previous Thread in the bar of the editor goes to the thread in the editor`() {
+        frame { radioButton("//div[@text='Diff']").click() }
         withoutToolWindows {
             // Not the editor of the reply under the thread.
             val editor = xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java).list().single { "echo 3;" in it.text }
@@ -269,7 +270,7 @@ class ReviewTest {
 
     @Test
     @Order(7)
-    fun `the bar of the diff warns that the Claude session waits for my answer, and Next Thread goes to the thread`() {
+    fun `the bar of the diff warns that the Claude session waits for my answer, and even in the Editor view, Next Thread goes to the thread in the diff`() {
         val warning = "//div[@class='JBLabel' and @text='Claude is waiting for your answer in its session']"
         claudeQuery = "&blocked"
         frame { x(warning).shouldBe(enabled) }
@@ -277,12 +278,17 @@ class ReviewTest {
         frame {
             repeat(50) { if (x(warning).present()) Thread.sleep(200) }
             assert(!x(warning).present()) { "the warning is gone" }
+            radioButton("//div[@text='Editor']").click()
         }
         withoutToolWindows {
             x("//div[contains(@myaction, 'Next Thread')]").click()
-            // The working tree, on the right of the diff, at line 4.
-            caretLine(3) { xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java).list().maxOf { it.editor.getCaretModel().getLogicalPosition().getLine() } }
+            // The working tree, on the right of the diff still shown, its base beside it, at line 4.
+            caretLine(3) {
+                val editors = xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java).list()
+                if (editors.none { "echo 2;" in it.text }) -1 else editors.maxOf { it.editor.getCaretModel().getLogicalPosition().getLine() }
+            }
         }
+        frame { radioButton("//div[@text='Diff']").click() }
     }
 
     @Test

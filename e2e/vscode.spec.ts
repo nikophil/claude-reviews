@@ -146,7 +146,7 @@ test('the checkbox of a file marks it Viewed, until it is unchecked', async ({ p
     }).toPass();
 });
 
-test('an Outdated thread opens on the diff excerpt it was opened on', async ({ page }) => {
+test('an Outdated thread opens on the diff excerpt it was opened on, with Next Thread in its bar', async ({ page }) => {
     const { dir } = await worktree(page, { claude: true });
     write(dir, { 'a.txt': 'one\ndeux\nthree\n' });
     const view = await open(page, dir);
@@ -155,6 +155,8 @@ test('an Outdated thread opens on the diff excerpt it was opened on', async ({ p
 
     await expect(page.getByRole('tab', { name: /a\.txt\.diff/ })).toBeVisible();
     await expect(page.locator('.review-widget').getByText('Why')).toBeVisible();
+    // The walk through the threads goes on from there.
+    await expect(page.locator('.editor-actions').getByRole('button', { name: 'Next Thread' })).toBeVisible();
 });
 
 test('the base picker offers Since my last review after a Send, and the session keeps it', async ({ page }) => {
