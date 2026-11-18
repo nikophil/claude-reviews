@@ -368,7 +368,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(10)
+    @Order(12)
     fun `the diff folds the unchanged code, but not the lines of a thread`() {
         // Line 51 changes: lines 1 to 46 and 56 to 101 are unchanged, out of the 4 lines of context.
         Files.writeString(Path.of(worktree, "long.php"), "<?php\n" + (1..100).joinToString("") { if (it == 50) "// changed\n" else "// line $it\n" })
