@@ -8,6 +8,7 @@ import com.intellij.driver.sdk.invokeAction
 import com.intellij.driver.sdk.ui.components.common.IdeaFrameUI
 import com.intellij.driver.sdk.ui.components.common.codeEditor
 import com.intellij.driver.sdk.ui.components.common.gutter
+import com.intellij.driver.sdk.ui.components.common.GutterUiComponent
 import com.intellij.driver.sdk.ui.components.common.ideFrame
 import com.intellij.driver.sdk.ui.components.common.JEditorUiComponent
 import com.intellij.driver.sdk.ui.components.elements.button
@@ -37,6 +38,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestMethodOrder
 import org.kodein.di.direct
 import org.kodein.di.instance
+import java.awt.Point
+import java.awt.event.KeyEvent
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
@@ -279,6 +282,32 @@ class ReviewTest {
 
     @Test
     @Order(7)
+    fun `in the side-by-side diff, a drag over the line numbers on the right and a click on the left open a thread on that side`() {
+        frame {
+            // The two editors of the diff of step 6, left then right: the editor of a.php is in a tab behind it.
+            val gutters = xx("//div[@class='EditorGutterComponentImpl']", GutterUiComponent::class.java).list()
+                .filter { it.component.isShowing() }.sortedBy { it.getLocationOnScreen().x }
+            assertEquals(2, gutters.size, "the gutters of the diff")
+            val (left, right) = gutters
+            right.mousePressMoveRelease(right.waitOneText("3").point, right.waitOneText("4").point)
+            // Ctrl+Enter: the thread of step 2, in the diff too, has an Add pending of its own.
+            keyboard { typeText("Why 1 and 3?"); hotKey(KeyEvent.VK_CONTROL, KeyEvent.VK_ENTER) }
+            awaitSession("a thread opens on the lines 3 to 4 of the new side") { it.getAsJsonArray("threads").size() == 2 }
+            // The gutter of the left side lies mirrored, against the right one: Driver gives the place of its texts unmirrored.
+            val four = left.waitOneText("4").point
+            left.click(Point(left.component.width - four.x, four.y))
+            keyboard { typeText("Why 2?"); hotKey(KeyEvent.VK_CONTROL, KeyEvent.VK_ENTER) }
+        }
+        val threads = awaitSession("a thread opens on the line 4 of the old side") { it.getAsJsonArray("threads").size() == 3 }.getAsJsonArray("threads")
+        val anchors = (1..2).map { threads[it].asJsonObject.getAsJsonObject("anchor") }.map { listOf(it["side"].asString, it["start"].asInt, it["end"].asInt) }
+        assertEquals(listOf(listOf("new", 3, 4), listOf("old", 4, 4)), anchors)
+        // The next steps expect the thread of step 2 alone.
+        val id = session()["id"].asString
+        for (n in 2..3) post("/api/sessions/$id/threads/$n/messages/0/delete", "{}")
+    }
+
+    @Test
+    @Order(8)
     fun `the bar of the diff warns that the Claude session waits for my answer, and even in the Editor view, Next Thread goes to the thread in the diff`() {
         val warning = "//div[@class='JBLabel' and @text='Claude is waiting for your answer in its session']"
         claudeQuery = "&blocked"
@@ -301,7 +330,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(8)
+    @Order(9)
     fun `an Outdated thread opens in its own window, the thread in a scroll pane`() {
         // Line 4 changes again: the thread of step 2 no longer finds its line.
         Files.writeString(Path.of(worktree, "a.php"), "<?php\n\necho 1;\necho 4;\n")
@@ -318,7 +347,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(9)
+    @Order(10)
     fun `Resolve in the context menu of a thread of the tree resolves it`() {
         frame { tree("//div[@class='Tree']").rightClickPath("a.php", "#1", fullMatch = false) }
         driver.ui.x("//div[@class='ActionMenuItem' and @text='Resolve']").click()
@@ -326,7 +355,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(10)
+    @Order(11)
     fun `Group By › Directory lists the files under their directories, or flat once unchecked`() {
         Files.createDirectories(Path.of(worktree, "src"))
         Files.writeString(Path.of(worktree, "src/b.php"), "<?php\n")
@@ -349,7 +378,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(11)
+    @Order(12)
     fun `in the Diff view, a click on a thread of the file shown scrolls its diff there, an added file too`() {
         Files.createDirectories(Path.of(worktree, "src"))
         Files.writeString(Path.of(worktree, "src/c.php"), "<?php\n" + (1..60).joinToString("") { "// line $it\n" })

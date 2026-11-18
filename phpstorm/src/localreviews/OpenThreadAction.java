@@ -31,8 +31,7 @@ public final class OpenThreadAction extends DumbAwareAction {
     @Override
     public void actionPerformed(AnActionEvent event) {
         Editor editor = event.getData(CommonDataKeys.EDITOR);
-        List<Threads> sides = editor == null ? null : editor.getUserData(Threads.KEY);
-        if (sides == null) return;
+        if (editor == null) return;
         Document document = editor.getDocument();
         SelectionModel selection = editor.getSelectionModel();
         int start = document.getLineNumber(selection.hasSelection() ? selection.getSelectionStart() : editor.getCaretModel().getOffset());
@@ -49,7 +48,16 @@ public final class OpenThreadAction extends DumbAwareAction {
             start = clicked;
             end = clicked;
         }
-        // In the unified diff, the new side when the last line has one, else the old side; the first line moves down onto a line of that side.
+        open(editor, start, end);
+    }
+
+    /**
+     * Opens a thread on the lines `start` to `end` of the editor, from 0:
+     * in the unified diff, on the new side when the last line has one, else on the old side; the first line moves down onto a line of that side.
+     */
+    static void open(Editor editor, int start, int end) {
+        List<Threads> sides = editor.getUserData(Threads.KEY);
+        if (sides == null) return;
         for (Threads threads : sides) {
             int last = threads.lines().fromEditor(end + 1);
             if (last == 0) continue;
