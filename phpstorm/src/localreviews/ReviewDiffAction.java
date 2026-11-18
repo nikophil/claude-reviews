@@ -35,6 +35,7 @@ import com.intellij.openapi.actionSystem.ActionManager;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.actionSystem.PlatformCoreDataKeys;
 import com.intellij.openapi.actionSystem.Presentation;
 import com.intellij.openapi.actionSystem.Separator;
 import com.intellij.openapi.actionSystem.ex.CheckboxAction;
@@ -294,7 +295,14 @@ public final class ReviewDiffAction extends DumbAwareAction {
                 Review review = review(event);
                 if (review == null) return;
                 markViewed(project, id, review.path(), viewed, ReviewService.get(project)::refresh);
-                if (viewed) ReviewToolWindow.viewedNext(project, review.path());
+                String next = viewed ? ReviewToolWindow.viewedNext(project, review.path()) : null;
+                if (next == null) return;
+                // The tab where I clicked shows it, whatever the files the diff of the session has since; a file it has not opens as a click opens it.
+                CacheDiffRequestChainProcessor processor = event.getData(PlatformCoreDataKeys.FILE_EDITOR) instanceof DiffEditorViewerFileEditor editor
+                    && editor.getEditorViewer() instanceof CacheDiffRequestChainProcessor shown ? shown : null;
+                int index = processor == null ? -1 : processor.getRequestChain().getRequests().stream().map(DiffRequestProducer::getName).toList().indexOf(next);
+                if (index >= 0) processor.setCurrentRequest(index);
+                else open(project, next, Side.RIGHT, -1, true);
             }
         };
     }

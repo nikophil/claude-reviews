@@ -165,11 +165,16 @@ test('the checkbox of a file marks it Viewed and opens the diff of the next file
     }).toPass();
     await expect(view.getByText('2 files · 1 viewed')).toBeVisible();
     await expect(page.getByRole('tab', { name: /b\.ts \([0-9a-f]{7} ↔ Working tree\)/ })).toBeVisible();
+    await view.getByRole('treeitem', { name: /^a\.txt/ }).click();
+    const a = page.getByRole('tab', { name: /a\.txt \([0-9a-f]{7} ↔ Working tree\)/, selected: true });
+    await expect(a).toBeVisible();
     await expect(async () => {
         await checkbox.uncheck({ timeout: 1000 });
         expect(Object.keys((await session()).viewed)).toEqual([]);
     }).toPass();
-    await expect(page.getByRole('tab', { name: /a\.txt \(/ })).toHaveCount(0);
+    // The diff of b.ts would take the place of a.txt's, its tab a preview.
+    await page.waitForTimeout(1000);
+    await expect(a).toBeVisible();
 });
 
 test('an Outdated thread opens on the diff excerpt it was opened on, with Next Thread in its bar', async ({ page }) => {

@@ -205,10 +205,10 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         return content != null && content.getComponent() instanceof Panel panel ? panel : null;
     }
 
-    /** Once `path` is marked Viewed in the bar of the diff: the diff shows the next file not Viewed of the tree, which selects it. */
-    static void viewedNext(Project project, String path) {
+    /** Once `path` is marked Viewed in the bar of the diff: selects the next file not Viewed of the tree, for the diff to show; null without one. */
+    static String viewedNext(Project project, String path) {
         Panel panel = panel(project);
-        if (panel != null) panel.viewedNext(path, true);
+        return panel == null ? null : panel.viewedNext(path, true);
     }
 
     /** « Previous Thread »: as Next Thread, backward. */
@@ -735,10 +735,10 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         }
 
         /**
-         * Once `path` is marked Viewed, as in a pull request: selects the next file of the tree not Viewed, none after the last one, which opens as a click opens it;
-         * `inDiff`, from the bar of the diff, shows it in the diff whatever the view, a binary file left out as the diff leaves it out.
+         * Once `path` is marked Viewed, as in a pull request: selects the next file of the tree not Viewed, none after the last one, which opens as a click opens it, and returns its path;
+         * `inDiff`, from the bar of the diff, only selects it, for the diff to show, a binary file left out as the diff leaves it out.
          */
-        void viewedNext(String path, boolean inDiff) {
+        String viewedNext(String path, boolean inDiff) {
             if (state != service.state()) show(service.state(), false);
             boolean after = false;
             for (Enumeration<TreeNode> all = ((DefaultMutableTreeNode) tree.getModel().getRoot()).preorderEnumeration(); all.hasMoreElements(); ) {
@@ -752,10 +752,10 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                     tree.setSelectionPath(selection);
                     rebuilding = false;
                     tree.scrollPathToVisible(selection);
-                    if (inDiff) ReviewDiffAction.open(project, next, Side.RIGHT, -1, true);
-                    return;
+                    return next;
                 }
             }
+            return null;
         }
 
         /** A file of the diff: a file that only threads name has nothing to view. */

@@ -141,10 +141,11 @@ function viewed(/** @type {any} */ session, /** @type {string} */ path) {
     return Object.hasOwn(session.viewed ?? {}, path);
 }
 
-/** The file of the diff after `path` in the order of the tree that is not Viewed; undefined after the last one, without going around. */
+/** The file of the diff after `path` in the order of the tree that is not Viewed; undefined after the last one, without going around, and for a file no longer in the diff. */
 function nextNotViewed(/** @type {File[]} */ files, /** @type {any} */ session, /** @type {string} */ path) {
     const order = tree(files, []).flatMap(node => 'dir' in node ? node.files : [node.file]);
-    return order.slice(order.findIndex(file => file.path === path) + 1).find(file => !viewed(session, file.path))?.path;
+    const at = order.findIndex(file => file.path === path);
+    return at < 0 ? undefined : order.slice(at + 1).find(file => !viewed(session, file.path))?.path;
 }
 
 /**

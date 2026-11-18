@@ -109,6 +109,7 @@ test('the file after the one I mark Viewed is the next one of the tree not Viewe
     assert.equal(review.nextNotViewed(files, session, 'src/a.ts'), 'README.md');
     assert.equal(review.nextNotViewed(files, session, 'README.md'), 'z.md');
     assert.equal(review.nextNotViewed(files, session, 'z.md'), undefined);
+    assert.equal(review.nextNotViewed(files, session, 'gone.md'), undefined, 'a file no longer in the diff');
 });
 
 test('the bases come with a separator before each group, the one greyed until a Send says so, the chosen one marked', () => {
