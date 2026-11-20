@@ -83,7 +83,9 @@ export function turnEnded(watch: Watch, seen: Seen): Watch {
 
 /** Whether a prompt is to be submitted now. */
 export function due(watch: Watch): boolean {
-    return watch.owed !== null && !watch.submitting && !watch.forking && !watch.dropped;
+    // A review message alone during a turn of Claude's own has no fork to go to: queued now, it would hold the wake of the next Send until the turn ends.
+    const held = watch.busy && !watch.notify && !watch.waiting;
+    return watch.owed !== null && !watch.submitting && !watch.forking && !watch.dropped && !held;
 }
 
 /** Whether the due prompt goes to a fork: Claude works on a turn of its own, which a prompt would wait for; a turn a wake or relaunch opened answers threads already. */

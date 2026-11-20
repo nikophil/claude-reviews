@@ -290,3 +290,17 @@ test('a review message alone waits for the end of the turn instead of a fork: Cl
     assert.equal(forks(watch), false);
     assert.equal(forks({ ...watch, waiting: 1 }), true);
 });
+
+test('a review message alone seen while Claude works on a turn of its own waits for its end, and a Send with a thread meanwhile still goes to a fork', () => {
+    const review = { body: 'Rename it', readonly: false };
+    let watch = turnStarted(look(start, { id: 's', sends: 0, waiting: 0 }));
+    watch = look(watch, { id: 's', sends: 1, waiting: 0, review });
+    assert.equal(watch.owed, 'wake');
+    assert.equal(due(watch), false, 'not queued behind the turn');
+
+    const threads = look(watch, { id: 's', sends: 2, waiting: 1 });
+    assert.equal(due(threads), true);
+    assert.equal(forks(threads), true);
+
+    assert.equal(due(idle(watch)), true, 'submitted once the turn ends');
+});

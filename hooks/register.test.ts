@@ -1117,3 +1117,18 @@ test('the relaunch does not repeat the review message the wake gave', async () =
 
     assert.deepEqual(claude.seen.submitted, [prompt(1, 0, { body: 'Rename it', readonly: false }), prompt(1)]);
 });
+
+test('a review message alone sent while Claude works on a turn of its own is submitted at the end of that turn, not queued during it', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir);
+    await claude.poll();
+    await claude.fire('turn.start', { text: 'work', turnId: 't1' });
+
+    await api('POST', `/api/sessions/${id}/send`, { tree: (await api('GET', `/api/sessions/${id}/diff`)).tree, body: 'Rename it' });
+    await claude.poll();
+    assert.deepEqual([claude.seen.submitted, claude.seen.spawned], [[], []]);
+
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
+    await claude.settle();
+    assert.deepEqual(claude.seen.submitted, [prompt(0, 0, { body: 'Rename it', readonly: false })]);
+});

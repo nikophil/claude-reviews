@@ -189,6 +189,7 @@ The server serves the UI and a JSON API, for the UI and the mod.
   Following another worktree keeps the turn running: a Send there still goes to a fork. One fork runs at a time: a Send seen meanwhile waits for its end, then goes to a fork again, or to a prompt once Claude is idle; a fork the engine denies leaves the Send to the prompt.
 - The prompt, and the one of a fork, counts the threads waiting and the readonly ones among them, followed by the review message of the last Send;
   a review message without a thread waiting asks Claude to answer it in the conversation, and relaunches nothing.
+  Seen while Claude works on a turn of its own, such a review message waits for the end of that turn rather than for a fork, and a Send that brings threads meanwhile still goes to a fork.
 - Each of its reads adds `&blocked` while a loop of its Claude session, the main one or a subagent's, is Blocked:
   from a `classic.PermissionRequest` that no settings hook answers, or a `tool.call` of `AskUserQuestion`, until a tool call of that loop ends.
   The `next` of `classic.PermissionRequest` resolves once the settings hooks answered, not the person, hence the end of the tool call, run or refused, as the end of the wait.
