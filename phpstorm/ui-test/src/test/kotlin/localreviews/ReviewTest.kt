@@ -408,7 +408,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(13)
+    @Order(14)
     fun `a double click on a Resolved thread opens it in its own window, unfolded, where Unresolve reopens it`() {
         val id = session()["id"].asString
         post("/api/sessions/$id/threads/2/resolve", "{}")
