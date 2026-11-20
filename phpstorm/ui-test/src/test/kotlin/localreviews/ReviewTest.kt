@@ -436,7 +436,8 @@ class ReviewTest {
     }
 
     @Test
-    @Order(14)
+    // Last whatever steps come before it: the Approve closes the session they all use.
+    @Order(Int.MAX_VALUE)
     fun `an Approve while the tree has the focus empties the tool window without an exception`() {
         frame { tree("//div[@class='Tree']").clickPath("c.php", "Line +50", fullMatch = false) }
         val before = ideaLog().length
