@@ -411,7 +411,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(12)
+    @Order(13)
     fun `Send in a thread adds my reply and sends the thread at once`() {
         frame {
             val thread = x("//div[@class='ThreadView' and .//div[@text='Thread #2 · Line +50']]")
@@ -425,7 +425,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(13)
+    @Order(14)
     fun `the diff folds the unchanged code, but not the lines of a thread`() {
         // Line 51 changes: lines 1 to 46 and 56 to 101 are unchanged, out of the 4 lines of context.
         Files.writeString(Path.of(worktree, "long.php"), "<?php\n" + (1..100).joinToString("") { if (it == 50) "// changed\n" else "// line $it\n" })
@@ -451,7 +451,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(14)
+    @Order(15)
     fun `a double click on a Resolved thread opens it in its own window, unfolded, where Unresolve reopens it`() {
         val id = session()["id"].asString
         post("/api/sessions/$id/threads/2/resolve", "{}")
