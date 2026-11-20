@@ -83,6 +83,13 @@ final class Placement {
         return session.get("approvedAt") instanceof JsonPrimitive;
     }
 
+    /** The id of the thread that the write answered by `session` opened: a new thread takes the largest id of the session plus 1. */
+    static int newest(JsonObject session) {
+        int newest = 0;
+        for (JsonElement thread : session.getAsJsonArray("threads")) newest = Math.max(newest, thread.getAsJsonObject().get("id").getAsInt());
+        return newest;
+    }
+
     /** Why Send is greyed, null while it is enabled: a Send without a Pending message still takes its Snapshot. */
     static String sendRefusal(JsonObject session) {
         if (approved(session)) return "The session is approved";

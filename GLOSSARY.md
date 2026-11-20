@@ -20,7 +20,7 @@ _Avoid_: round, turn, submission
 **Send**:
 The review that delivers the Pending messages to Claude and wakes its Claude session.
 It may carry none: it then takes a Snapshot, and wakes Claude only if threads are still waiting for it.
-It may deliver only the Pending messages of one thread, from that thread's Send button in PhpStorm or VS Code: it still takes its Snapshot, and the others stay Pending.
+It may deliver only the Pending messages of one thread, from the Send button of that thread's box, which first adds the message typed there: it still takes its Snapshot, and the other threads stay Pending.
 _Avoid_: Comment, Request changes
 
 **Approve**:

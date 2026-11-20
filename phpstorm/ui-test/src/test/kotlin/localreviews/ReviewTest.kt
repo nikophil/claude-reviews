@@ -377,6 +377,20 @@ class ReviewTest {
 
     @Test
     @Order(12)
+    fun `Send in a thread adds my reply and sends the thread at once`() {
+        frame {
+            val thread = x("//div[@class='ThreadView' and .//div[@text='Thread #2 · Line +50']]")
+            thread.x(".//div[@class='EditorTextField']").click()
+            keyboard { typeText("Why here?") }
+            thread.x(".//div[@class='JButton' and @text='Send']").click()
+        }
+        val session = awaitSession("the reply is sent") { it["sends"].asInt == 2 }
+        val reply = session.getAsJsonArray("threads")[1].asJsonObject.getAsJsonArray("messages")[1].asJsonObject
+        assertEquals(listOf("Why here?", 2), listOf(reply["body"].asString, reply["review"].asInt))
+    }
+
+    @Test
+    @Order(13)
     fun `the diff folds the unchanged code, but not the lines of a thread`() {
         // Line 51 changes: lines 1 to 46 and 56 to 101 are unchanged, out of the 4 lines of context.
         Files.writeString(Path.of(worktree, "long.php"), "<?php\n" + (1..100).joinToString("") { if (it == 50) "// changed\n" else "// line $it\n" })
@@ -402,7 +416,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(13)
+    @Order(14)
     fun `a double click on a Resolved thread opens it in its own window, unfolded, where Unresolve reopens it`() {
         val id = session()["id"].asString
         post("/api/sessions/$id/threads/2/resolve", "{}")

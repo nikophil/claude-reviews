@@ -264,7 +264,7 @@ final class Threads {
         closeDraft();
         ModalityState modality = ModalityState.stateForComponent(editor.getComponent());
         RangeMarker marked = end == 0 ? null : document.createRangeMarker(document.getLineStartOffset(start - 1), document.getLineEndOffset(end - 1));
-        ThreadView view = new ThreadView(project, body -> {
+        ThreadView view = new ThreadView(project, review.session(), last == null ? null : Placement.sendRefusal(last), body -> {
             int[] range = new int[2];
             ApplicationManager.getApplication().invokeAndWait(() -> {
                 FileDocumentManager.getInstance().saveAllDocuments();
@@ -280,7 +280,7 @@ final class Threads {
             thread.addProperty("body", body);
             thread.addProperty("base", review.base());
             thread.add("tree", Server.get("/api/sessions/" + review.session() + "/tree").get("tree"));
-            Server.post("/api/sessions/" + review.session() + "/threads", thread);
+            return Placement.newest(Server.post("/api/sessions/" + review.session() + "/threads", thread));
         }, marked != null && side.equals("new") ? () -> text(span(marked)) : null, this::closeDraft, () -> {
             closeDraft();
             refresh.run();

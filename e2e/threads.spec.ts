@@ -60,7 +60,7 @@ test('Send is active without Pending message, and Approve is grayed out with one
     await claudeThread(request, dir, 2, 'Is this right?');
     await open(page, dir);
 
-    const send = page.getByRole('button', { name: 'Send' });
+    const send = page.getByRole('button', { name: 'Send', exact: true });
     const approve = page.getByRole('button', { name: 'Approve' });
     await expect(send).toBeEnabled();
     await expect(approve).toBeEnabled();
@@ -75,6 +75,59 @@ test('Send is active without Pending message, and Approve is grayed out with one
     await expect(page.locator('.thread')).not.toContainText('Pending');
     await expect(page.locator('.thread')).toContainText('Waiting for Claude');
     await expect(approve).toBeEnabled();
+});
+
+test('Send in the box of a thread adds my message and sends this thread alone, or only its Pending messages with nothing typed', async ({ page, request }) => {
+    const dir = changed();
+    const { id } = await claudeThread(request, dir, 2, 'First?');
+    await claudeThread(request, dir, 3, 'Second?');
+    await open(page, dir);
+    const [first, second] = [page.locator('.thread').nth(0), page.locator('.thread').nth(1)];
+    await second.getByRole('textbox').fill('Later');
+    await second.getByRole('button', { name: 'Add message' }).click();
+    await expect(second).toContainText('Pending');
+
+    await first.getByRole('textbox').fill('Now');
+    await first.getByRole('button', { name: 'Send thread' }).click();
+
+    await expect(first).toContainText('Waiting for Claude');
+    await expect(first).not.toContainText('Pending');
+    await expect(second).toContainText('Pending');
+    await expect(first.getByRole('textbox')).toHaveValue('');
+    await expect(first.getByRole('button', { name: 'Send thread' })).toBeDisabled();
+
+    await second.getByRole('button', { name: 'Send thread' }).click();
+
+    await expect(second).toContainText('Waiting for Claude');
+    const session = await (await request.get(`/api/sessions/${id}`)).json();
+    expect(session.sends).toBe(2);
+    expect(session.threads.map((thread: { messages: { review?: number }[] }) => thread.messages[1].review)).toEqual([1, 2]);
+});
+
+test('Send in the box of a new thread opens it and sends it at once', async ({ page }) => {
+    await open(page, changed());
+    await page.locator('.diff-line-add .diff-num').nth(1).click();
+    await page.getByRole('textbox').fill('Why?');
+
+    await page.getByRole('button', { name: 'Send thread' }).click();
+
+    await expect(page.locator('.thread')).toContainText('Waiting for Claude');
+    await expect(page.locator('.thread')).not.toContainText('Pending');
+});
+
+test('a Send of a thread that fails after adding my message leaves it Pending and empties the box', async ({ page, request }) => {
+    const dir = changed();
+    await claudeThread(request, dir, 2, 'First?');
+    await page.route(url => new URL(url.href).pathname.endsWith('/send'), route => route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'refused' }) }));
+    await open(page, dir);
+    const thread = page.locator('.thread');
+    await thread.getByRole('textbox').fill('Now');
+
+    await thread.getByRole('button', { name: 'Send thread' }).click();
+
+    await expect(page.locator('.flash-error')).toHaveText('refused');
+    await expect(thread).toContainText('Pending');
+    await expect(thread.getByRole('textbox')).toHaveValue('');
 });
 
 test('a Resolved thread folds, opens again on a click, takes no message, and takes them again once Unresolved', async ({ page, request }) => {
@@ -111,7 +164,7 @@ test('the Approve dialog counts the open threads, and the approved session turns
     await expect(page.getByText('Approved', { exact: true })).toBeVisible();
     expect(message).toContain('2 open threads');
     await expect(page.getByRole('textbox')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Send' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Send', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
     await page.locator('.diff-line-add .diff-num').nth(1).click();
     await expect(page.getByRole('textbox')).toHaveCount(0);
@@ -188,7 +241,7 @@ test('a double click on Add message or Send writes once', async ({ page }) => {
 
     await page.getByRole('button', { name: 'Add message' }).dblclick();
     await expect(page.locator('.thread')).toContainText('Pending');
-    await page.getByRole('button', { name: 'Send' }).dblclick();
+    await page.getByRole('button', { name: 'Send', exact: true }).dblclick();
     await expect(page.locator('.thread')).toContainText('Waiting for Claude');
 
     expect(posts).toEqual(['threads', 'send']);
@@ -219,7 +272,7 @@ test('an approved session stays read-only when a late poll answers, and stops po
     await page.waitForTimeout(200);
 
     expect(message).toBe('Approve this session with 1 open thread?');
-    expect(await page.getByRole('button', { name: 'Send' }).count()).toBe(0);
+    expect(await page.getByRole('button', { name: 'Send', exact: true }).count()).toBe(0);
     await page.waitForTimeout(2500);
     expect(polls).toBe(0);
 });
@@ -318,12 +371,12 @@ test('a page left open on a session learns at its next poll that the worktree is
     git(main, 'worktree', 'add', '-q', dir);
     await claudeThread(request, dir, 1, 'Here');
     await open(page, dir);
-    await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
 
     vanish(dir);
 
     await expect(page.getByText('Closed', { exact: true })).toBeVisible({ timeout: 5000 });
-    await expect(page.getByRole('button', { name: 'Send' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Send', exact: true })).toHaveCount(0);
 });
 
 /** Opens a thread of mine on the first added line of the page, through the page. */
