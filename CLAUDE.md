@@ -51,6 +51,7 @@ Read `BRIEF.md`, `GLOSSARY.md` and `docs/adr/` before changing the code, and nam
 - `phpstorm/`: the PhpStorm plugin, in Java and Swing: the "Claude Reviews" tool window (base, Send, Approve, changed files and their threads), the threads in the editor and in the diff of the IDE;
   its Editor view opens a file in the editor, its Diff view in the diff of the IDE, with the Viewed checkbox of each file in the tree and in the bar of the diff;
   this diff has a place of its own (`localreviews.Review`), which starts from the settings of the default place and folds the unchanged code, once, then keeps the settings of the IDE, and unfolds the lines of a thread;
+  a click on a line number of the diff, or a drag over line numbers, opens a thread there, but not in the editor, where the IDE puts a breakpoint;
   it edits and deletes my Pending messages, moves from one thread not Resolved to the next (Next Thread and Previous Thread, Alt+Shift+Page Down and Page Up, also in the bar of the diff and at the top right of the editor), marks "Replied" those, not Resolved, where Claude replied since my last Send,
   resolves or reopens a thread from its context menu in the tree, opens an Outdated thread, or a Resolved one, in a window of its own, scrolled when long,
   groups its files under their directories, or lists them flat each followed by its directory (Group By › Directory, as in the Commit tool window),

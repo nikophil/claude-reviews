@@ -14,10 +14,14 @@ import com.intellij.diff.tools.util.side.OnesideTextDiffViewer;
 import com.intellij.diff.tools.util.side.TwosideTextDiffViewer;
 import com.intellij.diff.util.Side;
 import com.intellij.ide.ActivityTracker;
+import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.editor.event.EditorMouseEvent;
+import com.intellij.openapi.editor.event.EditorMouseEventArea;
+import com.intellij.openapi.editor.event.EditorMouseListener;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.vcs.changes.Change;
@@ -27,6 +31,9 @@ import com.intellij.openapi.vcs.changes.CurrentContentRevision;
 import com.intellij.openapi.vcs.changes.actions.diff.ChangeDiffRequestProducer;
 import com.intellij.util.concurrency.AppExecutorUtil;
 
+import javax.swing.SwingUtilities;
+import java.awt.Point;
+import java.awt.event.MouseEvent;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -88,9 +95,41 @@ public final class ThreadsInDiff extends DiffExtension {
         } else {
             return;
         }
+        for (Editor editor : poll.editors) openOnLineNumbers(editor, viewer);
         ReviewService.get(project).onSettings(poll::reshow, viewer);
         ScheduledFuture<?> future = AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay(poll, 0, 2, TimeUnit.SECONDS);
         Disposer.register(viewer, () -> future.cancel(false));
+    }
+
+    /**
+     * A left click on a line number, or a drag over line numbers, opens a thread on these lines.
+     * Only in the diff: in the editor, the IDE puts a breakpoint there.
+     */
+    private static void openOnLineNumbers(Editor editor, Disposable parent) {
+        editor.addEditorMouseListener(new EditorMouseListener() {
+            private int pressed = -1;
+
+            @Override
+            public void mousePressed(EditorMouseEvent event) {
+                MouseEvent mouse = event.getMouseEvent();
+                pressed = event.getArea() == EditorMouseEventArea.LINE_NUMBERS_AREA && SwingUtilities.isLeftMouseButton(mouse) && mouse.getClickCount() == 1 ? line(event) : -1;
+            }
+
+            @Override
+            public void mouseReleased(EditorMouseEvent event) {
+                int released = line(event);
+                if (pressed < 0 || released < 0) return;
+                OpenThreadAction.open(editor, Math.min(pressed, released), Math.max(pressed, released));
+                pressed = -1;
+            }
+
+            /** The line of the document under the mouse, from 0; -1 below the last line, or beside a thread, an inlay. */
+            private int line(EditorMouseEvent event) {
+                int line = event.getLogicalPosition().line;
+                boolean inlay = editor.getInlayModel().getElementAt(new Point(0, event.getMouseEvent().getY())) != null;
+                return inlay || line >= editor.getDocument().getLineCount() ? -1 : line;
+            }
+        }, parent);
     }
 
     // ponytail: never emptied, one session per diff of the review opened since the IDE started.

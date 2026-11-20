@@ -63,6 +63,8 @@ it opens them with the `open_thread` tool, and they wait for you in the page.
 
 The PhpStorm plugin shows the same session in a "Claude Reviews" tool window, with the threads in the editor and in the IDE's diff.
 Its diff folds the unchanged code, as GitHub does, but not the lines of a thread; Collapse Unchanged Fragments, in the ⚙ of the diff, turns it off.
+In the diff, a click on a line number, or a drag over line numbers, opens a thread there;
+in the editor, where that click puts a breakpoint, the context menu of a line number offers Open Review Thread.
 
 ![PhpStorm: the Claude Reviews tool window, and in the editor a thread where Claude replied, then a suggestion waiting for Claude](docs/images/phpstorm.png)
 
