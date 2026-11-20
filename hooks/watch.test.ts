@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { due, forked, forkEnded, forking, forks, idle, listeners, look, notified, prompt, resumed, sending, start, status, submitted, touched, turnEnded, turnStarted, type Watch } from './watch.ts';
+import { due, forked, forkEnded, forking, forkPrompt, forks, idle, listeners, look, notified, prompt, resumed, sending, start, status, submitted, touched, turnEnded, turnStarted, type Watch } from './watch.ts';
 
 /** What the glue does once the decision says a prompt is due: submit it, then learn whether it entered. */
 function submit(watch: Watch, dropped = false): Watch {
@@ -277,4 +277,16 @@ test('a wake held by a drop for a review message alone stays owed until it opens
     watch = resumed(look(watch, { id: 's', sends: 1, waiting: 0, review }));
 
     assert.equal(watch.owed, 'wake');
+});
+
+test('the fork counts the readonly threads and carries the review message after its own warning', () => {
+    const review = { body: 'Mind the tests', readonly: true };
+    assert.equal(forkPrompt(2, 1, review), `${forkPrompt(2, 1)}\n\nThe review message, to answer without changing any file:\n\nMind the tests`);
+    assert.match(forkPrompt(2, 1), /^claude-reviews: 2 threads are waiting for you, 1 of them readonly\. .* You are a fork/);
+});
+
+test('a review message alone waits for the end of the turn instead of a fork: Claude answers it in the conversation', () => {
+    const watch = turnStarted(look(look(start, { id: 's', sends: 0, waiting: 0 }), { id: 's', sends: 1, waiting: 0, review: { body: 'Rename it', readonly: false } }));
+    assert.equal(forks(watch), false);
+    assert.equal(forks({ ...watch, waiting: 1 }), true);
 });

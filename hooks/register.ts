@@ -226,7 +226,7 @@ function fork($: EngineInterface): void {
         $.ui.log(`claude-reviews: no fork to answer the threads (${result.deny}), they wait for the end of the turn`);
         if (due(watch)) submit($);
     };
-    $.agent.spawn({ subagentType: 'fork', description: 'Answer the claude-reviews threads', prompt: forkPrompt(watch.waiting) })
+    $.agent.spawn({ subagentType: 'fork', description: 'Answer the claude-reviews threads', prompt: forkPrompt(watch.waiting, watch.readonly, watch.forking!.owed === 'wake' ? watch.review : null) })
         .then(spawned, (error: Error) => spawned({ deny: error.message }));
 }
 

@@ -30,21 +30,22 @@ export type Seen = { id: string; sends: number; waiting: number; readonly?: numb
 
 export const start: Watch = { sessions: {}, waiting: 0, readonly: 0, review: null, owed: null, submitting: null, dropped: false, notify: null, busy: false, forking: null };
 
-/** The text of a wake, a relaunch and the first message alike: the threads waiting, the readonly ones among them, then the review message. */
-export function prompt(waiting: number, readonly = 0, review: Review | null = null): string {
+/** The text of a wake, a relaunch and the first message alike: the threads waiting, the readonly ones among them, `aside`, then the review message. */
+export function prompt(waiting: number, readonly = 0, review: Review | null = null, aside = ''): string {
     const threads = waiting > 1 ? `${waiting} threads are waiting for you` : `${waiting} thread is waiting for you`;
-    const text = waiting
+    let text = waiting
         ? `claude-reviews: ${threads}${readonly ? `, ${readonly} of them readonly` : ''}. Read them with list_open_threads, reply in each with reply_to_thread, `
             + `and change the code when a thread asks for it${readonly ? ', but answer a readonly thread without changing any file' : ''}.`
         : 'claude-reviews: a review message is waiting for you, with no thread waiting: answer it here.';
+    text += aside;
     if (!review) return text;
     return waiting ? `${text}\n\nThe review message${review.readonly ? ', to answer without changing any file' : ''}:\n\n${review.body}` : `${text}\n\n${review.body}`;
 }
 
 /** The prompt of a fork, which answers while the main conversation works: it must neither take over its task nor collide with its edits. */
-export function forkPrompt(waiting: number): string {
-    return `${prompt(waiting)} You are a fork answering them in the background: the main conversation keeps working in this same worktree at the same time. `
-        + 'Do not go on with its task, and do not edit the files it is working on: when a thread asks for a change there, say so in the thread instead.';
+export function forkPrompt(waiting: number, readonly = 0, review: Review | null = null): string {
+    return prompt(waiting, readonly, review, ' You are a fork answering them in the background: the main conversation keeps working in this same worktree at the same time. '
+        + 'Do not go on with its task, and do not edit the files it is working on: when a thread asks for a change there, say so in the thread instead.');
 }
 
 /** The status line: the threads waiting for Claude, and a wake a drop holds; undefined when none waits. */
@@ -87,7 +88,8 @@ export function due(watch: Watch): boolean {
 
 /** Whether the due prompt goes to a fork: Claude works on a turn of its own, which a prompt would wait for; a turn a wake or relaunch opened answers threads already. */
 export function forks(watch: Watch): boolean {
-    return watch.busy && !watch.notify;
+    // A review message alone has no thread for a fork to answer in: Claude answers it in the conversation, once its turn ends.
+    return watch.busy && !watch.notify && watch.waiting > 0;
 }
 
 /** The due prompt is going to a fork, for the Send of the session seen last. */
