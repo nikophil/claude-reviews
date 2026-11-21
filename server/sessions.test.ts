@@ -308,6 +308,42 @@ test('a Send refuses threads that are not a list of thread ids of the session, b
     assert.equal(git(dir, 'for-each-ref', `refs/claude-reviews/${id}/`), '');
 });
 
+test('a thread is not readonly until I check it, and a readonly that is not a boolean is refused', async () => {
+    const { id, path } = await sessionWithThread();
+    assert.equal((await api('GET', `/api/sessions/${id}`)).body.threads[0].readonly, false);
+
+    const checked = await api('POST', `${path}/readonly`, { readonly: true });
+    assert.equal(checked.status, 200);
+    assert.equal(checked.body.threads[0].readonly, true);
+    assert.equal((await api('POST', `${path}/readonly`, { readonly: false })).body.threads[0].readonly, false);
+    assert.equal((await api('POST', `${path}/readonly`, { readonly: 'yes' })).status, 400);
+    assert.equal((await api('POST', `/api/sessions/${id}/threads/9/readonly`, { readonly: true })).status, 404);
+});
+
+test('a Send records its review message and its readonly under its number, and a Send with neither records nothing', async () => {
+    const { id, path } = await sessionWithThread();
+    await api('POST', `${path}/messages`, { author: 'me', body: 'Why?' });
+
+    const sent = await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id), body: 'Explain, do not change anything', readonly: true });
+    assert.equal(sent.status, 200);
+    assert.deepEqual(sent.body.reviews, [{ review: 1, body: 'Explain, do not change anything', readonly: true }]);
+    assert.equal(sent.body.threads[0].messages[1].review, 1);
+
+    const again = await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id), body: '  ', readonly: false });
+    assert.deepEqual(again.body.reviews, [{ review: 1, body: 'Explain, do not change anything', readonly: true }]);
+    const readonlyOnly = await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id), readonly: true });
+    assert.deepEqual(readonlyOnly.body.reviews.at(-1), { review: 3, body: '', readonly: true });
+});
+
+test('a Send refuses a review message that is not a string, or a readonly that is not a boolean, before taking its Snapshot', async () => {
+    const { dir, id } = await sessionWithThread();
+    const tree = await displayedTree(id);
+
+    assert.equal((await api('POST', `/api/sessions/${id}/send`, { tree, body: 1 })).status, 400);
+    assert.equal((await api('POST', `/api/sessions/${id}/send`, { tree, readonly: 'yes' })).status, 400);
+    assert.equal(git(dir, 'for-each-ref', `refs/claude-reviews/${id}/`), '');
+});
+
 test('a Resolved thread no longer waits for Claude, a reply of Claude does not reopen it, a message of mine is refused until its Unresolve', async () => {
     const { id, path } = await sessionWithThread();
     await api('POST', `${path}/messages`, { author: 'me', body: 'Thanks' });
@@ -1299,4 +1335,16 @@ test('a thread on a whole file has no lines, stays placed while its file is ther
     assert.equal(gone.body.threads[0].at, null);
     assert.equal(claude.status, 200);
     assert.equal((await api('POST', `/api/sessions/${id}/threads`, { author: 'me', base: shown.base, tree: shown.tree, path: 'a.txt', side: 'new', start: 0, end: 1, body: 'x' })).status, 400);
+});
+
+test('at turn-complete after a Send that left no thread waiting but carried a review message, the server notifies that Claude answered it', async () => {
+    const dir = repo({ 'a.txt': 'a\n' });
+    const { id } = (await api('POST', '/api/sessions', { worktree: dir })).body;
+    await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id), body: 'Rename it' });
+    notified.length = 0;
+
+    await api('POST', `/api/sessions/${id}/turn-complete`, {});
+
+    const text = 'Claude answered the review message';
+    assert.deepEqual(notified, [process.platform === 'darwin' ? notification(text, 'darwin') : ['notify-send', 'claude-reviews', text]]);
 });

@@ -1,4 +1,4 @@
-import { test as base } from '@playwright/test';
+import { test as base, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -15,6 +15,15 @@ async function readToken(): Promise<string> {
         if (!cached) await new Promise(resolve => setTimeout(resolve, 100));
     }
     return cached;
+}
+
+/** A Send from the page: Send opens the review message and its readonly, Send review sends it. */
+export async function send(page: Page, { message = '', readonly = false } = {}) {
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    const form = page.locator('.send-review');
+    if (message) await form.getByRole('textbox', { name: 'Review message' }).fill(message);
+    if (readonly) await form.getByRole('checkbox', { name: 'Answer without changing code' }).check();
+    await form.getByRole('button', { name: 'Send review' }).click();
 }
 
 export const test = base.extend<{ token: string }>({

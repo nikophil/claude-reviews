@@ -4,8 +4,11 @@ export type Watch = {
     session?: string | null;
     /** Per session seen, its last Send seen and the Send whose relaunch opened a turn: a session seen again never starts over. */
     sessions: Record<string, { sends: number; relaunched: number }>;
-    /** The threads Waiting for Claude at the last look. */
+    /** The threads Waiting for Claude at the last look, and the readonly ones among them. */
     waiting: number;
+    readonly: number;
+    /** The review message of the last Send at the last look, null without one. */
+    review: Review | null;
     /** A prompt still to submit: the wake of a Send, or the relaunch at the end of a turn. */
     owed: 'wake' | 'relaunch' | null;
     /** The prompt submitted, until it opens a turn or is dropped. */
@@ -20,21 +23,29 @@ export type Watch = {
     forking: { owed: 'wake' | 'relaunch'; session: string; sends: number; agent?: string } | null;
 };
 
-/** The open session of the worktree as the mod sees it, or null without one. */
-export type Seen = { id: string; sends: number; waiting: number } | null;
+export type Review = { body: string; readonly: boolean };
 
-export const start: Watch = { sessions: {}, waiting: 0, owed: null, submitting: null, dropped: false, notify: null, busy: false, forking: null };
+/** The open session of the worktree as the mod sees it, or null without one; `review`, the review message of its last Send. */
+export type Seen = { id: string; sends: number; waiting: number; readonly?: number; review?: Review | null } | null;
 
-/** The text of a wake, a relaunch and the first message alike. */
-export function prompt(waiting: number): string {
+export const start: Watch = { sessions: {}, waiting: 0, readonly: 0, review: null, owed: null, submitting: null, dropped: false, notify: null, busy: false, forking: null };
+
+/** The text of a wake, a relaunch and the first message alike: the threads waiting, the readonly ones among them, `aside`, then the review message. */
+export function prompt(waiting: number, readonly = 0, review: Review | null = null, aside = ''): string {
     const threads = waiting > 1 ? `${waiting} threads are waiting for you` : `${waiting} thread is waiting for you`;
-    return `claude-reviews: ${threads}. Read them with list_open_threads, reply in each with reply_to_thread, and change the code when a thread asks for it.`;
+    let text = waiting
+        ? `claude-reviews: ${threads}${readonly ? `, ${readonly} of them readonly` : ''}. Read them with list_open_threads, reply in each with reply_to_thread, `
+            + `and change the code when a thread asks for it${readonly ? ', but answer a readonly thread without changing any file' : ''}.`
+        : 'claude-reviews: a review message is waiting for you, with no thread waiting: answer it here.';
+    text += aside;
+    if (!review) return text;
+    return waiting ? `${text}\n\nThe review message${review.readonly ? ', to answer without changing any file' : ''}:\n\n${review.body}` : `${text}\n\n${review.body}`;
 }
 
 /** The prompt of a fork, which answers while the main conversation works: it must neither take over its task nor collide with its edits. */
-export function forkPrompt(waiting: number): string {
-    return `${prompt(waiting)} You are a fork answering them in the background: the main conversation keeps working in this same worktree at the same time. `
-        + 'Do not go on with its task, and do not edit the files it is working on: when a thread asks for a change there, say so in the thread instead.';
+export function forkPrompt(waiting: number, readonly = 0, review: Review | null = null): string {
+    return prompt(waiting, readonly, review, ' You are a fork answering them in the background: the main conversation keeps working in this same worktree at the same time. '
+        + 'Do not go on with its task, and do not edit the files it is working on: when a thread asks for a change there, say so in the thread instead.');
 }
 
 /** The status line: the threads waiting for Claude, and a wake a drop holds; undefined when none waits. */
@@ -45,15 +56,21 @@ export function status(watch: Watch): string | undefined {
     return `claude-reviews · ${threads} waiting for Claude${held}`;
 }
 
-/** A look at the session: a new Send wakes Claude if threads wait for him; nothing waiting, nothing is owed. */
+/** A look at the session: a new Send wakes Claude if threads wait for him, or if it carries a review message; neither, nothing is owed. */
 export function look(watch: Watch, seen: Seen): Watch {
-    if (!seen) return { ...watch, session: null, waiting: 0, owed: null };
+    if (!seen) return { ...watch, session: null, waiting: 0, readonly: 0, review: null, owed: null };
     // Sends made before the mod first looked are for the first message, not for a wake.
     const known = watch.sessions[seen.id] ?? { sends: watch.session === undefined ? seen.sends : 0, relaunched: 0 };
     // A late look may have read an older Send: the count of Sends never goes back.
     const sends = Math.max(known.sends, seen.sends);
-    const next = { ...watch, session: seen.id, waiting: seen.waiting, sessions: { ...watch.sessions, [seen.id]: { ...known, sends } } };
-    if (!seen.waiting) return { ...next, owed: null };
+    // A review message held while its wake is owed stays, though a later Send carries none: the fork of that Send, or the prompt, gives it.
+    const review = seen.review ?? (watch.owed === 'wake' ? watch.review : null);
+    const next = { ...watch, session: seen.id, waiting: seen.waiting, readonly: seen.readonly ?? 0, review, sessions: { ...watch.sessions, [seen.id]: { ...known, sends } } };
+    if (!seen.waiting) {
+        // A review message alone is owed one wake, until it opens its turn, and never a relaunch: Claude answers it in the conversation, where nothing tells it answered.
+        const wake = review && (seen.sends > known.sends || watch.owed === 'wake');
+        return { ...next, owed: wake ? 'wake' : null };
+    }
     return seen.sends > known.sends ? { ...next, owed: 'wake' } : next;
 }
 
@@ -67,12 +84,15 @@ export function turnEnded(watch: Watch, seen: Seen): Watch {
 
 /** Whether a prompt is to be submitted now. */
 export function due(watch: Watch): boolean {
-    return watch.owed !== null && !watch.submitting && !watch.forking && !watch.dropped;
+    // A review message alone during a turn of Claude's own has no fork to go to: queued now, it would hold the wake of the next Send until the turn ends.
+    const held = watch.busy && !watch.notify && !watch.waiting;
+    return watch.owed !== null && !watch.submitting && !watch.forking && !watch.dropped && !held;
 }
 
 /** Whether the due prompt goes to a fork: Claude works on a turn of its own, which a prompt would wait for; a turn a wake or relaunch opened answers threads already. */
 export function forks(watch: Watch): boolean {
-    return watch.busy && !watch.notify;
+    // A review message alone has no thread for a fork to answer in: Claude answers it in the conversation, once its turn ends.
+    return watch.busy && !watch.notify && watch.waiting > 0;
 }
 
 /** The due prompt is going to a fork, for the Send of the session seen last. */

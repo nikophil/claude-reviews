@@ -63,6 +63,7 @@
 /* The thread j or k went to. */
 .thread-current { box-shadow: 0 0 0 2px var(--borderColor-accent-emphasis); }
 .conversations { width: 360px; max-height: 60vh; overflow: auto; }
+.send-review { width: 360px; }
 .conversations::before, .conversations::after { display: none; }
 /* A suggestion is a diff, not a markdown table: as wide as its message, its long lines wrapped. */
 .markdown-body .suggestion table { display: table; width: 100%; margin: 0; }

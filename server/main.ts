@@ -4,7 +4,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { extname, join } from 'node:path';
-import { addMessage, approve, bases, checkPlacement, chooseBase, closedSessions, currentTree, dataDir, deleteMessage, editMessage, exclusive, file, findSession, getSession, httpError, inbox, listSessions, markViewed, openSession, openThread, placed, replies, resolve, send, sessionDiff, show, treeLines } from './sessions.ts';
+import { addMessage, approve, bases, checkPlacement, chooseBase, closedSessions, currentTree, dataDir, deleteMessage, editMessage, exclusive, file, findSession, getSession, httpError, inbox, listSessions, markViewed, openSession, openThread, placed, replies, resolve, send, sessionDiff, setReadonly, show, treeLines } from './sessions.ts';
 
 const UI = join(import.meta.dirname, '..', 'ui');
 const TYPES: Record<string, string> = {
@@ -232,7 +232,7 @@ async function route(method: string, { pathname: path, searchParams }: URL, body
     }
     if (path === '/api/sessions' && method === 'POST') return openSession(body.worktree);
     const [, id, action = '', thread, threadAction = '', index, messageAction = 'edit'] = path.match(
-        /^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|tree|file|lines|bases|base|threads|send|approve|viewed|show|turn-complete))?(?:\/(\d+)\/(messages|resolve|unresolve)(?:\/(\d+)(?:\/(delete))?)?)?$/) ?? [];
+        /^\/api\/sessions\/([0-9a-f]{16})(?:\/(diff|tree|file|lines|bases|base|threads|send|approve|viewed|show|turn-complete))?(?:\/(\d+)\/(messages|resolve|unresolve|readonly)(?:\/(\d+)(?:\/(delete))?)?)?$/) ?? [];
     switch (id && `${method} ${action}/${threadAction}${index === undefined ? '' : `/${messageAction}`}`) {
         case 'GET /': return getSession(id);
         case 'GET diff/': return sessionDiff(id, searchParams);
@@ -247,7 +247,8 @@ async function route(method: string, { pathname: path, searchParams }: URL, body
         case 'POST threads/messages/delete': return exclusive(() => deleteMessage(id, Number(thread), Number(index)));
         case 'POST threads/resolve': return exclusive(() => resolve(id, Number(thread)));
         case 'POST threads/unresolve': return exclusive(() => resolve(id, Number(thread), false));
-        case 'POST send/': return exclusive(() => send(id, body.tree, body.threads));
+        case 'POST threads/readonly': return exclusive(() => setReadonly(id, Number(thread), body.readonly));
+        case 'POST send/': return exclusive(() => send(id, body));
         case 'POST viewed/': return exclusive(() => markViewed(id, body));
         case 'POST approve/': return exclusive(() => approve(id));
         case 'POST show/': return show(id);

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from './fixtures.ts';
+import { expect, send, test, type Page } from './fixtures.ts';
 import { git, removeRepos, repo, write } from '../server/fixture.ts';
 
 test.afterAll(removeRepos);
@@ -23,7 +23,7 @@ test('Since my last review is grayed out until the first Send', async ({ page })
     await expect(base(page)).toHaveValue('HEAD');
     await expect(lastReview(page)).toBeDisabled();
 
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await send(page);
 
     await expect(lastReview(page)).toBeEnabled();
 });
@@ -73,7 +73,7 @@ test('a change of the worktree shows the banner without touching the diff, and R
 test('a Refresh after a Send puts Since my last review forward', async ({ page }) => {
     const dir = changed();
     await open(page, dir);
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await send(page);
     await expect(lastReview(page)).toBeEnabled();
     await expect(lastReview(page)).not.toContainText('new changes');
 
@@ -91,7 +91,7 @@ test('a Send with the banner up snapshots the displayed code, and the change not
     write(dir, { 'a.txt': 'one\n2\nthree\nnot loaded\n' });
     await expect(banner(page)).toBeVisible({ timeout: 4000 });
 
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await send(page);
     await expect(lastReview(page)).toBeEnabled();
     await base(page).selectOption('last-review');
 
@@ -105,7 +105,7 @@ test('a message being written survives a base where its thread leaves the diff',
     const { id } = await (await request.post('/api/sessions', { data: { worktree: dir } })).json();
     await request.post(`/api/sessions/${id}/threads`, { data: { author: 'claude', path: 'a.txt', side: 'new', start: 2, end: 2, body: 'Why 2?' } });
     await open(page, dir);
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await send(page);
     await expect(lastReview(page)).toBeEnabled();
     await page.locator('.thread').getByRole('textbox').fill('Because');
 
@@ -133,14 +133,14 @@ test('the base shown follows the diff when a branch without merge-base falls bac
 
 test('a Send under Since my last review without any change of the code shows no banner', async ({ page }) => {
     await open(page, changed());
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await send(page);
     await expect(lastReview(page)).toBeEnabled();
     await base(page).selectOption('last-review');
     // A Snapshot commit is dated to the second: one second later, the same tree makes another commit.
     await page.waitForTimeout(1000);
 
     const sent = page.waitForResponse(/\/send\?/);
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await send(page);
     await sent;
     // A poll leaves after the Send and sees its Snapshot; the next one leaves once its answer is applied.
     await page.waitForRequest(/\/tree$/);

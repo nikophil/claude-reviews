@@ -12,6 +12,7 @@ import com.intellij.driver.sdk.ui.components.common.GutterUiComponent
 import com.intellij.driver.sdk.ui.components.common.ideFrame
 import com.intellij.driver.sdk.ui.components.common.JEditorUiComponent
 import com.intellij.driver.sdk.ui.components.elements.button
+import com.intellij.driver.sdk.ui.components.elements.checkBox
 import com.intellij.driver.sdk.ui.components.elements.list
 import com.intellij.driver.sdk.ui.components.elements.radioButton
 import com.intellij.driver.sdk.ui.components.elements.tree
@@ -60,6 +61,7 @@ class ReviewTest {
     companion object {
         // Not 7778 nor 7779, the ports of a real server and of Playwright.
         private const val PORT = "7780"
+        private const val READONLY = "//div[@class='JBCheckBox' and @text='Answer without changing code']"
         private val repo: Path = Path.of(System.getProperty("repo"))
         private val http: HttpClient = HttpClient.newHttpClient()
         private lateinit var worktree: String
@@ -235,14 +237,27 @@ class ReviewTest {
 
     @Test
     @Order(3)
-    fun `Send publishes the Pending message`() {
-        frame { button("Send 1 pending").shouldBe(enabled).click() }
-        val session = awaitSession("the Send publishes the message") { it["sends"].asInt == 1 }
-        assert(!session.getAsJsonArray("threads")[0].asJsonObject.getAsJsonArray("messages")[0].asJsonObject["date"].isJsonNull)
+    fun `Answer without changing code on a thread makes it readonly`() {
+        frame { checkBox(READONLY).click() }
+        awaitSession("the thread is readonly") { it.getAsJsonArray("threads")[0].asJsonObject["readonly"]?.asBoolean == true }
     }
 
     @Test
     @Order(4)
+    fun `Send asks for a review message and its readonly, then publishes the Pending message`() {
+        frame { button("Send 1 pending").shouldBe(enabled).click() }
+        driver.ui.x("//div[@class='JBTextArea']").click()
+        driver.ui.keyboard { typeText("Only explain") }
+        driver.ui.checkBox("//div[@class='MyDialog']$READONLY").click()
+        driver.ui.x("//div[@class='MyDialog']//div[@class='JButton' and @text='Send']").click()
+        val session = awaitSession("the Send publishes the message") { it["sends"].asInt == 1 }
+        assert(!session.getAsJsonArray("threads")[0].asJsonObject.getAsJsonArray("messages")[0].asJsonObject["date"].isJsonNull)
+        val review = session.getAsJsonArray("reviews")[0].asJsonObject
+        assertEquals(listOf(1, "Only explain", true), listOf(review["review"].asInt, review["body"].asString, review["readonly"].asBoolean))
+    }
+
+    @Test
+    @Order(5)
     fun `while a thread waits for Claude, the tool window warns that the Claude session waits for my answer, until it no longer does`() {
         val warning = "//div[@class='JBLabel' and contains(@text, 'Claude is waiting for your answer in its session')]"
         claudeQuery = "&blocked"
@@ -255,7 +270,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(5)
+    @Order(6)
     fun `even in the Diff view, Previous Thread in the bar of the editor goes to the thread in the editor`() {
         frame { radioButton("//div[@text='Diff']").click() }
         withoutToolWindows {
@@ -270,7 +285,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(6)
+    @Order(7)
     fun `Viewed in the diff marks the file viewed`() {
         frame {
             radioButton("//div[@text='Diff']").click()
@@ -281,7 +296,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(7)
+    @Order(8)
     fun `in the side-by-side diff, a click or a drag over the line numbers opens a thread on that side, which keeps the text typed in it`() {
         frame {
             // The two editors of the diff of step 6, left then right: the editor of a.php is in a tab behind it.
@@ -313,7 +328,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(8)
+    @Order(9)
     fun `the bar of the diff warns that the Claude session waits for my answer, and even in the Editor view, Next Thread goes to the thread in the diff`() {
         val warning = "//div[@class='JBLabel' and @text='Claude is waiting for your answer in its session']"
         claudeQuery = "&blocked"
@@ -336,7 +351,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(9)
+    @Order(10)
     fun `an Outdated thread opens in its own window, the thread in a scroll pane`() {
         // Line 4 changes again: the thread of step 2 no longer finds its line.
         Files.writeString(Path.of(worktree, "a.php"), "<?php\n\necho 1;\necho 4;\n")
@@ -353,7 +368,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(10)
+    @Order(11)
     fun `Resolve in the context menu of a thread of the tree resolves it`() {
         frame { tree("//div[@class='Tree']").rightClickPath("a.php", "#1", fullMatch = false) }
         driver.ui.x("//div[@class='ActionMenuItem' and @text='Resolve']").click()
@@ -361,7 +376,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(11)
+    @Order(12)
     fun `Group By › Directory lists the files under their directories, or flat once unchecked`() {
         Files.createDirectories(Path.of(worktree, "src"))
         Files.writeString(Path.of(worktree, "src/b.php"), "<?php\n")
@@ -384,7 +399,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(12)
+    @Order(13)
     fun `in the Diff view, a click on a thread of the file shown scrolls its diff there, an added file too`() {
         Files.createDirectories(Path.of(worktree, "src"))
         Files.writeString(Path.of(worktree, "src/c.php"), "<?php\n" + (1..60).joinToString("") { "// line $it\n" })
@@ -411,7 +426,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(13)
+    @Order(14)
     fun `Send in a thread adds my reply and sends the thread at once`() {
         frame {
             val thread = x("//div[@class='ThreadView' and .//div[@text='Thread #2 · Line +50']]")
@@ -425,7 +440,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(14)
+    @Order(15)
     fun `the diff folds the unchanged code, but not the lines of a thread`() {
         // Line 51 changes: lines 1 to 46 and 56 to 101 are unchanged, out of the 4 lines of context.
         Files.writeString(Path.of(worktree, "long.php"), "<?php\n" + (1..100).joinToString("") { if (it == 50) "// changed\n" else "// line $it\n" })
@@ -451,7 +466,7 @@ class ReviewTest {
     }
 
     @Test
-    @Order(15)
+    @Order(16)
     fun `a double click on a Resolved thread opens it in its own window, unfolded, where Unresolve reopens it`() {
         val id = session()["id"].asString
         post("/api/sessions/$id/threads/2/resolve", "{}")

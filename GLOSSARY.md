@@ -23,6 +23,16 @@ It may carry none: it then takes a Snapshot, and wakes Claude only if threads ar
 It may deliver only the Pending messages of one thread, from the Send button of that thread's box, which first adds the message typed there: it still takes its Snapshot, and the other threads stay Pending.
 _Avoid_: Comment, Request changes
 
+**Review message**:
+The message I write for a whole Send, as the body of a review on GitHub; Claude reads it with the threads.
+A Send that carries one wakes Claude even without a thread waiting for it, and Claude then answers it in its conversation.
+
+**Readonly**:
+Said of a thread Claude answers without changing any file: checked "Answer without changing code" on the thread,
+or published by a Send checked "Answer without changing code", which applies to the threads of that Send and to its review message.
+Unchecked by default: Claude changes the code when a thread asks for it.
+_Avoid_: read-only (which says an approved session takes no message)
+
 **Approve**:
 The review that closes a session, which then becomes read-only; it sends nothing to Claude.
 
