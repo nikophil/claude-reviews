@@ -1132,3 +1132,24 @@ test('a review message alone sent while Claude works on a turn of its own is sub
     await claude.settle();
     assert.deepEqual(claude.seen.submitted, [prompt(0, 0, { body: 'Rename it', readonly: false })]);
 });
+
+test('a review message held during a turn of Claude\'s own goes with the fork of a Send that brings a thread before the turn ends, and reaches Claude once', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir);
+    await claude.poll();
+    await claude.fire('turn.start', { text: 'work', turnId: 't1' });
+    const review = { body: 'Rename it', readonly: false };
+
+    await api('POST', `/api/sessions/${id}/send`, { tree: (await api('GET', `/api/sessions/${id}/diff`)).tree, body: 'Rename it' });
+    await claude.poll();
+    await send(id, 'And this?');
+    await claude.poll();
+
+    assert.deepEqual(claude.seen.spawned, [{ subagentType: 'fork', description: 'Answer the claude-reviews threads', prompt: forkPrompt(1, 0, review) }]);
+    await claude.fire('tool.call', { tool: 'mcp__local-reviews__reply_to_thread', id: 1, body: 'Because', agentId: 'fork-1' });
+    await claude.fire('turn.complete', { reason: 'answer', answer: 'Done', turnId: 'f', agentId: 'fork-1' });
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
+    await claude.settle();
+    await claude.poll();
+    assert.deepEqual(claude.seen.submitted, [], 'the fork carried it: no prompt repeats it');
+});

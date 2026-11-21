@@ -63,7 +63,8 @@ export function look(watch: Watch, seen: Seen): Watch {
     const known = watch.sessions[seen.id] ?? { sends: watch.session === undefined ? seen.sends : 0, relaunched: 0 };
     // A late look may have read an older Send: the count of Sends never goes back.
     const sends = Math.max(known.sends, seen.sends);
-    const review = seen.review ?? null;
+    // A review message held while its wake is owed stays, though a later Send carries none: the fork of that Send, or the prompt, gives it.
+    const review = seen.review ?? (watch.owed === 'wake' ? watch.review : null);
     const next = { ...watch, session: seen.id, waiting: seen.waiting, readonly: seen.readonly ?? 0, review, sessions: { ...watch.sessions, [seen.id]: { ...known, sends } } };
     if (!seen.waiting) {
         // A review message alone is owed one wake, until it opens its turn, and never a relaunch: Claude answers it in the conversation, where nothing tells it answered.
