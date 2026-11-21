@@ -141,6 +141,13 @@ function viewed(/** @type {any} */ session, /** @type {string} */ path) {
     return Object.hasOwn(session.viewed ?? {}, path);
 }
 
+/** The file of the diff after `path` in the order of the tree that is not Viewed; undefined after the last one, without going around, and for a file no longer in the diff. */
+function nextNotViewed(/** @type {File[]} */ files, /** @type {any} */ session, /** @type {string} */ path) {
+    const order = tree(files, []).flatMap(node => 'dir' in node ? node.files : [node.file]);
+    const at = order.findIndex(file => file.path === path);
+    return at < 0 ? undefined : order.slice(at + 1).find(file => !viewed(session, file.path))?.path;
+}
+
 /**
  * The items of the base picker: a separator before each group, the base greyed until a Send told so, the chosen one marked.
  * @param {{ ref: string, name: string, disabled?: boolean, group?: string }[]} bases
@@ -180,4 +187,4 @@ function listeners(/** @type {string} */ text, /** @type {number} */ port) {
         .map(fields => Number(fields[7]));
 }
 
-module.exports = { status, lines, label, pending, counts, waiting, replied, claude, startClaude, threadsOf, tree, step, firstLine, sent, viewed, baseItems, outdatedText, noImages, listeners };
+module.exports = { status, lines, label, pending, counts, waiting, replied, claude, startClaude, threadsOf, tree, step, firstLine, sent, viewed, nextNotViewed, baseItems, outdatedText, noImages, listeners };

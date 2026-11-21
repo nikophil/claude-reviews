@@ -26,7 +26,7 @@ The project's context and decisions are in [BRIEF.md](BRIEF.md), its vocabulary 
 - Check "Answer without changing code" on a thread, or on a whole Send, for Claude to reply without editing any file.
   When that Claude session waits for your answer to a permission or a question, the review says so.
 - Follow the threads: they stay on their line when the code moves, and become Outdated when their lines disappear.
-- Mark a file Viewed, until its content changes;
+- Mark a file Viewed, until its content changes: the review then moves to the next file not Viewed;
   go from one thread to another with `j` and `k`, the arrows beside the conversations menu, or through that menu.
 - Copy the threads as markdown, for a PR description, then close the session with Approve.
 

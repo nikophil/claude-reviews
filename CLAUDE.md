@@ -52,6 +52,7 @@ Read `BRIEF.md`, `GLOSSARY.md` and `docs/adr/` before changing the code, and nam
   its Editor view opens a file in the editor, its Diff view in the diff of the IDE, with the Viewed checkbox of each file in the tree and in the bar of the diff;
   this diff has a place of its own (`localreviews.Review`), which starts from the settings of the default place and folds the unchanged code, once, then keeps the settings of the IDE, and unfolds the lines of a thread;
   a click on a line number of the diff, or a drag over line numbers, opens a thread there, but not in the editor, where the IDE puts a breakpoint;
+  marking a file Viewed selects the next file of the tree not Viewed, which the bar of the diff shows in the diff, stopping at the last one;
   it edits and deletes my Pending messages, moves from one thread not Resolved to the next (Next Thread and Previous Thread, Alt+Shift+Page Down and Page Up, also in the bar of the diff and at the top right of the editor), marks "Replied" those, not Resolved, where Claude replied since my last Send,
   resolves or reopens a thread from its context menu in the tree, opens an Outdated thread, or a Resolved one, in a window of its own, scrolled when long,
   groups its files under their directories, or lists them flat each followed by its directory (Group By › Directory, as in the Commit tool window),
@@ -60,7 +61,7 @@ Read `BRIEF.md`, `GLOSSARY.md` and `docs/adr/` before changing the code, and nam
 - `phpstorm/ui-test/`: the UI tests of the plugin, in Kotlin, with JetBrains' Starter and Driver, under Gradle in Docker ([ADR 0005](docs/adr/0005-phpstorm-ui-tests-with-gradle-in-docker.md));
   there, `run.sh` runs in sequence `build.sh`, the Plugin Verifier, which fails on any verdict other than "Compatible", and `gradle test`.
 - `vscode/`: the VS Code extension, in CommonJS JS checked by `// @ts-check`, without a build: the "Claude Reviews" view (base, Send, Approve, changed files with their Viewed checkbox and their threads), the threads through the Comments API in the editor and in the diff of VS Code;
-  a click on a file opens its diff, the Viewed checkbox is also in the bar of the diff, Next Thread and Previous Thread in the bar of the editor and of the diff, and an Outdated thread opens on its diff excerpt; `vscode/review.js` holds the pure functions, tested by `node --test`.
+  a click on a file opens its diff, the Viewed checkbox is also in the bar of the diff, marking a file Viewed opens the diff of the next file of the tree not Viewed, Next Thread and Previous Thread in the bar of the editor and of the diff, and an Outdated thread opens on its diff excerpt; `vscode/review.js` holds the pure functions, tested by `node --test`.
   "Answer Without Changing Code" and "Allow Code Changes" are actions of the thread, and the Send of the whole session asks for a review message in an input box, whose lock button is its "Answer without changing code".
 - No npm dependency at runtime: what is missing gets written, or vendored as a single file in `ui/vendor/`.
 

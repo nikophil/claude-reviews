@@ -292,7 +292,21 @@ public final class ReviewDiffAction extends DumbAwareAction {
             @Override
             public void setSelected(AnActionEvent event, boolean viewed) {
                 Review review = review(event);
-                if (review != null) markViewed(project, id, review.path(), viewed, ReviewService.get(project)::refresh);
+                if (review == null) return;
+                markViewed(project, id, review.path(), viewed, ReviewService.get(project)::refresh);
+                String next = viewed ? ReviewToolWindow.viewedNext(project, review.path()) : null;
+                if (next == null) return;
+                // The tab where I clicked shows it, whatever the files the diff of the session has since; a file it has not opens as a click opens it.
+                DiffRequest request = event.getData(DiffDataKeys.DIFF_REQUEST);
+                for (FileEditor editor : FileEditorManager.getInstance(project).getAllEditors()) {
+                    if (!(editor instanceof DiffEditorViewerFileEditor shown) || !(shown.getEditorViewer() instanceof CacheDiffRequestChainProcessor processor)
+                        || processor.getActiveRequest() != request) continue;
+                    int index = processor.getRequestChain().getRequests().stream().map(DiffRequestProducer::getName).toList().indexOf(next);
+                    if (index < 0) break;
+                    processor.setCurrentRequest(index);
+                    return;
+                }
+                open(project, next, Side.RIGHT, -1, true);
             }
         };
     }
