@@ -39,6 +39,15 @@ test('/s/<id> serves the HTML page of a session', async () => {
     assert.match(await res.text(), /<script type="module" src="\/app.js">/);
 });
 
+test('the page names the logo as its favicon, served as SVG', async () => {
+    assert.match(await (await fetch(`http://127.0.0.1:${port}/`)).text(), /<link rel="icon" href="\/logo.svg" type="image\/svg\+xml">/);
+    const res = await fetch(`http://127.0.0.1:${port}/logo.svg`);
+
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/svg+xml');
+    assert.match(await res.text(), /^<svg /);
+});
+
 test('static files cannot escape the UI directory', async () => {
     // fetch() would normalize the path before sending it.
     const status = await new Promise(resolve => get({ host: '127.0.0.1', port, path: '/../package.json' }, res => resolve(res.resume().statusCode)));
