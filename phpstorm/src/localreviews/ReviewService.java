@@ -22,6 +22,8 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -109,6 +111,7 @@ public final class ReviewService implements Disposable {
 
     void threadsInEditor(boolean shown) {
         PropertiesComponent.getInstance(project).setValue(THREADS_IN_EDITOR, shown, true);
+        opened.clear();
         showInEditors(true);
         settings.forEach(Runnable::run);
     }
@@ -135,6 +138,22 @@ public final class ReviewService implements Disposable {
 
     void groupByDirectory(boolean grouped) {
         PropertiesComponent.getInstance(project).setValue(GROUP_BY_DIRECTORY, grouped, true);
+    }
+
+    /** The threads opened while « Show threads » is off, `session#id`, by a click on their pill, the tool window or Next Thread. */
+    private final Set<String> opened = ConcurrentHashMap.newKeySet();
+
+    boolean opened(String session, int id) {
+        return opened.contains(session + "#" + id);
+    }
+
+    /** Opens the thread in the editors and the diffs that show it, or will: a pill no longer, until « Show threads » changes. */
+    void open(String session, int id) {
+        opened.add(session + "#" + id);
+        for (Editor editor : EditorFactory.getInstance().getAllEditors()) {
+            List<Threads> threads = editor.getUserData(Threads.KEY);
+            if (threads != null) threads.forEach(Threads::reshow);
+        }
     }
 
     /** Whether `path` is Viewed in `session`, placed on the code shown: a file whose content changed since is not. */
@@ -222,7 +241,8 @@ public final class ReviewService implements Disposable {
         String base = tree.get("base").getAsString();
         String shown = tree.get("tree").getAsString();
         // The server keeps the diff of a base and a tree: it only asks again when they changed.
-        JsonArray files = base.equals(last.base()) && shown.equals(last.tree()) ? last.files() : Server.get(route + "/diff").getAsJsonArray("files");
+        JsonArray files = base.equals(last.base()) && shown.equals(last.tree()) ? last.files()
+            : Server.get(route + "/diff?base=" + base + "&tree=" + shown).getAsJsonArray("files");
         JsonObject session = Server.get(route + "?base=" + base + "&tree=" + shown);
         return new State(null, found.get("worktree").getAsString(), tree.get("ref").getAsString(), base, shown, files, session);
     }
@@ -240,7 +260,7 @@ public final class ReviewService implements Disposable {
         for (Editor editor : List.copyOf(editors.keySet())) show(editor, all);
     }
 
-    /** Puts the threads of the state in an editor: built again once the session or its base changed, all of them again when `all`. */
+    /** Puts the threads of the state in an editor: built again once the session changed, all of them again when `all`. */
     private void show(Editor editor, boolean all) {
         Attached attached = editors.get(editor);
         State shown = state;
@@ -249,6 +269,8 @@ public final class ReviewService implements Disposable {
         String path = shown.session() == null ? null : Placement.relative(shown.root(), attached.file().getPath());
         Review review = path == null ? null : new Review(shown.id(), shown.root(), shown.base(), path);
         Threads threads = attached.threads();
+        // A new base id, at each Send under « Since my last review » or commit under HEAD: the views keep their text, and the draft posts the new base.
+        if (threads != null && review != null && review.equals(threads.review().on(review.base()))) threads.review(review);
         if (threads != null && (review == null || !review.equals(threads.review()))) {
             Disposer.dispose(attached.disposable());
             attached = new Attached(attached.file(), Disposer.newDisposable(), null);

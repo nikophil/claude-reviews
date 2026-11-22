@@ -1,6 +1,7 @@
 package localreviews;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -11,7 +12,7 @@ import java.util.List;
 
 /**
  * Run by build.sh: fails the build when Placement leaves out or lets in the wrong threads, when raw HTML gets through a message,
- * or when the navigation, the Replied mark, a suggestion or the Markdown copy of the threads goes wrong,
+ * or when the navigation, the Replied mark, a suggestion, the balloon of a Send or the Markdown copy of the threads goes wrong,
  * when the listeners of a port, read in /proc/net/tcp to tell a server of another account, come out wrong,
  * when the files of the tool window group wrong by directory, or when the window of a thread cuts its excerpt wrong.
  */
@@ -63,7 +64,12 @@ final class PlacementCheck {
         check(Placement.approveRefusal(resolvedPending) == null, "the Pending messages of a Resolved thread let Approve through");
         check(Placement.approveRefusal(approved) != null && Placement.sendRefusal(approved) != null, "Approve and Send greyed on an approved session");
         check(Placement.sendRefusal(resolvedPending) == null, "a Send without a Pending message takes its Snapshot");
-        check(Placement.sendRefusal(JsonParser.parseString("{ \"claudeSession\": false, \"worktree\": \"/a\", \"threads\": [] }").getAsJsonObject()) != null, "Send greyed without a Claude session");
+        JsonObject noClaude = JsonParser.parseString("{ \"claudeSession\": false, \"worktree\": \"/a\", \"threads\": [] }").getAsJsonObject();
+        check(Placement.sendRefusal(noClaude) == null && Placement.sendWarning(noClaude).endsWith("cd /a && claude"), "a Send without a Claude session goes, with how to start one");
+        check(Placement.sendWarning(resolvedPending) == null, "no warning with a Claude session");
+        check(ReviewDiffAction.sent(2, false).equals("2 messages sent to Claude") && ReviewDiffAction.sent(1, false).equals("1 message sent to Claude"), "the messages a Send published");
+        check(ReviewDiffAction.sent(0, true).equals("The review message sent to Claude"), "a Send of a review message alone");
+        check(ReviewDiffAction.sent(1, true).equals("1 message and the review message sent to Claude"), "a Send of messages and a review message");
         JsonObject waiting = JsonParser.parseString("""
             { "id": "s", "threads": [{ "id": 1, "resolved": false, "status": "waiting-for-claude", "messages": [{ "author": "me", "date": "x" }] }] }""").getAsJsonObject();
         JsonObject resolvedByMe = JsonParser.parseString("""
@@ -128,21 +134,23 @@ final class PlacementCheck {
         check(ThreadView.lines(wholeFile.getAsJsonArray("threads").get(0).getAsJsonObject()).equals("File"), "a thread on the whole file reads File");
         check(ThreadView.lines(wholeFile.getAsJsonArray("threads").get(1).getAsJsonObject()).equals("File"), "an Outdated thread on the whole file reads File too");
 
-        JsonObject sent = JsonParser.parseString("""
-            { "sentAt": "2026-11-14T10:05:00.000Z", "threads": [
+        JsonArray sentThreads = JsonParser.parseString("""
+            [
               { "id": 1, "resolved": false, "messages": [{ "author": "me", "date": "2026-11-14T10:05:00.000Z" }, { "author": "claude", "date": "2026-11-14T10:06:00.000Z" }] },
               { "id": 2, "resolved": false, "messages": [{ "author": "claude", "date": "2026-11-14T10:04:00.000Z" }, { "author": "me", "date": "2026-11-14T10:05:00.000Z" }] },
               { "id": 3, "resolved": false, "messages": [{ "author": "claude", "date": "2026-11-14T10:05:00.000Z" }] },
-              { "id": 4, "resolved": true, "messages": [{ "author": "me", "date": "2026-11-14T10:05:00.000Z" }, { "author": "claude", "date": "2026-11-14T10:06:00.000Z" }] }
-            ] }""").getAsJsonObject();
-        JsonArray sentThreads = sent.getAsJsonArray("threads");
-        check(Placement.replied(sent, sentThreads.get(0).getAsJsonObject()), "Claude replied after my last Send");
-        check(!Placement.replied(sent, sentThreads.get(1).getAsJsonObject()), "Claude wrote before my last Send only");
-        check(Placement.replied(sent, sentThreads.get(2).getAsJsonObject()), "Claude wrote at the date of my last Send");
-        check(!Placement.replied(sent, sentThreads.get(3).getAsJsonObject()), "no Replied on a Resolved thread, as in the web page");
-        JsonObject neverSent = sent.deepCopy();
-        neverSent.remove("sentAt");
-        check(!Placement.replied(neverSent, sentThreads.get(0).getAsJsonObject()), "nothing replied before the first Send");
+              { "id": 4, "resolved": true, "messages": [{ "author": "me", "date": "2026-11-14T10:05:00.000Z" }, { "author": "claude", "date": "2026-11-14T10:06:00.000Z" }] },
+              { "id": 5, "resolved": false, "messages": [{ "author": "me", "date": "2026-11-14T10:05:00.000Z" }, { "author": "claude", "date": "2026-11-14T10:06:00.000Z" }, { "author": "me", "date": null }] }
+            ]""").getAsJsonArray();
+        check(Placement.replied(sentThreads.get(0).getAsJsonObject()), "Claude replied after my last sent message in the thread, whatever the Sends since");
+        check(!Placement.replied(sentThreads.get(1).getAsJsonObject()), "Claude wrote before my last sent message only");
+        check(!Placement.replied(sentThreads.get(2).getAsJsonObject()), "nothing replied before I sent a message in the thread");
+        check(!Placement.replied(sentThreads.get(3).getAsJsonObject()), "no Replied on a Resolved thread, as in the web page");
+        check(Placement.replied(sentThreads.get(4).getAsJsonObject()), "Replied until my answer is sent, not while it is Pending");
+        JsonArray unsorted = JsonParser.parseString("""
+            [{ "id": 1, "anchor": { "start": 2 }, "at": { "start": 20 } }, { "id": 2, "anchor": { "start": 9 }, "at": null }, { "id": 3, "anchor": { "start": 0 }, "at": { "start": 0 } }]""").getAsJsonArray();
+        check(ids(Placement.byLine(unsorted.asList().stream().map(JsonElement::getAsJsonObject).toList())).equals(List.of(3, 2, 1)),
+            "the threads by line, a thread on the whole file first, an Outdated one at the line of its Anchor");
 
         List<Boolean> stops = List.of(false, true, false, true, true, false);
         check(Placement.step(stops, -1, true) == 1 && Placement.step(stops, -1, false) == 4, "from no selection, the first or the last thread");

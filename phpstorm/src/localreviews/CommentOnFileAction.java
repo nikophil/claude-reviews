@@ -23,7 +23,8 @@ public final class CommentOnFileAction extends DumbAwareAction {
 
     @Override
     public void update(AnActionEvent event) {
-        event.getPresentation().setEnabledAndVisible(threads(event) != null);
+        List<Threads> sides = threads(event);
+        event.getPresentation().setEnabledAndVisible(sides != null && sides.get(0).writable());
     }
 
     // In the unified diff, the new side, as the first one of the editor.

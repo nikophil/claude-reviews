@@ -92,9 +92,15 @@ final class Placement {
 
     /** Why Send is greyed, null while it is enabled: a Send without a Pending message still takes its Snapshot. */
     static String sendRefusal(JsonObject session) {
-        if (approved(session)) return "The session is approved";
-        return claude(session) ? null : "Start a Claude session in this worktree to send to Claude: " + startClaude(session);
+        return approved(session) ? "The session is approved" : null;
     }
+
+    /** What a Send without a Claude session in the worktree says: Claude reads it once one starts there; null with one. */
+    static String sendWarning(JsonObject session) {
+        return claude(session) ? null : START_CLAUDE + " " + startClaude(session);
+    }
+
+    static final String START_CLAUDE = "No Claude session in this worktree: Claude reads the Send once one starts there.";
 
     /** Why Approve is greyed, null while it is enabled: the Pending messages of a Resolved thread stay Pending, as a Send leaves them. */
     static String approveRefusal(JsonObject session) {
@@ -109,14 +115,29 @@ final class Placement {
             && fromClaude(after) > fromClaude(before);
     }
 
-    /** Whether Claude wrote in the thread, not Resolved, since my last Send: a message of his dated at `sentAt` or later. */
-    static boolean replied(JsonObject session, JsonObject thread) {
-        if (thread.get("resolved").getAsBoolean() || !(session.get("sentAt") instanceof JsonPrimitive sentAt)) return false;
+    /** Whether Claude wrote in the thread, not Resolved, after my last sent message in it; none before I sent one there. */
+    static boolean replied(JsonObject thread) {
+        if (thread.get("resolved").getAsBoolean()) return false;
+        boolean mine = false;
+        boolean claude = false;
         for (JsonElement element : thread.getAsJsonArray("messages")) {
             JsonObject message = element.getAsJsonObject();
-            if (message.get("author").getAsString().equals("claude") && message.get("date").getAsString().compareTo(sentAt.getAsString()) >= 0) return true;
+            boolean me = message.get("author").getAsString().equals("me");
+            if (me && message.get("date") instanceof JsonPrimitive) {
+                mine = true;
+                claude = false;
+            } else if (!me) {
+                claude = true;
+            }
         }
-        return false;
+        return mine && claude;
+    }
+
+    /** The threads sorted by their first line, that of their Anchor when Outdated: the order of a file in the tool window and for Next Thread. */
+    static List<JsonObject> byLine(List<JsonObject> threads) {
+        List<JsonObject> sorted = new ArrayList<>(threads);
+        sorted.sort(java.util.Comparator.comparingInt(thread -> (thread.get("at") instanceof JsonObject at ? at : thread.getAsJsonObject("anchor")).get("start").getAsInt()));
+        return sorted;
     }
 
     /** The index of the first of `stops` after `current`, -1 for none, or before it backward, around at the ends; -1 without any stop. */

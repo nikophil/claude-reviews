@@ -335,6 +335,25 @@ test('a Send records its review message and its readonly under its number, and a
     assert.deepEqual(readonlyOnly.body.reviews.at(-1), { review: 3, body: '', readonly: true });
 });
 
+test('a thread is sentReadonly while the Send that published my last message in it was readonly', async () => {
+    const { id, path } = await sessionWithThread();
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'claude', path: 'a.txt', side: 'new', start: 1, end: 1, body: 'And here' });
+    assert.deepEqual((await api('GET', `/api/sessions/${id}`)).body.threads.map((t: any) => t.sentReadonly), [false, false]);
+    await api('POST', `${path}/messages`, { author: 'me', body: 'Why?' });
+
+    const sent = await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id), readonly: true });
+    assert.deepEqual(sent.body.threads.map((t: any) => [t.readonly, t.sentReadonly]), [[false, true], [false, false]]);
+    assert.equal((await api('GET', `/api/sessions/${id}`)).body.threads[0].sentReadonly, true);
+
+    await api('POST', `/api/sessions/${id}/threads/2/messages`, { author: 'me', body: 'And?' });
+    const other = await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id) });
+    assert.deepEqual(other.body.threads.map((t: any) => t.sentReadonly), [true, false]);
+
+    await api('POST', `${path}/messages`, { author: 'me', body: 'Now change it' });
+    const again = await api('POST', `/api/sessions/${id}/send`, { tree: await displayedTree(id), body: 'Go' });
+    assert.equal(again.body.threads[0].sentReadonly, false);
+});
+
 test('a Send refuses a review message that is not a string, or a readonly that is not a boolean, before taking its Snapshot', async () => {
     const { dir, id } = await sessionWithThread();
     const tree = await displayedTree(id);

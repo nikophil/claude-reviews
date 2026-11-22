@@ -74,10 +74,16 @@ const showRequests = new Map<string, string>();
 function view(session: Session) {
     const read = claudeReads.get(session.worktree);
     const claudeSession = Date.now() - (read?.at ?? -Infinity) <= 10_000;
-    const threads = session.threads.map(thread => ({ ...thread, status: status(thread) }));
+    const threads = session.threads.map(thread => ({ ...thread, status: status(thread), sentReadonly: sentReadonly(session, thread) }));
     // Blocked matters to the review only while a thread waits for Claude: the clients show it then, and only then.
     const claudeBlocked = claudeSession && read!.blocked && threads.some(thread => thread.status === 'waiting-for-claude');
     return { ...session, claudeSession, claudeBlocked, showRequestedAt: showRequests.get(session.id) ?? null, threads };
+}
+
+/** Whether the Send that published my last message in the thread was readonly. */
+function sentReadonly(session: Session, thread: Thread): boolean {
+    const review = thread.messages.findLast(message => message.author === 'me' && message.date)?.review;
+    return session.reviews?.some(sent => sent.review === review && sent.readonly) ?? false;
 }
 
 /** Waiting for Claude when my message is the last published, open when Claude's is; null before any is published. */

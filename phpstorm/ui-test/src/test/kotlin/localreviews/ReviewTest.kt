@@ -18,6 +18,9 @@ import com.intellij.driver.sdk.ui.components.elements.list
 import com.intellij.driver.sdk.ui.components.elements.radioButton
 import com.intellij.driver.sdk.ui.components.elements.tree
 import com.intellij.driver.sdk.ui.enabled
+import com.intellij.driver.sdk.ui.notEnabled
+import com.intellij.driver.sdk.ui.notPresent
+import com.intellij.driver.sdk.ui.present
 import com.intellij.driver.sdk.ui.shouldBe
 import com.intellij.driver.sdk.ui.ui
 import com.intellij.driver.sdk.waitForProjectOpen
@@ -72,6 +75,9 @@ class ReviewTest {
         /** What the stand-in for the mod adds to its read every 2 s: `&blocked` while its Claude session waits for my answer. */
         @Volatile
         private var claudeQuery = ""
+        /** Whether the stand-in for the mod reads at all: without it, the server says no Claude session runs in the worktree. */
+        @Volatile
+        private var claudeOn = true
         private lateinit var context: IDETestContext
         private lateinit var ide: BackgroundRun
         private val driver: Driver get() = ide.driver
@@ -98,7 +104,7 @@ class ReviewTest {
             // As the mod of a Claude session in the worktree: without it, the plugin greys Send.
             thread(isDaemon = true) {
                 while (true) {
-                    runCatching { http.send(request("/api/sessions?worktree=${encode(worktree)}&claude$claudeQuery").GET().build(), HttpResponse.BodyHandlers.discarding()) }
+                    if (claudeOn) runCatching { http.send(request("/api/sessions?worktree=${encode(worktree)}&claude$claudeQuery").GET().build(), HttpResponse.BodyHandlers.discarding()) }
                     Thread.sleep(2000)
                 }
             }
@@ -179,6 +185,14 @@ class ReviewTest {
 
         private fun IdeaFrameUI.editors() = xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java).list()
 
+        /** The editor showing the text `text`, out of those of the tabs behind. */
+        private fun IdeaFrameUI.shown(text: String) = editors().singleOrNull { it.component.isShowing() && text in it.text }
+
+        private fun git(vararg args: String) {
+            val process = ProcessBuilder("git", "-c", "user.name=test", "-c", "user.email=test@example.com", *args).directory(Path.of(worktree).toFile()).inheritIO().start()
+            check(process.waitFor() == 0) { "git ${args.joinToString(" ")} failed" }
+        }
+
         /** The name of the file selected in the tree of the tool window, its row's text up to the first space. */
         private fun IdeaFrameUI.selected() = tree("//div[@class='Tree']").collectSelectedPaths().singleOrNull()?.path?.last()?.substringBefore(' ')
 
@@ -250,7 +264,7 @@ class ReviewTest {
 
     @Test
     @Order(4)
-    fun `Send asks for a review message and its readonly, then publishes the Pending message`() {
+    fun `Send asks for a review message and its readonly, then publishes the Pending message, the thread readonly by that Send`() {
         frame { button("Send 1 pending").shouldBe(enabled).click() }
         driver.ui.x("//div[@class='JBTextArea']").click()
         driver.ui.keyboard { typeText("Only explain") }
@@ -260,6 +274,8 @@ class ReviewTest {
         assert(!session.getAsJsonArray("threads")[0].asJsonObject.getAsJsonArray("messages")[0].asJsonObject["date"].isJsonNull)
         val review = session.getAsJsonArray("reviews")[0].asJsonObject
         assertEquals(listOf(1, "Only explain", true), listOf(review["review"].asInt, review["body"].asString, review["readonly"].asBoolean))
+        // Unticking the thread would not undo the readonly of the Send: its checkbox says so, greyed.
+        frame { checkBox(READONLY).shouldBe(notEnabled) }
     }
 
     @Test
@@ -347,7 +363,11 @@ class ReviewTest {
             }
             // Enter: a.php may already be the selection, which a click leaves as is.
             keyboard { enter() }
-            repeat(50) { if (editorTabs().getTabs().size == opened) Thread.sleep(200) }
+            // The diff of other files takes the place of the tab of step 7, rather than opening beside it.
+            repeat(15) {
+                Thread.sleep(200)
+                assert(editorTabs().getTabs().size <= opened) { "the new diff replaces the tab of the old one" }
+            }
             // a.php, Viewed at step 7, when it was the last file.
             x("//div[@text='Viewed']").click()
         }
@@ -418,8 +438,7 @@ class ReviewTest {
         Files.writeString(Path.of(worktree, "a.php"), "<?php\n\necho 1;\necho 4;\n")
         frame {
             tree("//div[@class='Tree']").apply {
-                // The double-click of step 7 collapsed a.php, and a collapsed file stays so.
-                expandPath("a.php", fullMatch = false)
+                // The double-click of step 7 opened a.php, without folding it.
                 waitOneContainsText("Outdated")
                 doubleClickPath("a.php", "#1", fullMatch = false)
             }
@@ -547,14 +566,141 @@ class ReviewTest {
     }
 
     @Test
+    @Order(19)
+    fun `Replied marks a thread where Claude wrote after my last sent message in it, whatever the Send of another thread since`() {
+        val id = session()["id"].asString
+        post("/api/sessions/$id/threads/2/messages", """{ "author": "claude", "body": "Because" }""")
+        // Each part of a row of the tree is a text of its own: the only Replied is that of #2.
+        frame { tree("//div[@class='Tree']").waitOneContainsText(" · Replied") }
+        post("/api/sessions/$id/threads/3/messages", """{ "author": "me", "body": "Why unchanged?" }""")
+        val tree = get("/api/sessions/$id/tree")["tree"].asString
+        post("/api/sessions/$id/send", """{ "tree": "$tree", "threads": [3] }""")
+        frame {
+            tree("//div[@class='Tree']").apply {
+                waitOneContainsText(" · Waiting for Claude")
+                waitOneContainsText(" · Replied")
+            }
+        }
+    }
+
+    @Test
+    @Order(20)
+    fun `with Show threads off, Next Thread opens the thread it goes to, file by file in the order of the tree, by line, around after the last one`() {
+        post("/api/sessions/${session()["id"].asString}/threads", """{ "author": "claude", "path": "src/c.php", "side": "new", "start": 10, "end": 10, "body": "Above" }""")
+        frame {
+            x("//div[@text='Show threads']").click()
+            val tree = tree("//div[@class='Tree']")
+            tree.waitOneContainsText("Line +10")
+            tree.clickPath("c.php", fullMatch = false)
+            // Thread #1 of a.php is Resolved, #3 of long.php comes first, the threads of c.php by line: #4 on line 10, #2 on line 50.
+            for (expected in listOf("#4", "#2", "#3")) {
+                // Its shortcut, the tree keeping the focus.
+                keyboard { hotKey(KeyEvent.VK_ALT, KeyEvent.VK_SHIFT, KeyEvent.VK_PAGE_DOWN) }
+                repeat(50) { if (selected() != expected) Thread.sleep(200) }
+                assertEquals(expected, selected())
+                if (expected == "#4") x("//div[@class='ThreadView' and .//div[@text='Thread #4 · Line +10']]").shouldBe(present)
+            }
+            x("//div[@text='Show threads']").click()
+        }
+    }
+
+    @Test
+    @Order(21)
+    fun `in the Editor view, a click on a file goes to its first thread shown, not to a hidden Resolved one, and Space leaves Viewed alone`() {
+        post("/api/sessions/${session()["id"].asString}/threads/4/resolve", "{}")
+        frame {
+            // Once the tool window reads it: a.php and c.php each have a Resolved thread.
+            val tree = tree("//div[@class='Tree']")
+            repeat(50) { if (tree.getAllTexts().count { "1 resolved" in it.text } < 2) Thread.sleep(200) }
+            // Shown since step 18.
+            x("//div[@text='Show resolved']").click()
+            radioButton("//div[@text='Editor']").click()
+            tree("//div[@class='Tree']").clickPath("c.php", fullMatch = false)
+            caretLine(49) { shown("// line 60")?.editor?.getCaretModel()?.getLogicalPosition()?.getLine() ?: -1 }
+            keyboard { space() }
+            Thread.sleep(3000)
+            assertEquals("c.php", selected())
+        }
+        assert(session().getAsJsonObject("viewed")?.has("src/c.php") != true) { "Space marks no file Viewed in the Editor view" }
+        frame { x("//div[@text='Show resolved']").click() }
+    }
+
+    @Test
+    @Order(22)
+    fun `a new thread keeps its text when Show threads changes and when a commit moves the base, then opens on its lines`() {
+        frame {
+            val editor = shown("// line 60")!!
+            editor.moveCaretToOffset(editor.text.lines().take(19).sumOf { it.length + 1 })
+            driver.invokeAction("localreviews.OpenThread", component = editor.component)
+            keyboard { typeText("Kept") }
+            fun kept() = editors().any { it.text == "Kept" }
+            repeat(2) {
+                x("//div[@text='Show threads']").click()
+                repeat(10) { if (!kept()) Thread.sleep(200) }
+                assert(kept()) { "the text of the new thread once Show threads changes" }
+            }
+            // Under HEAD, a commit moves the id of the base, which the next polls read.
+            git("commit", "-q", "--allow-empty", "-m", "empty")
+            Thread.sleep(5000)
+            assert(kept()) { "the text of the new thread once the base moves" }
+            x("//div[@class='ThreadView' and .//div[@text='New thread']]//div[@class='EditorTextField']").click()
+            keyboard { hotKey(KeyEvent.VK_CONTROL, KeyEvent.VK_ENTER) }
+        }
+        val thread = awaitSession("the new thread opens") { session -> session.getAsJsonArray("threads").any { it.asJsonObject.getAsJsonArray("messages")[0].asJsonObject["body"].asString == "Kept" } }
+            .getAsJsonArray("threads").map { it.asJsonObject }.single { it.getAsJsonArray("messages")[0].asJsonObject["body"].asString == "Kept" }
+        val anchor = thread.getAsJsonObject("anchor")
+        assertEquals(listOf("src/c.php", "new", 20, 20), listOf(anchor["path"].asString, anchor["side"].asString, anchor["start"].asInt, anchor["end"].asInt))
+        post("/api/sessions/${session()["id"].asString}/threads/${thread["id"].asInt}/messages/0/delete", "{}")
+        frame { radioButton("//div[@text='Diff']").click() }
+    }
+
+    @Test
+    @Order(23)
+    fun `without a Claude session, Send goes, with the command that starts one`() {
+        val notice = "//div[@class='JBLabel' and contains(@text, 'No Claude session in this worktree')]"
+        val id = session()["id"].asString
+        post("/api/sessions/$id/threads/2/messages", """{ "author": "me", "body": "And?" }""")
+        val sends = session()["sends"].asInt
+        claudeOn = false
+        try {
+            frame {
+                // The server forgets the Claude session 10 s after its last read.
+                repeat(100) { if (!x(notice).present()) Thread.sleep(200) }
+                x(notice).shouldBe(present)
+                button("Send 1 pending").shouldBe(enabled).click()
+            }
+            driver.ui.x("//div[@class='MyDialog']//div[@class='JButton' and @text='Send']").click()
+            awaitSession("the Send goes without a Claude session") { it["sends"].asInt == sends + 1 }
+        } finally {
+            claudeOn = true
+        }
+        frame { x(notice).shouldBe(notPresent) }
+    }
+
+    @Test
     // Last whatever steps come before it: the Approve closes the session they all use.
     @Order(Int.MAX_VALUE)
-    fun `an Approve while the tree has the focus empties the tool window without an exception`() {
+    fun `an Approve while the tree has the focus empties the tool window without an exception, closes the window of a thread, and leaves the diff read-only`() {
+        // The window of the Resolved thread of step 21.
+        frame { tree("//div[@class='Tree']").doubleClickPath("c.php", "Line +10", fullMatch = false) }
+        val window = "//div[@class='JBScrollPane']//div[@class='ThreadView']"
+        driver.ui.x(window).shouldBe(present)
         frame { tree("//div[@class='Tree']").clickPath("c.php", "Line +50", fullMatch = false) }
+        val thread = "//div[@class='ThreadView' and .//div[@text='Thread #2 · Line +50']]"
+        frame { x(thread).shouldBe(present) }
         val before = ideaLog().length
         // As the browser would: the tree keeps the focus, and loses it once the tool window no longer shows the session.
         post("/api/sessions/${session()["id"].asString}/approve", "{}")
-        frame { x("//div[@class='JBLabel' and @text='No review of this worktree yet.']").shouldBe(enabled) }
+        frame { x("//div[@class='JBLabel' and @text='The review of this worktree is closed.']").shouldBe(enabled) }
+        driver.ui.x(window).shouldBe(notPresent)
+        frame {
+            // The diff still shows the thread, without a field nor a button to write: the session takes no write.
+            fun writable() = xx("$thread//div[@class='JButton']").list().any { it.component.isShowing() }
+            repeat(50) { if (writable()) Thread.sleep(200) }
+            assert(!writable()) { "the thread of the diff takes no write after the Approve" }
+            x(thread).shouldBe(present)
+            x("//div[@text='Viewed']").shouldBe(notEnabled)
+        }
         // The tree repaints as it loses the focus, once the tool window no longer shows it: up to 5 s for an exception to reach the log.
         var logged = ""
         for (attempt in 1..25) {

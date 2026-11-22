@@ -60,7 +60,7 @@ Structural decisions: [docs/adr/](docs/adr/).
      a `{ drop }` (after an Esc, as long as nobody has typed) leaves the threads waiting, and the mod retries at the next prompt or turn start;
    - if Claude ends its turn while threads are still waiting for it, the mod relaunches it only once per Send:
      the relaunch counts when its prompt opens a turn, a `{ drop }` does not count, and a new Send allows another one;
-   - when a Claude session starts in a worktree where threads are waiting, it adds "N threads are waiting for you" to the first message.
+   - when a Claude session starts in a worktree where threads, or a review message, are waiting, it adds them to the first message.
 5. **Notification**: at the end of Claude's turn that follows a Send, of its relaunch if there is one, or of the fork that answered it, `notify-send` announces "Claude replied in N threads",
    followed by "M still waiting" if any remain; Claude may have changed code after its last reply, hence the end of the turn rather than the last reply.
    The mod sees the end of the turn and calls the server, which sends the notification (`notify-send` or `osascript`).

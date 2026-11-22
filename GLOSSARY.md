@@ -26,11 +26,13 @@ _Avoid_: Comment, Request changes
 **Review message**:
 The message I write for a whole Send, as the body of a review on GitHub; Claude reads it with the threads.
 A Send that carries one wakes Claude even without a thread waiting for it, and Claude then answers it in its conversation.
+Claude gets it once, in its conversation, never in a fork.
 
 **Readonly**:
 Said of a thread Claude answers without changing any file: checked "Answer without changing code" on the thread,
 or published by a Send checked "Answer without changing code", which applies to the threads of that Send and to its review message.
 Unchecked by default: Claude changes the code when a thread asks for it.
+Set by the Send, a thread's "Answer without changing code" shows checked and cannot be unchecked.
 _Avoid_: read-only (which says an approved session takes no message)
 
 **Approve**:
@@ -95,7 +97,8 @@ A thread not Resolved whose last sent message is mine.
 _Avoid_: unread, watermark
 
 **Replied**:
-Said of a thread not Resolved where Claude wrote since my last Send; before my first Send, none is.
+Said of a thread not Resolved where Claude wrote after my last sent message in that thread; before I sent one there, it is not.
+Only a Send of my message in that thread clears it.
 It is a mark for finding Claude's replies, not a status of the thread.
 _Avoid_: Awaiting you, unread
 

@@ -421,8 +421,11 @@ function App() {
     // The threads not Resolved, file by file in the order of the page, then by line: what j and k go through.
     const conversations = files.flatMap(file => session.threads.filter(thread => thread.anchor.path === file.path && !thread.resolved)
         .sort((a, b) => (a.at ?? a.anchor).start - (b.at ?? b.anchor).start));
-    // Before any Send, Claude replied to nothing.
-    const replied = thread => !!session.sentAt && thread.messages.some(message => message.author === 'claude' && message.date && message.date >= session.sentAt);
+    // Replied: Claude wrote after my last sent message in the thread; none before I sent one there.
+    const replied = thread => {
+        const mine = thread.messages.findLastIndex(message => message.author === 'me' && message.date);
+        return mine !== -1 && thread.messages.slice(mine + 1).some(message => message.author === 'claude');
+    };
     const go = thread => {
         setCurrent(thread.id);
         setReveal({ path: thread.anchor.path, id: thread.id, at: Date.now() });
@@ -430,7 +433,8 @@ function App() {
     };
     navigate.current = step => {
         const i = conversations.findIndex(thread => thread.id === current);
-        const next = conversations[i === -1 ? (step > 0 ? 0 : conversations.length - 1) : Math.min(Math.max(i + step, 0), conversations.length - 1)];
+        const n = conversations.length;
+        const next = conversations[i === -1 ? (step > 0 ? 0 : n - 1) : (i + step + n) % n];
         if (next) go(next);
     };
     const copyThreads = () => navigator.clipboard.writeText(threadsMarkdown(session.threads)).then(() => {
@@ -947,13 +951,13 @@ function Thread({ thread, draft, fold: [open, setOpen], readOnly, busy, act, sen
                                 pending=${thread.messages.some(message => !message.date)}
                                 suggest=${thread.anchor.side === 'new' && !whole ? thread.anchor.lines : null} />
                             <button class="btn btn-sm mt-2" disabled=${busy} onClick=${() => act(`/threads/${thread.id}/resolve`, {})}>Resolve</button>
-                            <label class="ml-3 f6"><input type="checkbox" class="mr-1" checked=${readonly ?? !!thread.readonly} disabled=${busy}
+                            <label class="ml-3 f6"><input type="checkbox" class="mr-1" checked=${readonly ?? !!(thread.readonly || thread.sentReadonly)} disabled=${busy || thread.sentReadonly}
                                 onChange=${async event => {
                                     // Checked at once, not after the write: the session answered holds it then.
                                     setReadonly(event.target.checked);
                                     await act(`/threads/${thread.id}/readonly`, { readonly: event.target.checked });
                                     setReadonly(null);
-                                }} />Answer without changing code</label>`}
+                                }} />Answer without changing code${thread.sentReadonly && html`<span class="color-fg-muted ml-1">· Set by the Send</span>`}</label>`}
                 </div>`}
         </details>`;
 }

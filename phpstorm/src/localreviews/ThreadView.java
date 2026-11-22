@@ -3,6 +3,7 @@ package localreviews;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.plugins.IdeaPluginDescriptor;
 import com.intellij.ide.plugins.PluginManagerCore;
@@ -146,12 +147,14 @@ final class ThreadView extends JPanel implements Disposable {
         String sessionId = session.get("id").getAsString();
         String route = "/api/sessions/" + sessionId + "/threads/" + id;
         resolved = thread.get("resolved").getAsBoolean();
+        // An approved session takes no write: its threads show as a Resolved one reads, unfolded.
+        boolean approved = Placement.approved(session);
         boolean claude = Placement.claude(session);
         String status = status(thread);
         // Without a Claude session in the worktree, nobody answers: no spinner, but how to start one.
-        boolean waiting = status.equals("Waiting for Claude");
+        boolean waiting = status.equals("Waiting for Claude") && !approved;
         card.add(header("Thread #" + id + " · " + lines(thread), waiting && !claude ? "No Claude session" : status));
-        messages(project, route, thread.getAsJsonArray("messages"), written);
+        messages(project, route, thread.getAsJsonArray("messages"), !approved, written);
         // At the bottom too: the header of a long thread is out of sight.
         if (waiting && claude) content.add(hint("Waiting for Claude…"));
         if (waiting && !claude) content.add(startClaude(session));
@@ -160,9 +163,13 @@ final class ThreadView extends JPanel implements Disposable {
         other = resolved ? button("Unresolve", AllIcons.Actions.Rollback) : button("Resolve", AllIcons.Actions.Checked);
         String toggle = route + (resolved ? "/unresolve" : "/resolve");
         other.addActionListener(e -> write(field, error, List.of(other, add), body -> Server.post(toggle, new JsonObject()), written));
-        if (!resolved) {
-            readonly = new JBCheckBox("Answer without changing code", thread.has("readonly") && thread.get("readonly").getAsBoolean());
-            readonly.setToolTipText("Claude replies in this thread without editing any file");
+        if (!resolved && !approved) {
+            // Readonly also when the Send that published my last message in it was: unticking the thread cannot undo that.
+            boolean sent = thread.get("sentReadonly") instanceof JsonPrimitive by && by.getAsBoolean();
+            readonly = new JBCheckBox("Answer without changing code", sent || thread.get("readonly") instanceof JsonPrimitive own && own.getAsBoolean());
+            readonly.setToolTipText(sent ? "Set by the Send that published your last message: Claude replies in this thread without editing any file"
+                : "Claude replies in this thread without editing any file");
+            readonly.setEnabled(!sent);
             JBCheckBox box = readonly;
             box.addActionListener(e -> {
                 boolean checked = box.isSelected();
@@ -182,32 +189,33 @@ final class ThreadView extends JPanel implements Disposable {
         }
         // Send spins, the only spinner, until Claude answers the thread.
         spin(send, ReviewService.get(project).spinning("thread:" + id, thread), AllIcons.Actions.Upload);
-        finish(project, sessionId, Placement.sendRefusal(session), pending(thread) ? id : null, body -> {
+        finish(project, sessionId, session, pending(thread) ? id : null, body -> {
             Server.post(route + "/messages", reply(body));
             return id;
-        }, resolved ? null : lines, written);
-        if (resolved) {
+        }, resolved || approved ? null : lines, written);
+        if (resolved || approved) {
             field.setVisible(false);
             add.setVisible(false);
             send.setVisible(false);
             shortcutHint.setVisible(false);
         }
+        other.setVisible(!approved);
         // A Resolved thread shows folded, its discussion one click away.
         if (resolved) fold();
     }
 
     /**
      * A new thread of the session `sessionId`, opened by `create` with its first message, which gives its id;
-     * `sendRefusal` as Placement gives it, `lines` as for an open thread.
+     * `session` as the last poll read it, null before, `lines` as for an open thread.
      */
-    ThreadView(Project project, String sessionId, String sendRefusal, ThrowableConvertor<String, Integer, IOException> create, Supplier<String> lines, Runnable cancel, Runnable written) {
+    ThreadView(Project project, String sessionId, JsonObject session, ThrowableConvertor<String, Integer, IOException> create, Supplier<String> lines, Runnable cancel, Runnable written) {
         super(null);
         card.add(header("New thread", ""));
         field = field(project, "Comment", "");
         other = button("Cancel", null);
         // Removing the inlay changes the editor: a bare Swing listener needs the write-intent lock for it.
         other.addActionListener(e -> WriteIntentReadAction.run(cancel));
-        finish(project, sessionId, sendRefusal, null, create, lines, written);
+        finish(project, sessionId, session, null, create, lines, written);
         // A new thread left empty closes once the focus goes elsewhere, the IDE losing it aside.
         field.addFocusListener(new FocusAdapter() {
             @Override
@@ -295,8 +303,11 @@ final class ThreadView extends JPanel implements Disposable {
         repaint();
     }
 
-    /** The messages, a turn per run of messages of the same author: its avatar, its name, then each message; a line between turns. */
-    private void messages(Project project, String route, JsonArray messages, Runnable written) {
+    /**
+     * The messages, a turn per run of messages of the same author: its avatar, its name, then each message; a line between turns.
+     * My Pending ones with Edit and Delete when `editable`.
+     */
+    private void messages(Project project, String route, JsonArray messages, boolean editable, Runnable written) {
         List<List<JsonObject>> turns = new ArrayList<>();
         for (JsonElement element : messages) {
             JsonObject message = element.getAsJsonObject();
@@ -323,7 +334,7 @@ final class ThreadView extends JPanel implements Disposable {
             for (JsonObject message : turn) {
                 if (!unsent) column.add(hint(when(message)));
                 String markdown = message.get("body").getAsString();
-                column.add(unsent ? pending(project, route, index, markdown, messages.size() == 1, written) : body(project, markdown));
+                column.add(unsent && editable ? pending(project, route, index, markdown, messages.size() == 1, written) : body(project, markdown));
                 index++;
             }
             JPanel avatar = new JPanel(new BorderLayout());
@@ -417,14 +428,16 @@ final class ThreadView extends JPanel implements Disposable {
      * Send does the same, then sends this thread alone, without the Pending messages of the others, or, with nothing typed,
      * the thread `pending` when it has Pending messages.
      */
-    private void finish(Project project, String sessionId, String sendRefusal, Integer pending, ThrowableConvertor<String, Integer, IOException> addPending, Supplier<String> lines, Runnable written) {
+    private void finish(Project project, String sessionId, JsonObject session, Integer pending, ThrowableConvertor<String, Integer, IOException> addPending, Supplier<String> lines, Runnable written) {
+        String sendRefusal = session == null ? null : Placement.sendRefusal(session);
+        String sendWarning = session == null ? null : Placement.sendWarning(session);
         // A write gives its buttons back once done: not a Send greyed for its refusal.
         List<JButton> buttons = sendRefusal == null ? List.of(other, add, send) : List.of(other, add);
         add.addActionListener(e -> {
             if (!field.getText().isBlank()) write(field, error, buttons, addPending::convert, written);
         });
         send.setEnabled(sendRefusal == null);
-        send.setToolTipText(sendRefusal != null ? sendRefusal : "Add the message, then send this thread alone to Claude");
+        send.setToolTipText(sendRefusal != null ? sendRefusal : sendWarning != null ? sendWarning : "Add the message, then send this thread alone to Claude");
         int[] thread = {pending == null ? 0 : pending};
         Runnable sendThread = () -> {
             send.setEnabled(false);
@@ -610,12 +623,12 @@ final class ThreadView extends JPanel implements Disposable {
         return message.get("author").getAsString();
     }
 
-    /** « Start a Claude session in this worktree », its command, and a link that copies the command. */
+    /** That no Claude session reads the Send, the command that starts one, and a link that copies the command. */
     static JPanel startClaude(JsonObject session) {
         String command = Placement.startClaude(session);
         JPanel panel = new JPanel(new VerticalLayout(JBUI.scale(2)));
         panel.setOpaque(false);
-        JBLabel text = new JBLabel("Start a Claude session in this worktree to send to Claude:");
+        JBLabel text = new JBLabel("<html>" + Placement.START_CLAUDE + "</html>");
         text.setForeground(PENDING);
         JBLabel shown = new JBLabel(command);
         shown.setFont(JBUI.Fonts.create(Font.MONOSPACED, JBUI.Fonts.label().getSize()));

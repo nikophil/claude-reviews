@@ -25,7 +25,8 @@ public final class OpenThreadAction extends DumbAwareAction {
     @Override
     public void update(AnActionEvent event) {
         Editor editor = event.getData(CommonDataKeys.EDITOR);
-        event.getPresentation().setEnabledAndVisible(editor != null && editor.getUserData(Threads.KEY) != null);
+        List<Threads> sides = editor == null ? null : editor.getUserData(Threads.KEY);
+        event.getPresentation().setEnabledAndVisible(sides != null && sides.get(0).writable());
     }
 
     @Override

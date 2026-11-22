@@ -115,7 +115,7 @@ test('a thread takes Answer Without Changing Code, and a Send a review message a
     await box.getByRole('button', { name: 'Answer without changing code: off' }).click();
     await expect(box.getByRole('button', { name: 'Answer without changing code: on' })).toBeVisible();
     await box.locator('input').press('Enter');
-    await expect(page.getByText('1 message sent to Claude', { exact: true })).toBeVisible();
+    await expect(page.getByText('The review message and 1 message sent to Claude', { exact: true })).toBeVisible();
     expect((await session()).reviews).toEqual([{ review: 1, body: 'Only explain', readonly: true }]);
 });
 
@@ -246,7 +246,7 @@ test('Send in a thread adds my reply and sends this thread alone, or only its Pe
     }).toPass();
 });
 
-test('without a Claude session, Send in a thread keeps my reply as Pending, and says how to start one', async ({ page }) => {
+test('without a Claude session, Send in a thread sends my reply, and says how to start one', async ({ page }) => {
     const { dir, session } = await worktree(page, { claude: true });
     const view = await open(page, dir);
     await view.getByRole('treeitem', { name: /#1 · Line \+2/ }).click();
@@ -256,7 +256,41 @@ test('without a Claude session, Send in a thread keeps my reply as Pending, and 
     await page.locator('.review-widget').getByRole('button', { name: 'Send', exact: true }).click();
 
     await expect(page.getByRole('button', { name: 'Copy Command' })).toBeVisible();
-    await expect.poll(async () => (await session()).threads[0].messages[1]).toMatchObject({ author: 'me', body: 'Because.', date: null });
+    await expect(page.getByText(`1 message sent to Claude. No Claude session runs in this worktree: Claude reads it once one starts, with cd ${dir} && claude`).last()).toBeVisible();
+    expect((await session()).threads[0].messages[1]).toMatchObject({ author: 'me', body: 'Because.', review: 1 });
+});
+
+test('Send without a Pending message sends a review message alone, and with nothing to send says so', async ({ page }) => {
+    const { dir, session, listen } = await worktree(page, { claude: true });
+    await listen();
+    const view = await open(page, dir);
+    await expect(view.getByRole('treeitem', { name: /#1 · Line \+2/ })).toBeVisible();
+
+    await view.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.quick-input-widget input').press('Enter');
+    await expect(page.getByText('Nothing to send: no Pending message, no review message', { exact: true })).toBeVisible();
+    expect((await session()).sends).toBe(0);
+
+    await listen();
+    await view.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.quick-input-widget input').fill('What next?');
+    await page.locator('.quick-input-widget input').press('Enter');
+    await expect(page.getByText('The review message sent to Claude', { exact: true })).toBeVisible();
+    expect((await session()).reviews).toEqual([{ review: 1, body: 'What next?', readonly: false }]);
+});
+
+test('a thread Claude replied in since my last message there shows Replied, and one a readonly Send published shows it set by the Send, without its toggle', async ({ page }) => {
+    const { dir, route, listen } = await worktree(page, { claude: true });
+    await page.request.post(`${route}/threads/1/messages`, { data: { author: 'me', body: 'Explain.' } });
+    await page.request.post(`${route}/send`, { data: { tree: (await (await page.request.get(`${route}/tree`)).json()).tree, readonly: true } });
+    await page.request.post(`${route}/threads/1/messages`, { data: { author: 'claude', body: 'Here.' } });
+    await listen();
+    const view = await open(page, dir);
+
+    await view.getByRole('treeitem', { name: '#1 · Line +2 · Replied · Answer without changing code, set by the Send' }).click();
+    await expect(page.locator('.review-widget').getByText('Here.')).toBeVisible();
+    await expect(page.locator('.review-widget').getByRole('button', { name: 'Answer Without Changing Code' })).toHaveCount(0);
+    await expect(page.locator('.review-widget').getByRole('button', { name: 'Allow Code Changes' })).toHaveCount(0);
 });
 
 test('Send in a new thread opens it and sends it at once', async ({ page }) => {
@@ -369,7 +403,7 @@ test('/review-local shows the view, once, when VS Code reads a recent request', 
     await expect(page.getByText(`The review of ${dir} is open in VS Code`, { exact: true })).toBeVisible();
 });
 
-test('without a session, the view offers to start one; without a Claude session, Send says how to start one', async ({ page }) => {
+test('without a session, the view offers to start one; without a Claude session, Send sends and says how to start one', async ({ page }) => {
     const dir = repo({ 'a.txt': 'one\n' });
     write(dir, { 'a.txt': '1\n' });
     const view = await open(page, dir);
@@ -380,10 +414,13 @@ test('without a session, the view offers to start one; without a Claude session,
     const { id } = await (await page.request.get(`/api/sessions?worktree=${encodeURIComponent(dir)}`)).json();
     await page.request.post(`/api/sessions/${id}/threads`, { data: { author: 'claude', path: 'a.txt', side: 'new', start: 1, end: 1, body: 'Why?' } });
     await page.request.post(`/api/sessions/${id}/threads/1/messages`, { data: { author: 'me', body: 'Because.' } });
-    await expect(view.getByText(`Start a Claude session in this worktree to send to Claude: cd ${dir} && claude`)).toBeVisible();
+    await expect(view.getByText(`No Claude session runs in this worktree: a Send wakes no one until one starts, with cd ${dir} && claude`)).toBeVisible();
+    await expect(view.getByRole('treeitem', { name: 'a.txt, 1 pending' })).toBeVisible();
     await view.getByRole('button', { name: 'Send' }).click();
-    await expect(page.getByText(`Start a Claude session in this worktree to send to Claude: cd ${dir} && claude`).last()).toBeVisible();
+    await page.locator('.quick-input-widget input').press('Enter');
+    await expect(page.getByText(`1 message sent to Claude. No Claude session runs in this worktree: Claude reads it once one starts, with cd ${dir} && claude`).last()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Copy Command' })).toBeVisible();
+    expect((await (await page.request.get(`/api/sessions/${id}`)).json()).sends).toBe(1);
 });
 
 test('the image of the README', async ({ page }) => {

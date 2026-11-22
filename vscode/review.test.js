@@ -33,6 +33,17 @@ test('the label of a thread names it, its lines, its status, the old code and Ou
     assert.equal(review.label(thread(3, { status: 'open' }), session), '#3 · Line +2');
     assert.equal(review.label(thread(3), { claudeSession: false }), '#3 · Line +2 · No Claude session');
     assert.equal(review.label({ ...thread(3, { status: 'open' }), readonly: true }, session), '#3 · Line +2 · Answer without changing code');
+    assert.equal(review.label({ ...thread(3, { status: 'open' }), sentReadonly: true }, session), '#3 · Line +2 · Answer without changing code, set by the Send');
+    assert.equal(review.label(thread(3, { status: 'open', messages: [['me', '2026-11-14T10:00:00.000Z'], ['claude', '2026-11-14T10:01:00.000Z']] }), session), '#3 · Line +2 · Replied');
+});
+
+test('a thread is Replied once Claude wrote after my last sent message in it, until I send one there; never Resolved, nor before I sent one', () => {
+    const at = (minute) => `2026-11-14T10:0${minute}:00.000Z`;
+    assert.equal(review.repliedTo(thread(1, { messages: [['me', at(0)], ['claude', at(1)]] })), true);
+    assert.equal(review.repliedTo(thread(1, { messages: [['me', at(0)], ['claude', at(1)], ['me', null]] })), true, 'my Pending message does not clear it');
+    assert.equal(review.repliedTo(thread(1, { messages: [['me', at(0)], ['claude', at(1)], ['me', at(2)]] })), false);
+    assert.equal(review.repliedTo(thread(1, { messages: [['claude', at(0)], ['claude', at(1)]] })), false, 'before my first message there');
+    assert.equal(review.repliedTo(thread(1, { resolved: true, status: 'resolved', messages: [['me', at(0)], ['claude', at(1)]] })), false);
 });
 
 test('the counts of a file are its threads waiting for Claude, the Pending messages a Send would publish, and its Resolved threads', () => {
@@ -77,9 +88,13 @@ test('a file opens at its first thread on the new side, else at its first added 
     assert.equal(review.firstLine({ path: 'a.txt', hunks: [] }, [thread(1, { at: { start: 0, end: 0 } })]), 1);
 });
 
-test('the messages the last Send published are those it numbered', () => {
-    const session = { sends: 2, threads: [{ messages: [{ author: 'me', review: 1 }, { author: 'claude' }, { author: 'me', review: 2 }, { author: 'me', review: 2 }] }] };
-    assert.equal(review.sent(session), 2);
+test('the last Send tells the messages it numbered, and its review message', () => {
+    const threads = [{ messages: [{ author: 'me', review: 1 }, { author: 'claude' }, { author: 'me', review: 2 }, { author: 'me', review: 2 }] }];
+    assert.equal(review.sent({ sends: 2, threads }), '2 messages sent to Claude');
+    assert.equal(review.sent({ sends: 1, threads }), '1 message sent to Claude');
+    assert.equal(review.sent({ sends: 2, threads, reviews: [{ review: 2, body: 'And?', readonly: false }] }), 'The review message and 2 messages sent to Claude');
+    assert.equal(review.sent({ sends: 3, threads, reviews: [{ review: 3, body: 'And?', readonly: false }] }), 'The review message sent to Claude');
+    assert.equal(review.sent({ sends: 3, threads, reviews: [{ review: 3, body: '', readonly: true }] }), '0 messages sent to Claude');
 });
 
 test('the threads waiting for Claude count across the session', () => {
@@ -166,4 +181,14 @@ test('Next Thread and Previous Thread go through the unresolved threads in the o
     assert.equal(review.step(files, threads, 5, true), 2, 'from a thread just Resolved, the next one after it');
     assert.equal(review.step(files, threads, 5, false), 3, 'from a thread just Resolved, the one before it');
     assert.equal(review.step(files, [], undefined, true), undefined);
+});
+
+test('Next Thread goes through the threads of a file by line, and the tree lists them so', () => {
+    const files = [{ path: 'a.txt', status: 'modified' }];
+    const threads = [thread(1, { at: { start: 9, end: 9 } }), thread(2, { at: null }), thread(3, { at: { start: 4, end: 5 } })];
+    assert.equal(review.step(files, threads, undefined, true), 2, 'an Outdated thread at the line of its Anchor');
+    assert.equal(review.step(files, threads, 2, true), 3);
+    assert.equal(review.step(files, threads, 3, true), 1);
+    assert.equal(review.step(files, threads, 1, true), 2, 'around at the end');
+    assert.deepEqual(review.threadsOf(threads, 'a.txt').map(t => t.id), [2, 3, 1]);
 });

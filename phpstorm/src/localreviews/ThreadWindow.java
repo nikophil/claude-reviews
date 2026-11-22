@@ -45,23 +45,31 @@ final class ThreadWindow extends DialogWrapper {
         this.project = project;
         this.service = ReviewService.get(project);
         this.id = thread.get("id").getAsInt();
+        String session = service.state().id();
         JsonObject anchor = thread.getAsJsonObject("anchor");
-        setTitle("Thread #" + id + " · " + anchor.get("path").getAsString() + (thread.get("at") instanceof JsonObject ? "" : " · Outdated"));
         // A thread on the whole file has no lines to show.
         if (anchor.get("end").getAsInt() > 0) panel.add(code(project, anchor), BorderLayout.NORTH);
         panel.add(new JBScrollPane(column), BorderLayout.CENTER);
         show(thread);
         service.listen(state -> {
-            if (state.session() == null) return;
-            for (JsonElement element : state.session().getAsJsonArray("threads")) {
-                JsonObject fresh = element.getAsJsonObject();
-                if (fresh.get("id").getAsInt() == id && (!fresh.equals(shown) || Placement.claude(state.session()) != claude)) show(fresh);
-            }
+            if (isDisposed()) return;
+            // Closed with its session, approved or another, or its thread, deleted.
+            JsonObject fresh = state.session() == null || !state.id().equals(session) ? null : thread(state.session());
+            if (fresh == null) close(CANCEL_EXIT_CODE);
+            else if (!fresh.equals(shown) || Placement.claude(state.session()) != claude) show(fresh);
         }, getDisposable());
         init();
     }
 
+    private JsonObject thread(JsonObject session) {
+        for (JsonElement element : session.getAsJsonArray("threads")) {
+            if (element.getAsJsonObject().get("id").getAsInt() == id) return element.getAsJsonObject();
+        }
+        return null;
+    }
+
     private void show(JsonObject thread) {
+        setTitle("Thread #" + id + " · " + thread.getAsJsonObject("anchor").get("path").getAsString() + (thread.get("at") instanceof JsonObject ? "" : " · Outdated"));
         // Unfolded when it opens and once resolved: the window is there to read it.
         boolean unfold = shown == null || shown.get("resolved").getAsBoolean() != thread.get("resolved").getAsBoolean();
         shown = thread;
