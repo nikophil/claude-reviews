@@ -11,6 +11,7 @@ const TYPES: Record<string, string> = {
     '.html': 'text/html; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
     '.css': 'text/css; charset=utf-8',
+    '.svg': 'image/svg+xml',
 };
 
 const MAX_BODY = 1024 * 1024;

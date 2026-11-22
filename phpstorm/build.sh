@@ -14,6 +14,8 @@ rm "$OUT/classes/localreviews/PlacementCheck.class"
 # so that PhpStorm offers each build as an update, and the release of the next version as newer still.
 VERSION=${PLUGIN_VERSION:-$(node -p 'require("./.claude-plugin/plugin.json").version').$(date +%s)}
 sed "s|<version>.*</version>|<version>$VERSION</version>|" phpstorm/plugin.xml > "$OUT/classes/META-INF/plugin.xml"
+# The logo of the page, as the icon of the plugin in Settings › Plugins.
+cp ui/logo.svg "$OUT/classes/META-INF/pluginIcon.svg"
 # The jbr has no jar tool, and a jar is a zip.
 (cd "$OUT/classes" && zip -qr ../local-reviews/lib/local-reviews.jar .)
 (cd "$OUT" && zip -qr local-reviews.zip local-reviews)
