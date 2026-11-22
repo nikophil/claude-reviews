@@ -150,6 +150,19 @@ test('a thread takes Answer without changing code, and a Send a review message a
     expect(session.reviews).toEqual([{ review: 1, body: 'Only explain', readonly: true }]);
 });
 
+test('a thread published by a readonly Send shows Answer without changing code checked and grayed out, set by the Send', async ({ page, request }) => {
+    const dir = changed();
+    const { id, thread } = await claudeThread(request, dir, 2, 'Is this right?');
+    await request.post(`/api/sessions/${id}/threads/${thread}/messages`, { data: { author: 'me', body: 'Why?' } });
+    await request.post(`/api/sessions/${id}/send`, { data: { tree: (await (await request.get(`/api/sessions/${id}/tree`)).json()).tree, readonly: true } });
+    await open(page, dir);
+
+    const readonly = page.locator('.thread').getByRole('checkbox', { name: 'Answer without changing code' });
+    await expect(readonly).toBeChecked();
+    await expect(readonly).toBeDisabled();
+    await expect(page.locator('.thread')).toContainText('Set by the Send');
+});
+
 test('a Resolved thread folds, opens again on a click, takes no message, and takes them again once Unresolved', async ({ page, request }) => {
     const dir = changed();
     await claudeThread(request, dir, 2, 'Is this right?');
@@ -495,14 +508,18 @@ test('while a thread waits for Claude, the page says the Claude session waits fo
     await expect(warning).toBeHidden({ timeout: 5000 });
 });
 
-test('j and k, or the arrows beside Conversations, go from thread to thread, the Conversations menu lists them and marks those Claude replied in since my last Send', async ({ page, request }) => {
+test('j and k, or the arrows beside Conversations, go from thread to thread and wrap around, the Conversations menu lists them and marks those Claude replied in since my last message there', async ({ page, request }) => {
     const dir = repo({ 'a.txt': 'one\n', 'b.txt': 'one\n' });
     write(dir, { 'a.txt': 'ONE\n', 'b.txt': 'ONE\n' });
     const { id } = await (await request.post('/api/sessions', { data: { worktree: dir } })).json();
     for (const path of ['a.txt', 'b.txt']) await request.post(`/api/sessions/${id}/threads`, { data: { author: 'claude', path, side: 'new', start: 1, end: 1, body: `About ${path}` } });
     const { tree } = await (await request.get(`/api/sessions/${id}/tree`)).json();
+    for (const n of [1, 2]) await request.post(`/api/sessions/${id}/threads/${n}/messages`, { data: { author: 'me', body: 'Why?' } });
     await request.post(`/api/sessions/${id}/send`, { data: { tree } });
-    await request.post(`/api/sessions/${id}/threads/2/messages`, { data: { author: 'claude', body: 'Later' } });
+    for (const n of [1, 2]) await request.post(`/api/sessions/${id}/threads/${n}/messages`, { data: { author: 'claude', body: 'Later' } });
+    // My Send in a.txt alone clears its Replied, not the one of b.txt.
+    await request.post(`/api/sessions/${id}/threads/1/messages`, { data: { author: 'me', body: 'OK' } });
+    await request.post(`/api/sessions/${id}/send`, { data: { tree, threads: [1] } });
     await request.post(`/api/sessions/${id}/viewed`, { data: { path: 'b.txt', tree, viewed: true } });
     await open(page, dir);
     await expect(page.locator('section[data-path="a.txt"] .thread')).toBeVisible();
@@ -513,15 +530,21 @@ test('j and k, or the arrows beside Conversations, go from thread to thread, the
     await page.keyboard.press('j');
     await expect(page).toHaveURL(/#thread-2$/);
     await expect(page.locator('#thread-2')).toBeVisible();
+    await page.keyboard.press('j');
+    await expect(page).toHaveURL(/#thread-1$/);
+    await page.keyboard.press('k');
+    await expect(page).toHaveURL(/#thread-2$/);
     await page.keyboard.press('k');
     await expect(page).toHaveURL(/#thread-1$/);
 
     await page.getByRole('button', { name: 'Next thread' }).click();
     await expect(page).toHaveURL(/#thread-2$/);
-    await page.getByRole('button', { name: 'Previous thread' }).click();
+    await page.getByRole('button', { name: 'Next thread' }).click();
     await expect(page).toHaveURL(/#thread-1$/);
+    await page.getByRole('button', { name: 'Previous thread' }).click();
+    await expect(page).toHaveURL(/#thread-2$/);
 
     await page.getByRole('button', { name: '2 conversations' }).click();
     const menu = page.locator('.conversations');
-    await expect(menu.getByRole('button')).toHaveText([/a\.txt/, /b\.txt.*Replied/]);
+    await expect(menu.getByRole('button')).toHaveText([/^a\.txt(?!.*Replied)/, /b\.txt.*Replied/]);
 });

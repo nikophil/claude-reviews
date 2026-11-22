@@ -54,7 +54,10 @@ Read `BRIEF.md`, `GLOSSARY.md` and `docs/adr/` before changing the code, and nam
   this diff has a place of its own (`localreviews.Review`), which starts from the settings of the default place and folds the unchanged code, once, then keeps the settings of the IDE, and unfolds the lines of a thread;
   a click on a line number of the diff, or a drag over line numbers, opens a thread there, but not in the editor, where the IDE puts a breakpoint;
   marking a file Viewed selects the next file of the tree not Viewed, which the bar of the diff shows in the diff, stopping at the last one;
-  it edits and deletes my Pending messages, moves from one thread not Resolved to the next (Next Thread and Previous Thread, Alt+Shift+Page Down and Page Up, also in the bar of the diff and at the top right of the editor), marks "Replied" those, not Resolved, where Claude replied since my last Send,
+  it edits and deletes my Pending messages, moves from one thread not Resolved to the next, file by file in the order of its tree, by line, around after the last one (Next Thread and Previous Thread, Alt+Shift+Page Down and Page Up, also in the bar of the diff and at the top right of the editor),
+  marks "Replied" those, not Resolved, where Claude wrote after my last sent message in the thread,
+  keeps the text typed in a thread or a draft across a change of base, a rediff and the Show threads and Show resolved toggles,
+  replaces the tab of the previous diff by a diff of other files or against another base, and once the session is approved, its threads, Viewed and drafts take no write;
   resolves or reopens a thread from its context menu in the tree, opens an Outdated thread, or a Resolved one, in a window of its own, scrolled when long,
   groups its files under their directories, or lists them flat each followed by its directory (Group By › Directory, as in the Commit tool window),
   and offers Suggest Change, Comment on File and Copy Threads as Markdown, in the same format as the web UI;
@@ -64,6 +67,9 @@ Read `BRIEF.md`, `GLOSSARY.md` and `docs/adr/` before changing the code, and nam
 - `vscode/`: the VS Code extension, in CommonJS JS checked by `// @ts-check`, without a build: the "Claude Reviews" view (base, Send, Approve, changed files with their Viewed checkbox and their threads), the threads through the Comments API in the editor and in the diff of VS Code;
   a click on a file opens its diff, the Viewed checkbox is also in the bar of the diff, marking a file Viewed opens the diff of the next file of the tree not Viewed, Next Thread and Previous Thread in the bar of the editor and of the diff, and an Outdated thread opens on its diff excerpt; `vscode/review.js` holds the pure functions, tested by `node --test`.
   "Answer Without Changing Code" and "Allow Code Changes" are actions of the thread, and the Send of the whole session asks for a review message in an input box, whose lock button is its "Answer without changing code".
+  Send is enabled whenever a session is shown: a Send without a Pending message nor a review message says there is nothing to send.
+  The label of a thread not Resolved says "Replied" when Claude wrote after my last sent message in that thread, and "Answer without changing code, set by the Send", without its toggle, when a readonly Send published it.
+  Next Thread and Previous Thread go file by file in the order of the tree, by line within a file, Resolved threads skipped, around at the ends.
 - No npm dependency at runtime: what is missing gets written, or vendored as a single file in `ui/vendor/`.
 
 ## HTTP contract
@@ -125,11 +131,13 @@ The server serves the UI and a JSON API, for the UI and the mod.
 - A worktree no longer exists when its `stat` answers ENOENT, its parent folder still exists, and its `commonDir`, if it is outside the worktree, still exists; any other error, or a parent or a `commonDir` gone as well (unmounted disk), leaves the session open.
 - Reading or opening the session of a worktree also closes the session at its path that carries another `commonDir`: another repository does not take over the session.
 - A read only waits for the write queue to close a session; an unreadable session file is ignored, with a line in the server log, without being deleted or rewritten.
-- Each returned session carries `claudeSession`, true when the mod read its worktree with `&claude` in the last 10 seconds, kept in memory; without it, the PhpStorm plugin grays out its Sends, the VS Code extension refuses them, and both show, instead of waiting for Claude, the command that starts a Claude session.
+- Each returned session carries `claudeSession`, true when the mod read its worktree with `&claude` in the last 10 seconds, kept in memory; without it, every client still sends, and shows, instead of waiting for Claude, the command that starts a Claude session, which reads the Send once it starts.
 - It also carries `claudeBlocked`, true when that last read also carried `&blocked` and a thread is Waiting for Claude;
   the page, the PhpStorm tool window and the bar of its diff, the VS Code view and the bar of its diff then warn that Claude is waiting for my answer in its session.
 - The notification counts the threads where Claude wrote since the last Send, and the Waiting for Claude threads; `start(port, notify)` receives the command to run, which the tests record without running it.
 - Except for `/diff`, `/tree`, `/lines`, `/bases` and the list of sessions, each route of a session returns the whole session, in the file format, and each thread there also carries its `status`: `resolved`, `waiting-for-claude` when my message is the last published one, `open` when it is Claude's, or `null` as long as no message is published; the clients do not display `open`.
+- Each thread there also carries `sentReadonly`, true when the Send that published my last message in it was readonly, false otherwise;
+  the clients then show its "Answer without changing code" checked and not editable, set by the Send.
 - A route that returns the session and receives `?base=<id>&tree=<id>` (the code displayed by the UI), or `?reanchor` (the base of the session and the working tree, for the mod), re-anchors each thread on this code: each thread then also carries `at`, `null` if it is Outdated, otherwise `{ start, end, context }`.
 - With `?reanchor`, `at` is `{ start, end }`, without `context` or diff computation, a Resolved thread has no `at`, and the session carries `reanchoredOn: { base, tree }`, the ids of this code.
 - A malformed `base` or `tree` in the query, or a `w` other than `1`, gets 400 before any write; a recorded write answers 200, with its threads without `at` if their re-anchoring fails.
@@ -166,9 +174,10 @@ The server serves the UI and a JSON API, for the UI and the mod.
 
 - On `session.start`, the mod links the Claude session to the worktree through `git rev-parse --show-toplevel` on the `cwd`, registers its tools, then starts the server.
 - It then follows `$.session.root()`, which `/cd` and EnterWorktree move: another worktree starts again from a fresh state, like a Claude session that starts there.
+  A fork still answering keeps the worktree and the session it was spawned for, by its `agentId`, and its tools write there.
 - It follows the same way the last worktree of the repository (same `--git-common-dir`) that the main loop touched:
   the folder of the file of an Edit, a Write or a NotebookEdit neither refused nor failed, or the directory of the shell after a Bash call that changed it, a `cd` the shell kept;
-  `cd <dir> && …`, which the shell does not keep outside the working directories, or after which it goes back to the root, a subagent's call, a file of another repository, and any call while a fork answers leave the review where it is.
+  `cd <dir> && …`, which the shell does not keep outside the working directories, or after which it goes back to the root, a subagent's call and a file of another repository leave the review where it is.
 - It finds the server through `<data>/endpoint`, from which it reads the port and the token; without a file, with a corrupt file, if another account listens on its port, or if the server it names does not answer, it starts one.
 - A call that gets no answer reads the `endpoint` again: when it names another server, which a newer mod of another Claude session started, the mod adopts it and makes the call once more.
 - It runs `node <plugin root>/server/main.ts` detached by `nohup`, under `umask 077`, from the root of the plugin, its output in `<data>/server.log`;
@@ -177,30 +186,31 @@ The server serves the UI and a JSON API, for the UI and the mod.
   It no longer calls a port that another account has taken since: the tools say so, and a new Claude session starts a server of its own.
 - It stops an older version of claude-reviews through `POST /api/shutdown` then starts it again; it uses a newer version as is, so that two Claude sessions of different versions do not stop each other's server.
 - When the port of the `endpoint`, held by its account, answers something other than claude-reviews, or does not answer within 2 s, nothing starts: the mod reports it through `$.ui.log`, a line of the transcript that the model does not read, and polls anyway.
-- `list_open_threads()` returns `base`, the commit of the base of the session, and, except for Resolved threads and threads without a published message, the id, the status, `outdated`, the file, the side, the range re-anchored on this base on the `old` side and on the working tree on the `new` side (the one of the Anchor if it is Outdated), the lines of the Anchor and the published messages.
-- It also returns `review`, `{ body, readonly }` of the review message of the last Send, `null` without one, and per thread `readonly`:
+- `list_open_threads()` returns `worktree`, the root its files are relative to, `base`, the commit of the base of the session, and, except for Resolved threads and threads without a published message, the id, the status, `outdated`, the file, the side, the range re-anchored on this base on the `old` side and on the working tree on the `new` side (the one of the Anchor if it is Outdated), the lines of the Anchor and the published messages.
+- It also returns `review`, `{ body, readonly }` of a review message that no prompt gave the main conversation yet, `null` without one or in a subagent, which it then gives once, and per thread `readonly`:
   true when the thread is checked "Answer without changing code", or when the Send that published my last message in it was readonly.
   The descriptions of the tools ask Claude to answer such a thread, and a readonly review message, without changing any file.
 - An Outdated thread also carries `hunk` there, the original diff excerpt as a unified diff, `null` if the Anchor was outside the diff.
 - A thread on the whole file has `start` and `end` at 0 there and no lines; `open_thread` without `lines` opens one.
 - A ```` ```suggestion ```` block in one of my messages is the code I propose in place of the lines of the thread, on the `new` side: the descriptions of the tools ask Claude to apply it to the working tree unless it disagrees, then to reply.
-- The poll keeps a status line through `$.ui.status`: "claude-reviews · N threads waiting for Claude", followed by "· a fork answers in the background" while a fork runs, or by "· wake held until the next prompt" when a wake waits after a `{ drop }`, and nothing without a thread waiting for Claude.
+- The poll keeps a status line through `$.ui.status`: "claude-reviews · N threads waiting for Claude", followed by "· a fork answers in the background" while a fork runs, or by "· wake held until the next prompt" or "· relaunch held until the next prompt" when one waits after a `{ drop }`.
+  Without a thread waiting for Claude, it shows "claude-reviews · review message held until the next prompt" when a review message alone waits after a `{ drop }`, and nothing otherwise.
 - It polls `GET /api/sessions?worktree=<path>&claude` every 2 s; a Send that leaves Waiting for Claude threads, or that carries a review message, makes it wake Claude through `$.prompt.submit`, never awaited in a hook.
-- While Claude works on a turn of its own, one that no wake or relaunch opened, the mod spawns instead a fork of the Claude session in the background (`$.agent.spawn` with `subagentType: 'fork'`), which answers the threads with the same tools, in the same worktree:
+- While Claude works on a turn of its own, one that no wake, relaunch or first prompt carrying the threads opened, the mod spawns instead a fork of the Claude session in the background (`$.agent.spawn` with `subagentType: 'fork'`), which answers the threads with the same tools, in the worktree of the Send (`cwd`), which its prompt names:
   its prompt warns it that the main conversation keeps working there, to leave its task and the files it edits alone, and to say so in the thread instead.
-  Following another worktree keeps the turn running: a Send there still goes to a fork. One fork runs at a time: a Send seen meanwhile waits for its end, then goes to a fork again, or to a prompt once Claude is idle; a fork the engine denies leaves the Send to the prompt.
-- The prompt, and the one of a fork, counts the threads waiting and the readonly ones among them, followed by the review message of the last Send;
-  a review message without a thread waiting asks Claude to answer it in the conversation, and relaunches nothing.
-  Seen while Claude works on a turn of its own, such a review message waits for the end of that turn rather than for a fork, and a Send that brings threads meanwhile still goes to a fork,
-  whose prompt then carries the held message, unless that Send carries one of its own.
+  Following another worktree keeps the turn running: a Send there still goes to a fork, after the one running. One fork runs at a time, across worktrees: a Send seen meanwhile waits for its end, then goes to a fork again, or to a prompt once Claude is idle; a fork the engine denies leaves the Send to the prompt.
+- The prompt, and the one of a fork, names the worktree and counts the threads waiting and the readonly ones among them.
+  The prompt adds a review message until a prompt gave it to the main conversation, exactly once; a fork's never does, and a review message relaunches nothing.
+  Seen while Claude works on a turn of its own, a review message waits for the end of that turn and of any fork, then goes to a prompt; the threads of its Send, or of a Send meanwhile, still go to a fork.
 - Each of its reads adds `&blocked` while a loop of its Claude session, the main one or a subagent's, is Blocked:
   from a `classic.PermissionRequest` that no settings hook answers, or a `tool.call` of `AskUserQuestion`, until a tool call of that loop ends.
   The `next` of `classic.PermissionRequest` resolves once the settings hooks answered, not the person, hence the end of the tool call, run or refused, as the end of the wait.
 - Only a 404 means "no open session"; a failed poll leaves the state as is, and the mod keeps per session the last Send seen and the relaunch made.
-- It relaunches Claude once per Send, at the end of a turn that ended on an answer, neither interrupted nor in error, that leaves threads waiting; a `{ drop }` waits for the next prompt or turn start, and does not count; a fork that ends on an answer counts as the relaunch of its Send, which neither the main loop nor the fork then gets; one interrupted or on an error leaves it to the end of Claude's turn, or relaunches Claude at once if it is idle.
-- At the end of the turn opened by a wake or a relaunch, if it must not relaunch, it calls `POST /api/sessions/<id>/turn-complete` once, without awaiting it, only if this turn ended on an answer: after an Esc or an error, nothing.
-  The end of a fork, its own `turn.complete` (`agentId`), calls it the same way, unless a Send seen meanwhile is owed.
-- The first prompt of a Claude session carries, in the `context` of `prompt.submit`, the number of threads waiting for it: `prompt.context` would also reach the subagents, and `cc-plugin-sec-default` short-circuits it on Team or Enterprise accounts.
+- It relaunches Claude once per Send, at the end of a turn that ended on an answer, neither interrupted nor in error, that leaves threads waiting; a `{ drop }` waits for the next prompt or turn start, and does not count; a fork that ends on an answer counts as the relaunch of its Send, which neither the main loop nor the fork then gets; one interrupted or on an error leaves it to the end of Claude's turn, or relaunches Claude at once if it is idle after a turn that answered, otherwise at the next prompt.
+- At the end of the turn opened by a wake, a relaunch or a first prompt that carried threads or a review message, if it must not relaunch, it calls `POST /api/sessions/<id>/turn-complete` once, without awaiting it, only if this turn ended on an answer: after an Esc or an error, nothing.
+  The end of a fork, its own `turn.complete` (`agentId`), calls it the same way, unless a prompt of its worktree is owed after it.
+- The first prompt of a Claude session, or the first one in a worktree it moves to, carries, in the `context` of `prompt.submit`, the number of threads waiting for it and the review message of the last Send: `prompt.context` would also reach the subagents, and `cc-plugin-sec-default` short-circuits it on Team or Enterprise accounts.
+  Its turn answers them as a wake's does: a Send during it goes to a prompt, not to a fork.
 - After an Approve, `open_thread` calls `POST /api/sessions` again and opens a new session; `reply_to_thread` answers "session approved".
 - `/review-local phpstorm`, `/review-local vscode` or `/review-local browser` opens the session in PhpStorm, VS Code or the browser;
   without an argument, it asks where through `$.ui.ask` among the IDEs whose launcher it finds (`phpstorm` from the `PATH`, otherwise the JetBrains Toolbox script; `code` from the `PATH`) and the browser, the browser without a question if it finds none;

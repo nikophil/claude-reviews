@@ -36,7 +36,7 @@
     "commands": [
       { "command": "localReviews.start", "title": "Start Review", "category": "Claude Reviews" },
       { "command": "localReviews.refresh", "title": "Refresh", "category": "Claude Reviews", "icon": "$(refresh)" },
-      { "command": "localReviews.send", "title": "Send", "category": "Claude Reviews", "icon": "$(send)", "enablement": "localReviews.pending" },
+      { "command": "localReviews.send", "title": "Send", "category": "Claude Reviews", "icon": "$(send)", "enablement": "localReviews.state == session" },
       { "command": "localReviews.approve", "title": "Approve", "category": "Claude Reviews", "icon": "$(check-all)", "enablement": "!localReviews.pending" },
       { "command": "localReviews.chooseBase", "title": "Choose Base", "category": "Claude Reviews", "icon": "$(git-compare)" },
       { "command": "localReviews.openFile", "title": "Open File", "icon": "$(go-to-file)" },

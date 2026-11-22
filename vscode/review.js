@@ -5,7 +5,7 @@
 
 /** @typedef {{ author: 'me' | 'claude', body: string, date: string | null, review?: number }} Message */
 /** @typedef {{ path: string, side: 'old' | 'new', start: number, end: number, lines: string[], hunk: { header: string, lines: { type: string, text: string }[] } | null }} Anchor */
-/** @typedef {{ id: number, anchor: Anchor, resolved: boolean, readonly?: boolean, status: string | null, at?: { start: number, end: number } | null, messages: Message[] }} Thread */
+/** @typedef {{ id: number, anchor: Anchor, resolved: boolean, readonly?: boolean, sentReadonly?: boolean, status: string | null, at?: { start: number, end: number } | null, messages: Message[] }} Thread */
 /** @typedef {{ path: string, status: string, hunks?: { lines: { type: string, newNo: number | null }[] }[] }} File */
 
 /** « Pending » before any Send, « Waiting for Claude », « Resolved », or '' when Claude spoke last. */
@@ -21,10 +21,17 @@ function lines(/** @type {Thread} */ thread) {
     return at.start === 0 ? 'File' : at.start === at.end ? `Line ${sign}${at.start}` : `Lines ${sign}${at.start} to ${sign}${at.end}`;
 }
 
-/** « #12 · Line +5 · Waiting for Claude · old code · Outdated »; without a Claude session, nobody answers. */
+/** « #12 · Line +5 · Waiting for Claude · Replied · old code · Outdated »; without a Claude session, nobody answers. */
 function label(/** @type {Thread} */ thread, /** @type {any} */ session) {
     const shown = status(thread) === 'Waiting for Claude' && !claude(session) ? 'No Claude session' : status(thread);
-    return [`#${thread.id}`, lines(thread), shown, thread.anchor.side === 'old' && 'old code', !thread.at && 'Outdated', thread.readonly && 'Answer without changing code'].filter(Boolean).join(' · ');
+    const readonly = thread.sentReadonly ? 'Answer without changing code, set by the Send' : thread.readonly && 'Answer without changing code';
+    return [`#${thread.id}`, lines(thread), shown, repliedTo(thread) && 'Replied', thread.anchor.side === 'old' && 'old code', !thread.at && 'Outdated', readonly].filter(Boolean).join(' · ');
+}
+
+/** Replied: Claude wrote after my last sent message in the thread, not Resolved; none before I sent one there. */
+function repliedTo(/** @type {Thread} */ thread) {
+    const mine = thread.messages.findLastIndex(message => message.author === 'me' && message.date);
+    return !thread.resolved && mine !== -1 && thread.messages.slice(mine + 1).some(message => message.author === 'claude');
 }
 
 function pending(/** @type {Thread} */ thread) {
@@ -68,9 +75,14 @@ function startClaude(/** @type {{ worktree: string }} */ session) {
     return `cd ${/^[\w./-]+$/.test(worktree) ? worktree : `'${worktree.replaceAll("'", "'\\''")}'`} && claude`;
 }
 
+/** The threads of `path` by line, an Outdated one at the line of its Anchor. */
+function byLine(/** @type {Thread[]} */ threads, /** @type {string} */ path) {
+    return threads.filter(thread => thread.anchor.path === path).sort((a, b) => (a.at ?? a.anchor).start - (b.at ?? b.anchor).start);
+}
+
 /** The unresolved threads of `path`, as the tree shows them. */
 function threadsOf(/** @type {Thread[]} */ threads, /** @type {string} */ path) {
-    return threads.filter(thread => thread.anchor.path === path && !thread.resolved);
+    return byLine(threads, path).filter(thread => !thread.resolved);
 }
 
 /**
@@ -110,7 +122,7 @@ function tree(/** @type {File[]} */ files, /** @type {Thread[]} */ threads) {
 function step(/** @type {File[]} */ files, /** @type {Thread[]} */ threads, /** @type {number | undefined} */ current, /** @type {boolean} */ forward) {
     const paths = tree(files, threads).flatMap(node => 'dir' in node ? node.files : [node.file]).map(file => file.path);
     for (const thread of threads) if (!paths.includes(thread.anchor.path)) paths.push(thread.anchor.path);
-    const all = paths.flatMap(path => threads.filter(thread => thread.anchor.path === path));
+    const all = paths.flatMap(path => byLine(threads, path));
     const at = all.findIndex(thread => thread.id === current);
     const from = at >= 0 ? at : forward ? -1 : all.length;
     for (let i = 1; i <= all.length; i++) {
@@ -131,9 +143,12 @@ function firstLine(/** @type {File} */ file, /** @type {Thread[]} */ threads) {
     return 1;
 }
 
-/** The messages the last Send published: the ones it numbered. */
-function sent(/** @type {{ sends: number, threads: { messages: Message[] }[] }} */ session) {
-    return session.threads.flatMap(thread => thread.messages).filter(message => message.review === session.sends).length;
+/** What the last Send published: the messages it numbered, and its review message. */
+function sent(/** @type {{ sends: number, threads: { messages: Message[] }[], reviews?: { review: number, body: string }[] }} */ session) {
+    const count = session.threads.flatMap(thread => thread.messages).filter(message => message.review === session.sends).length;
+    const messages = `${count} ${count === 1 ? 'message' : 'messages'}`;
+    if (!session.reviews?.some(review => review.review === session.sends && review.body)) return `${messages} sent to Claude`;
+    return `The review message${count ? ` and ${messages}` : ''} sent to Claude`;
 }
 
 /** Whether `path` is Viewed in the session placed on the code shown: a file whose content changed since is not. */
@@ -187,4 +202,4 @@ function listeners(/** @type {string} */ text, /** @type {number} */ port) {
         .map(fields => Number(fields[7]));
 }
 
-module.exports = { status, lines, label, pending, counts, waiting, replied, claude, startClaude, threadsOf, tree, step, firstLine, sent, viewed, nextNotViewed, baseItems, outdatedText, noImages, listeners };
+module.exports = { status, lines, label, repliedTo, pending, counts, waiting, replied, claude, startClaude, threadsOf, tree, step, firstLine, sent, viewed, nextNotViewed, baseItems, outdatedText, noImages, listeners };

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { due, forked, forkEnded, forking, forkPrompt, forks, idle, listeners, look, notified, prompt, resumed, sending, start, status, submitted, touched, turnEnded, turnStarted, type Watch } from './watch.ts';
+import { delivered, due, forked, forkEnded, forking, forkPrompt, forks, greet, idle, listeners, look, notified, prompt, resumed, sending, start, status, submitted, touched, turnEnded, turnStarted, type Watch } from './watch.ts';
+
+/** The worktree the prompts name. */
+const W = '/w';
 
 /** What the glue does once the decision says a prompt is due: submit it, then learn whether it entered. */
 function submit(watch: Watch, dropped = false): Watch {
@@ -242,7 +245,7 @@ test('a call that writes nothing leads nowhere', () => {
 test('a Send with a review message wakes Claude even without a waiting thread, and relaunches nobody at the end of its turn', () => {
     let watch = look(start, { id: 's', sends: 0, waiting: 0 });
     watch = look(watch, { id: 's', sends: 1, waiting: 0, review: { body: 'Rename it', readonly: false } });
-    assert.equal(watch.owed, 'wake');
+    assert.equal(due(watch), true);
     watch = submit(watch);
 
     watch = turnEnded(watch, { id: 's', sends: 1, waiting: 0, review: { body: 'Rename it', readonly: false } });
@@ -250,11 +253,12 @@ test('a Send with a review message wakes Claude even without a waiting thread, a
     assert.equal(status(watch), undefined, 'a review message is no waiting thread');
 });
 
-test('the wake counts the readonly threads, and carries the review message and its readonly', () => {
-    assert.equal(prompt(2, 1), 'claude-reviews: 2 threads are waiting for you, 1 of them readonly. Read them with list_open_threads, reply in each with reply_to_thread, '
+test('the wake names the worktree, counts the readonly threads, and carries the review message and its readonly', () => {
+    assert.equal(prompt(W, 2, 1), 'claude-reviews: 2 threads are waiting for you in the worktree /w, 1 of them readonly. Read them with list_open_threads, reply in each with reply_to_thread, '
         + 'and change the code when a thread asks for it, but answer a readonly thread without changing any file.');
-    assert.equal(prompt(1, 0, { body: 'Mind the tests', readonly: true }), `${prompt(1)}\n\nThe review message, to answer without changing any file:\n\nMind the tests`);
-    assert.equal(prompt(0, 0, { body: 'Rename it', readonly: false }), 'claude-reviews: a review message is waiting for you, with no thread waiting: answer it here.\n\nRename it');
+    assert.equal(prompt(W, 1, 0, { body: 'Mind the tests', readonly: true }), `${prompt(W, 1)}\n\nThe review message, to answer without changing any file:\n\nMind the tests`);
+    assert.equal(prompt(W, 0, 0, { body: 'Rename it', readonly: false }), 'claude-reviews: a review message is waiting for you in the worktree /w: answer it here.\n\nRename it');
+    assert.equal(prompt(W, 0, 0, { body: 'Explain', readonly: true }), 'claude-reviews: a review message is waiting for you in the worktree /w: answer it here, without changing any file.\n\nExplain');
 });
 
 test('a relaunch held by a drop is cancelled once no thread waits, even when the last Send carried a review message', () => {
@@ -276,26 +280,25 @@ test('a wake held by a drop for a review message alone stays owed until it opens
 
     watch = resumed(look(watch, { id: 's', sends: 1, waiting: 0, review }));
 
-    assert.equal(watch.owed, 'wake');
+    assert.equal(due(watch), true);
+    assert.deepEqual(watch.review, review);
 });
 
-test('the fork counts the readonly threads and carries the review message after its own warning', () => {
-    const review = { body: 'Mind the tests', readonly: true };
-    assert.equal(forkPrompt(2, 1, review), `${forkPrompt(2, 1)}\n\nThe review message, to answer without changing any file:\n\nMind the tests`);
-    assert.match(forkPrompt(2, 1), /^claude-reviews: 2 threads are waiting for you, 1 of them readonly\. .* You are a fork/);
+test('the fork names the worktree and counts the readonly threads, before its own warning', () => {
+    assert.match(forkPrompt(W, 2, 1), /^claude-reviews: 2 threads are waiting for you in the worktree \/w, 1 of them readonly\. .* You are a fork/);
 });
 
 test('a review message alone waits for the end of the turn instead of a fork: Claude answers it in the conversation', () => {
     const watch = turnStarted(look(look(start, { id: 's', sends: 0, waiting: 0 }), { id: 's', sends: 1, waiting: 0, review: { body: 'Rename it', readonly: false } }));
     assert.equal(forks(watch), false);
-    assert.equal(forks({ ...watch, waiting: 1 }), true);
+    assert.equal(forks(look(watch, { id: 's', sends: 2, waiting: 1 })), true);
 });
 
 test('a review message alone seen while Claude works on a turn of its own waits for its end, and a Send with a thread meanwhile still goes to a fork', () => {
     const review = { body: 'Rename it', readonly: false };
     let watch = turnStarted(look(start, { id: 's', sends: 0, waiting: 0 }));
     watch = look(watch, { id: 's', sends: 1, waiting: 0, review });
-    assert.equal(watch.owed, 'wake');
+    assert.deepEqual(watch.review, review);
     assert.equal(due(watch), false, 'not queued behind the turn');
 
     const threads = look(watch, { id: 's', sends: 2, waiting: 1 });
@@ -303,4 +306,81 @@ test('a review message alone seen while Claude works on a turn of its own waits 
     assert.equal(forks(threads), true);
 
     assert.equal(due(idle(watch)), true, 'submitted once the turn ends');
+});
+
+test('the first prompt that entered with the threads waiting delivers them, and opens a turn that answers them as a wake\'s: a Send during it is queued, not forked, and its end notifies', () => {
+    const review = { body: 'Rename it', readonly: false };
+    let watch = look(start, { id: 's', sends: 0, waiting: 0 });
+    watch = greet(look(watch, { id: 's', sends: 1, waiting: 1, review }), { id: 's', sends: 1, waiting: 1, review });
+    assert.equal(due(watch), false, 'the context gave the Send its wake would give');
+    watch = turnStarted(watch);
+
+    const sent = look(watch, { id: 's', sends: 2, waiting: 2 });
+    assert.equal(due(sent), true);
+    assert.equal(forks(sent), false);
+
+    watch = turnEnded(idle(watch), { id: 's', sends: 1, waiting: 0 });
+    assert.equal(notified(watch).session, 's');
+});
+
+test('a Send seen while a prompt is being submitted is owed its own once that one entered, and the review message it carried is not kept', () => {
+    const review = { body: 'Rename it', readonly: false };
+    let watch = look(start, { id: 's', sends: 0, waiting: 0 });
+    watch = sending(look(watch, { id: 's', sends: 1, waiting: 1, review }));
+
+    const later = submitted(look(watch, { id: 's', sends: 2, waiting: 2 }), false);
+    assert.equal(later.owed, 'wake');
+    assert.equal(later.review, null, 'the submitted prompt carried it');
+    assert.equal(due(later), true);
+
+    const other = { body: 'Mind the tests', readonly: true };
+    assert.deepEqual(submitted(look(watch, { id: 's', sends: 2, waiting: 0, review: other }), false).review, other);
+    assert.equal(submitted(look(watch, { id: 's', sends: 1, waiting: 1, review }), false).owed, null, 'the same Send');
+});
+
+test('a Send with threads and a review message during a turn of Claude\'s own forks the threads alone: the review message goes to a prompt once the turn and the fork ended', () => {
+    const review = { body: 'Rename it', readonly: false };
+    let watch = turnStarted(look(start, { id: 's', sends: 0, waiting: 0 }));
+    watch = fork(look(watch, { id: 's', sends: 1, waiting: 1, review }), 'f1');
+    assert.deepEqual(watch.review, review);
+
+    const ended = forkEnded(watch, true);
+    assert.equal(ended.session, null, 'the turn of the review message notifies');
+    assert.equal(due(ended.watch), false, 'Claude still works on its turn');
+
+    watch = turnEnded(idle(ended.watch), { id: 's', sends: 1, waiting: 0, review });
+    assert.equal(due(watch), true);
+    assert.equal(forks(watch), false);
+    watch = submitted(sending(watch), false);
+    assert.equal(watch.review, null);
+    assert.equal(due(turnEnded(idle(watch), { id: 's', sends: 1, waiting: 0, review })), false, 'once');
+});
+
+test('a review message the main conversation read with list_open_threads is delivered: no prompt carries it again', () => {
+    const review = { body: 'Rename it', readonly: false };
+    const watch = turnStarted(look(look(start, { id: 's', sends: 0, waiting: 0 }), { id: 's', sends: 1, waiting: 0, review }));
+
+    assert.equal(due(idle(delivered(watch))), false);
+});
+
+test('a fork that ends interrupted after a main turn that ended interrupted or on an error owes its relaunch for the next prompt, as a drop does', () => {
+    let watch = turnStarted(look(start, { id: 's', sends: 0, waiting: 0 }));
+    watch = fork(look(watch, { id: 's', sends: 1, waiting: 2 }), 'f1');
+
+    watch = forkEnded(idle(watch, false), false).watch;
+    assert.equal(watch.owed, 'relaunch');
+    assert.equal(due(watch), false);
+    assert.equal(due(resumed(watch)), true);
+    assert.equal(forkEnded(idle(fork(look(turnStarted(look(start, { id: 's', sends: 0, waiting: 0 })), { id: 's', sends: 1, waiting: 2 }), 'f1')), false).watch.dropped, false, 'after a turn that answered, at once');
+});
+
+test('the status line says what a drop holds: a wake, a relaunch, or a review message alone', () => {
+    const review = { body: 'Rename it', readonly: false };
+    let watch = look(start, { id: 's', sends: 0, waiting: 0 });
+    watch = submit(look(watch, { id: 's', sends: 1, waiting: 1 }));
+    watch = submit(turnEnded(watch, { id: 's', sends: 1, waiting: 1 }), true);
+    assert.equal(status(watch), 'claude-reviews · 1 thread waiting for Claude · relaunch held until the next prompt');
+
+    const alone = submit(look(look(start, { id: 't', sends: 0, waiting: 0 }), { id: 't', sends: 1, waiting: 0, review }), true);
+    assert.equal(status(alone), 'claude-reviews · review message held until the next prompt');
 });

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { dataHome, removeRepos, repo, worktree, write } from '../server/fixture.ts';
@@ -172,8 +173,8 @@ test('a Send seen while Claude is idle calls $.prompt.submit with the text of #1
     await send(id, 'And this?');
     await claude.poll();
 
-    assert.deepEqual(claude.seen.submitted, [prompt(1)]);
-    assert.equal(prompt(1), 'claude-reviews: 1 thread is waiting for you. Read them with list_open_threads, reply in each with reply_to_thread, and change the code when a thread asks for it.');
+    assert.deepEqual(claude.seen.submitted, [prompt(dir, 1)]);
+    assert.equal(prompt(dir, 1), `claude-reviews: 1 thread is waiting for you in the worktree ${dir}. Read them with list_open_threads, reply in each with reply_to_thread, and change the code when a thread asks for it.`);
     assert.equal(claude.seen.appended, 0);
 });
 
@@ -188,11 +189,11 @@ test('a Send seen while Claude works on a turn of its own spawns one fork in the
     await claude.poll();
     await claude.poll();
 
-    assert.deepEqual(claude.seen.spawned, [{ subagentType: 'fork', description: 'Answer the claude-reviews threads', prompt: forkPrompt(1) }]);
+    assert.deepEqual(claude.seen.spawned, [{ subagentType: 'fork', description: 'Answer the claude-reviews threads', prompt: forkPrompt(dir, 1), cwd: dir }]);
     assert.deepEqual(claude.seen.submitted, []);
     assert.equal(claude.seen.status.at(-1), 'claude-reviews · 1 thread waiting for Claude · a fork answers in the background');
-    assert.match(forkPrompt(1), /^claude-reviews: 1 thread is waiting for you\./);
-    assert.match(forkPrompt(1), /main conversation keeps working in this same worktree/);
+    assert.match(forkPrompt(dir, 1), /^claude-reviews: 1 thread is waiting for you in the worktree /);
+    assert.match(forkPrompt(dir, 1), /main conversation keeps working in this same worktree/);
 
     await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
     await claude.settle();
@@ -233,7 +234,7 @@ test('a fork the engine denies leaves the Send to a prompt, as when Claude is id
     await claude.poll();
 
     assert.equal(claude.seen.spawned.length, 1);
-    assert.deepEqual(claude.seen.submitted, [prompt(1)]);
+    assert.deepEqual(claude.seen.submitted, [prompt(dir, 1)]);
 });
 
 test('the poll of the mod tells the server that a Claude session runs in the worktree', async () => {
@@ -389,7 +390,7 @@ test('a Claude session starting in a worktree where threads wait adds "N threads
     const second = await typed('Again');
 
     assert.deepEqual(subagent.blocks, [{ name: 'currentDate', text: 'today' }]);
-    assert.deepEqual(first.context, [prompt(2)]);
+    assert.deepEqual(first.context, [prompt(dir, 2)]);
     assert.equal(second.context, undefined);
 });
 
@@ -707,7 +708,7 @@ test('after /cd or EnterWorktree into another worktree, the mod polls it and its
     assert.equal((await api('GET', `/api/sessions/${second.id}`)).threads[0].messages.at(-1).body, 'Here');
     assert.equal((await api('GET', `/api/sessions/${first.id}`)).threads[0].messages.length, 1);
     assert.deepEqual(claude.seen.submitted, [], 'a Send made before the move wakes nobody, as at the start of a Claude session');
-    assert.deepEqual(prompted.context, [prompt(1)], 'the next prompt counts the threads of the new worktree');
+    assert.deepEqual(prompted.context, [prompt(second.dir, 1)], 'the next prompt counts the threads of the new worktree');
 });
 
 /** The last message of the first thread of the session `id`. */
@@ -846,7 +847,7 @@ test('a first prompt the server does not answer leaves the count of waiting thre
     const second = await typed('Again');
     const third = await typed('More');
 
-    assert.deepEqual([first.context, second.context, third.context], [undefined, [prompt(1)], undefined]);
+    assert.deepEqual([first.context, second.context, third.context], [undefined, [prompt(dir, 1)], undefined]);
 });
 
 test('a turn opened by a wake and interrupted, or ended on an error, calls no turn-complete, nor does the next turn in its place', async () => {
@@ -1062,7 +1063,7 @@ test('a launch of an earlier registration of the module neither probes nor adopt
     assert.deepEqual(other.paths, ['GET /api/health'], 'only the second registration probed it');
 });
 
-test('list_open_threads gives each thread readonly when checked, or when the last Send of my messages in it was readonly, and the review message of the last Send', async () => {
+test('list_open_threads gives each thread readonly when checked, or when the last Send of my messages in it was readonly', async () => {
     const { dir, id } = await session(['Checked', 'By the review', 'Neither']);
     await api('POST', `/api/sessions/${id}/threads/1/readonly`, { readonly: true });
     const shown = await api('GET', `/api/sessions/${id}/diff`);
@@ -1073,9 +1074,6 @@ test('list_open_threads gives each thread readonly when checked, or when the las
     const result = JSON.parse((await claude.tool('list_open_threads')).result);
 
     assert.deepEqual(result.threads.map((thread: any) => [thread.id, thread.readonly]), [[1, true], [2, true], [3, false]]);
-    assert.deepEqual(result.review, { body: 'Only explain', readonly: true });
-    await api('POST', `/api/sessions/${id}/send`, { tree: shown.tree });
-    assert.equal(JSON.parse((await claude.tool('list_open_threads')).result).review, null, 'a Send without a review message');
 });
 
 test('a Send wakes Claude with the readonly threads counted and its review message, even one that leaves no thread waiting', async () => {
@@ -1091,7 +1089,7 @@ test('a Send wakes Claude with the readonly threads counted and its review messa
     await api('POST', `/api/sessions/${id}/send`, { tree: shown.tree, body: 'Rename it' });
     await claude.poll();
 
-    assert.deepEqual(claude.seen.submitted, [prompt(1, 1, { body: 'Mind the tests', readonly: true }), prompt(0, 0, { body: 'Rename it', readonly: false })]);
+    assert.deepEqual(claude.seen.submitted, [prompt(dir, 1, 1, { body: 'Mind the tests', readonly: true }), prompt(dir, 0, 0, { body: 'Rename it', readonly: false })]);
 });
 
 test('the tools tell Claude to answer a readonly thread without changing any file', async () => {
@@ -1100,7 +1098,7 @@ test('the tools tell Claude to answer a readonly thread without changing any fil
     for (const name of ['list_open_threads', 'reply_to_thread']) {
         assert.match(claude.seen.tools.find(tool => tool.name === name)!.description, /readonly.*without changing any file/, name);
     }
-    assert.match(claude.seen.tools.find(tool => tool.name === 'list_open_threads')!.description, /review is the message of the last Send/);
+    assert.match(claude.seen.tools.find(tool => tool.name === 'list_open_threads')!.description, /review is the review message of a Send no prompt gave you yet/);
 });
 
 test('the relaunch does not repeat the review message the wake gave', async () => {
@@ -1115,7 +1113,7 @@ test('the relaunch does not repeat the review message the wake gave', async () =
     await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
     await claude.settle();
 
-    assert.deepEqual(claude.seen.submitted, [prompt(1, 0, { body: 'Rename it', readonly: false }), prompt(1)]);
+    assert.deepEqual(claude.seen.submitted, [prompt(dir, 1, 0, { body: 'Rename it', readonly: false }), prompt(dir, 1)]);
 });
 
 test('a review message alone sent while Claude works on a turn of its own is submitted at the end of that turn, not queued during it', async () => {
@@ -1130,10 +1128,10 @@ test('a review message alone sent while Claude works on a turn of its own is sub
 
     await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
     await claude.settle();
-    assert.deepEqual(claude.seen.submitted, [prompt(0, 0, { body: 'Rename it', readonly: false })]);
+    assert.deepEqual(claude.seen.submitted, [prompt(dir, 0, 0, { body: 'Rename it', readonly: false })]);
 });
 
-test('a review message held during a turn of Claude\'s own goes with the fork of a Send that brings a thread before the turn ends, and reaches Claude once', async () => {
+test('a review message held during a turn of Claude\'s own stays out of the fork of a Send that brings a thread before the turn ends, and reaches the conversation once, by a prompt', async () => {
     const { dir, id } = await session([]);
     const claude = await mod(dir);
     await claude.poll();
@@ -1145,11 +1143,158 @@ test('a review message held during a turn of Claude\'s own goes with the fork of
     await send(id, 'And this?');
     await claude.poll();
 
-    assert.deepEqual(claude.seen.spawned, [{ subagentType: 'fork', description: 'Answer the claude-reviews threads', prompt: forkPrompt(1, 0, review) }]);
+    assert.deepEqual(claude.seen.spawned.map(spawn => spawn.prompt), [forkPrompt(dir, 1)]);
     await claude.fire('tool.call', { tool: 'mcp__local-reviews__reply_to_thread', id: 1, body: 'Because', agentId: 'fork-1' });
     await claude.fire('turn.complete', { reason: 'answer', answer: 'Done', turnId: 'f', agentId: 'fork-1' });
     await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
     await claude.settle();
     await claude.poll();
-    assert.deepEqual(claude.seen.submitted, [], 'the fork carried it: no prompt repeats it');
+    assert.deepEqual(claude.seen.submitted, [prompt(dir, 0, 0, review)]);
+});
+
+const typed = (claude: Awaited<ReturnType<typeof mod>>, text: string) => claude.fire('prompt.submit', { text, wait: false, origin: { kind: 'composer' } });
+
+test('a Send during the turn of a first prompt that carried the threads waiting is queued as a prompt, not forked', async () => {
+    const { dir, id } = await session(['One']);
+    const claude = await mod(dir);
+    await claude.poll();
+    await typed(claude, 'Hello');
+    await claude.fire('turn.start', { text: 'Hello', turnId: 't1' });
+
+    await send(id, 'And this?');
+    await claude.poll();
+
+    assert.deepEqual(claude.seen.spawned, []);
+    assert.deepEqual(claude.seen.submitted, [prompt(dir, 2)]);
+});
+
+test('the end of the turn of a first prompt that carried the threads waiting calls turn-complete', async () => {
+    const { dir, id } = await session(['One']);
+    const claude = await mod(dir);
+    await claude.poll();
+    await typed(claude, 'Hello');
+    await claude.fire('turn.start', { text: 'Hello', turnId: 't1' });
+
+    await claude.tool('reply_to_thread', { id: 1, body: 'Because' });
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
+    await claude.settle();
+
+    assert.equal(claude.seen.fetched.filter(call => call === `POST /api/sessions/${id}/turn-complete`).length, 1);
+});
+
+test('the fork runs in the worktree whose threads it answers, after Claude wrote in another worktree of the repository, and list_open_threads names that worktree', async () => {
+    const first = await session([]);
+    const second = await session([], worktree(first.dir));
+    const claude = await mod(first.dir);
+    await claude.poll();
+    await claude.fire('turn.start', { text: 'work', turnId: 't1' });
+    await claude.fire('tool.call', { tool: 'Edit', file_path: join(second.dir, 'a.txt'), old_string: '2', new_string: 'two' });
+    await claude.poll();
+
+    await send(second.id, 'And this?');
+    await claude.poll();
+    const listed = JSON.parse((await claude.tool('list_open_threads', { agentId: 'fork-1' })).result);
+
+    assert.deepEqual(claude.seen.spawned.map(spawn => [spawn.cwd, spawn.prompt]), [[second.dir, forkPrompt(second.dir, 1)]]);
+    assert.equal(listed.worktree, second.dir);
+});
+
+test('EnterWorktree while a fork answers starts no second fork until it ends, and leaves its tools in the worktree it was spawned for', async () => {
+    const first = await session([]);
+    const second = await session([]);
+    const claude = await mod(first.dir);
+    await claude.poll();
+    await claude.fire('turn.start', { text: 'work', turnId: 't1' });
+    await send(first.id, 'And this?');
+    await claude.poll();
+
+    claude.move(second.dir);
+    await claude.poll();
+    await send(second.id, 'And there?');
+    await claude.poll();
+    assert.equal(claude.seen.spawned.length, 1, 'one fork at a time');
+    const listed = JSON.parse((await claude.tool('list_open_threads', { agentId: 'fork-1' })).result);
+    await claude.tool('reply_to_thread', { id: 1, body: 'Because', agentId: 'fork-1' });
+    claude.spawn({ model: 'opus', agentId: 'fork-2' });
+    await claude.fire('turn.complete', { reason: 'answer', answer: 'Done', turnId: 'f', agentId: 'fork-1' });
+    await claude.settle();
+
+    assert.equal(listed.worktree, first.dir);
+    assert.equal(await last(first.id), 'Because');
+    assert.equal(await last(second.id), 'And there?');
+    assert.equal(claude.seen.fetched.filter(call => call === `POST /api/sessions/${first.id}/turn-complete`).length, 1);
+    assert.deepEqual(claude.seen.spawned.map(spawn => spawn.cwd), [first.dir, second.dir]);
+});
+
+test('list_open_threads gives the review message only while no prompt gave it: not in the turn of its wake, nor to a subagent, and once to the main conversation', async () => {
+    const review = { body: 'Rename it', readonly: false };
+    const { dir, id } = await session([]);
+    const claude = await mod(dir);
+    await claude.poll();
+    const shown = await api('GET', `/api/sessions/${id}/diff`);
+    await api('POST', `/api/sessions/${id}/threads`, { author: 'me', base: shown.base, tree: shown.tree, path: 'a.txt', side: 'new', start: 1, end: 1, body: 'Why?' });
+    await api('POST', `/api/sessions/${id}/send`, { tree: shown.tree, body: 'Rename it' });
+    await claude.poll();
+    const woken = JSON.parse((await claude.tool('list_open_threads')).result).review;
+    await claude.tool('reply_to_thread', { id: 1, body: 'Because' });
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
+
+    await claude.fire('turn.start', { text: 'work', turnId: 't2' });
+    await api('POST', `/api/sessions/${id}/send`, { tree: shown.tree, body: 'Rename it' });
+    await claude.poll();
+    const forked = JSON.parse((await claude.tool('list_open_threads', { agentId: 'a1' })).result).review;
+    const main = JSON.parse((await claude.tool('list_open_threads')).result).review;
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't2' });
+    await claude.settle();
+
+    assert.deepEqual([woken, forked, main], [null, null, review]);
+    assert.equal(claude.seen.submitted.length, 1, 'the main conversation read it: no prompt gives it again');
+});
+
+test('a review message alone sent before the Claude session started is given by its first prompt', async () => {
+    const { dir, id } = await session([]);
+    await api('POST', `/api/sessions/${id}/send`, { tree: (await api('GET', `/api/sessions/${id}/diff`)).tree, body: 'Rename it' });
+    const claude = await mod(dir);
+
+    const first = await typed(claude, 'Hello');
+
+    assert.deepEqual(first.context, [prompt(dir, 0, 0, { body: 'Rename it', readonly: false })]);
+});
+
+test('a fork that ends interrupted after a main turn that was interrupted relaunches Claude at the next prompt, not at once', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(dir);
+    await claude.poll();
+    await typed(claude, 'work');
+    await claude.fire('turn.start', { text: 'work', turnId: 't1' });
+    await send(id, 'And this?');
+    await claude.poll();
+
+    await claude.fire('turn.complete', { reason: 'aborted', answer: '', turnId: 't1', isAborted: true });
+    await claude.fire('turn.complete', { reason: 'aborted', answer: '', turnId: 'f', agentId: 'fork-1' });
+    await claude.settle();
+    await claude.poll();
+    assert.deepEqual(claude.seen.submitted, []);
+    assert.equal(claude.seen.status.at(-1), 'claude-reviews · 1 thread waiting for Claude · relaunch held until the next prompt');
+
+    await typed(claude, 'Next');
+    assert.deepEqual(claude.seen.submitted, [prompt(dir, 1)]);
+});
+
+test('a turn that ends while the root is out of any worktree leaves Claude idle in the worktree it enters next', async () => {
+    const { dir, id } = await session([]);
+    const claude = await mod(repo({ 'a.txt': 'a\n' }));
+    await claude.poll();
+    await claude.fire('turn.start', { text: 'work', turnId: 't1' });
+    claude.move(mkdtempSync(join(tmpdir(), 'outside-')));
+    await claude.poll();
+    await claude.fire('turn.complete', { reason: 'answer', answer: '', turnId: 't1' });
+
+    claude.move(dir);
+    await claude.poll();
+    await send(id, 'And this?');
+    await claude.poll();
+
+    assert.deepEqual(claude.seen.spawned, []);
+    assert.deepEqual(claude.seen.submitted, [prompt(dir, 1)]);
 });

@@ -32,7 +32,8 @@ function fill(/** @type {vscode.CommentThread} */ shown, /** @type {any} */ thre
     // A Resolved thread takes no message until its Unresolve.
     shown.canReply = !thread.resolved;
     shown.state = thread.resolved ? vscode.CommentThreadState.Resolved : vscode.CommentThreadState.Unresolved;
-    shown.contextValue = `${thread.resolved ? 'resolved' : 'unresolved'} ${thread.readonly ? 'readonly' : 'writable'}`;
+    // Readonly set by the Send that published my last message: no toggle, the label says so.
+    shown.contextValue = `${thread.resolved ? 'resolved' : 'unresolved'} ${thread.sentReadonly ? 'sent-readonly' : thread.readonly ? 'readonly' : 'writable'}`;
     if (fold) shown.collapsibleState = thread.resolved ? vscode.CommentThreadCollapsibleState.Collapsed : vscode.CommentThreadCollapsibleState.Expanded;
 }
 

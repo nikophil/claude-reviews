@@ -103,7 +103,10 @@ public final class ReviewDiffAction extends DumbAwareAction {
         if (project != null) open(project, null);
     }
 
-    /** The diff of the review opened last: its tab is reused while it is open and shows the same files of the same session against the same base. */
+    /**
+     * The diff of the review opened last: its tab is reused while it is open and shows the same files of the same session against the same base,
+     * else replaced, rather than left with the files and the buttons of a diff gone.
+     */
     private record Opened(ChainDiffVirtualFile file, String session, String base, List<String> paths, List<Target> targets) {}
 
     private static final Key<Opened> OPENED = Key.create("localreviews.Opened");
@@ -121,7 +124,8 @@ public final class ReviewDiffAction extends DumbAwareAction {
 
     /**
      * Opens the diff of the session at the file `path`, scrolled to `line`, from 1, of its side `side` when above 0, focused when `focus`.
-     * The tab of the review opened last shows the file instead, if it is still open: a click on each file of the tool window does not open a tab each.
+     * The tab of the review opened last shows the file instead, if it is still open: a click on each file of the tool window does not open a tab each,
+     * and a diff of other files, or against another base, takes the place of its tab.
      * A file out of the diff, unchanged, binary, or that only threads name, opens in the editor at `line`, as in the Editor view.
      */
     static void open(Project project, String path, Side side, int line, boolean focus) {
@@ -161,6 +165,7 @@ public final class ReviewDiffAction extends DumbAwareAction {
                 }
                 Opened last = project.getUserData(OPENED);
                 if (last != null && last.session().equals(id) && last.base().equals(base) && last.paths().equals(paths) && reuse(project, last, index, scroll, focus)) return;
+                if (last != null) FileEditorManager.getInstance(project).closeFile(last.file());
                 targets.get(index).line = scroll;
                 SimpleDiffRequestChain chain = SimpleDiffRequestChain.fromProducers(files, index);
                 foldUnchanged();
@@ -280,7 +285,8 @@ public final class ReviewDiffAction extends DumbAwareAction {
             @Override
             public void update(AnActionEvent event) {
                 super.update(event);
-                event.getPresentation().setEnabled(review(event) != null);
+                // An approved session takes no write.
+                event.getPresentation().setEnabled(review(event) != null && !(ThreadsInDiff.SESSIONS.get(id) instanceof JsonObject session && Placement.approved(session)));
             }
 
             @Override
@@ -336,7 +342,8 @@ public final class ReviewDiffAction extends DumbAwareAction {
     private static AnAction send(Project project, String id) {
         // Greyed, with why, as the last poll of the diff read the session; until the first poll, Send stays enabled.
         Supplier<String> refusal = () -> ThreadsInDiff.SESSIONS.get(id) instanceof JsonObject session ? Placement.sendRefusal(session) : null;
-        return new ToolbarButton("Send", AllIcons.Actions.Upload, true, refusal, () -> ReviewService.get(project).spinning(ReviewService.SENT_FROM_DIFF, null),
+        Supplier<String> warning = () -> ThreadsInDiff.SESSIONS.get(id) instanceof JsonObject session ? Placement.sendWarning(session) : null;
+        return new ToolbarButton("Send", AllIcons.Actions.Upload, true, refusal, warning, () -> ReviewService.get(project).spinning(ReviewService.SENT_FROM_DIFF, null),
             done -> send(project, id, null, ReviewService.SENT_FROM_DIFF, done));
     }
 
@@ -363,8 +370,9 @@ public final class ReviewDiffAction extends DumbAwareAction {
                 }
                 JsonObject session = Server.post("/api/sessions/" + id + "/send", body);
                 ThreadsInDiff.SESSIONS.put(id, session);
-                int count = sent(session);
-                notify(project, count + (count == 1 ? " message sent to Claude" : " messages sent to Claude"), ThreadView.Avatars.CLAUDE_SMALL);
+                String warning = Placement.sendWarning(session);
+                notify(project, sent(sent(session), body.has("body") && !body.get("body").getAsString().isBlank()) + (warning == null ? "" : ". " + warning),
+                    ThreadView.Avatars.CLAUDE_SMALL);
             } finally {
                 ApplicationManager.getApplication().invokeLater(done);
             }
@@ -407,7 +415,7 @@ public final class ReviewDiffAction extends DumbAwareAction {
 
     private static AnAction approve(Project project, String id) {
         Supplier<String> refusal = () -> ThreadsInDiff.SESSIONS.get(id) instanceof JsonObject session ? Placement.approveRefusal(session) : null;
-        return new ToolbarButton("Approve", AllIcons.Actions.Checked, false, refusal, () -> false, done -> approve(project, id, done));
+        return new ToolbarButton("Approve", AllIcons.Actions.Checked, false, refusal, () -> null, () -> false, done -> approve(project, id, done));
     }
 
     /** Approve, once confirmed, then `done` on the EDT, approved, refused or cancelled. */
@@ -445,19 +453,22 @@ public final class ReviewDiffAction extends DumbAwareAction {
     private static final class ToolbarButton extends DumbAwareAction implements CustomComponentAction {
         private final boolean primary;
         private final Supplier<String> refusal;
+        private final Supplier<String> warning;
         private final BooleanSupplier spinning;
         private final Icon icon;
         private final Consumer<Runnable> run;
         private volatile boolean writing;
 
         /**
-         * `refusal` gives why the button is greyed, null while it is enabled; `spinning`, whether a spinner takes the place of its icon;
+         * `refusal` gives why the button is greyed, null while it is enabled, `warning` what its tooltip says while it is not;
+         * `spinning`, whether a spinner takes the place of its icon;
          * `run` writes, then runs the callback it is given on the EDT: the button stays greyed until then.
          */
-        ToolbarButton(String text, Icon icon, boolean primary, Supplier<String> refusal, BooleanSupplier spinning, Consumer<Runnable> run) {
+        ToolbarButton(String text, Icon icon, boolean primary, Supplier<String> refusal, Supplier<String> warning, BooleanSupplier spinning, Consumer<Runnable> run) {
             super(text, null, icon);
             this.primary = primary;
             this.refusal = refusal;
+            this.warning = warning;
             this.spinning = spinning;
             this.icon = icon;
             this.run = run;
@@ -472,7 +483,7 @@ public final class ReviewDiffAction extends DumbAwareAction {
         public void update(AnActionEvent event) {
             String why = refusal.get();
             event.getPresentation().setEnabled(!writing && why == null);
-            event.getPresentation().setDescription(why);
+            event.getPresentation().setDescription(why != null ? why : warning.get());
             event.getPresentation().setIcon(spinning.getAsBoolean() ? AnimatedIcon.Default.INSTANCE : icon);
         }
 
@@ -545,6 +556,13 @@ public final class ReviewDiffAction extends DumbAwareAction {
         Notification notification = NotificationGroupManager.getInstance().getNotificationGroup("Local Reviews").createNotification(text, NotificationType.INFORMATION);
         if (icon != null) notification.setIcon(icon);
         notification.notify(project);
+    }
+
+    /** The balloon of a Send that published `messages` messages, and a review message when `message`. */
+    static String sent(int messages, boolean message) {
+        String count = messages + (messages == 1 ? " message" : " messages");
+        if (!message) return count + " sent to Claude";
+        return (messages == 0 ? "The review message" : count + " and the review message") + " sent to Claude";
     }
 
     /** The messages the last Send published: the ones it numbered. */

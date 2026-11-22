@@ -1,5 +1,5 @@
 import type { EngineInterface, Register } from 'claude-code';
-import { due, forked, forkEnded, forking, forkPrompt, forks, idle, listeners, look, notified, prompt, resumed, sending, start, status, submitted, touched, turnEnded, turnStarted, type Seen, type Watch } from './watch.ts';
+import { delivered, due, forked, forkEnded, forking, forkPrompt, forks, greet, idle, listeners, look, notified, prompt, resumed, sending, start, status, submitted, touched, turnEnded, turnStarted, type Seen, type Watch } from './watch.ts';
 
 type Thread = { id: number; status: string | null; readonly?: boolean; anchor: any; at?: { start: number; end: number } | null; messages: { author: string; body: string; date: string | null; review?: number }[] };
 type Session = { id: string; sends: number; reanchoredOn?: { base: string; tree: string }; reviews?: { review: number; body: string; readonly: boolean }[]; threads: Thread[] };
@@ -17,7 +17,8 @@ const TOOLS = [
             + 'start and end are the range reanchored on that base for side old, on the working tree for side new, and lines the lines the thread was opened on. '
             + 'outdated is true when those lines are no longer found: start and end are then the original range, and hunk the original diff excerpt, as unified diff (null if the lines were out of the diff). '
             + 'A thread with start and end at 0 is on the whole file, without lines, and outdated only once the file is gone. '
-            + 'review is the message of the last Send, for the whole review, null without one; with readonly true, answer it without changing any file. '
+            + 'Their file is relative to worktree, the root of the worktree under review. '
+            + 'review is the review message of a Send no prompt gave you yet, for the whole review, null without one: answer it in the conversation, and with readonly true without changing any file. '
             + `${READONLY} ${SUGGESTION}`,
         inputSchema: { type: 'object', properties: {} },
     },
@@ -51,14 +52,19 @@ let base = '';
 let token = '';
 /** The session's root at the last look, undefined while the mod is off: the Claude session did not start in a worktree. */
 let root: string | undefined;
-/** The worktree the mod follows: the root's, or the one Claude last wrote in or kept a cd to; undefined once the root left every worktree. */
-let worktree: string | undefined;
+/** A worktree, and the session Claude's tools write to there: the last one listed or opened. An approved one refuses them. */
+type Place = { worktree: string | undefined; session: string | undefined };
+/**
+ * The worktree the mod follows: the root's, or the one Claude last wrote in or kept a cd to; undefined once the root left every worktree.
+ * Replaced, never changed, on a move: a fork keeps the place it was spawned for.
+ */
+let main: Place = { worktree: undefined, session: undefined };
+/** The place of each fork, by agentId: its tools answer there, wherever the main loop goes meanwhile; kept after its end, as a fork resumed by SendMessage answers there still. */
+let pins = new Map<string, Place>();
 /** The repository of the worktree (its common dir): Claude writing in another repository leaves the review where it is. */
 let common: string | undefined;
 /** The shell's directory at the last call of the main loop: a Bash call that changes it is a cd the shell kept. */
 let shell = '';
-/** The session Claude's tools write to: the last one listed or opened. An approved one refuses them. */
-let session: string | undefined;
 let watch = start;
 /** Whether the first prompt of the Claude session entered, with the threads waiting for Claude. */
 let greeted = false;
@@ -139,10 +145,15 @@ async function top($: EngineInterface, dir: string): Promise<{ top: string; comm
     return { top, common };
 }
 
+/** The place of a tool call: its fork's, or the one the mod follows. */
+const here = (e: { agentId?: string }) => pins.get(e.agentId ?? '') ?? main;
+
 /** Moves to the worktree `next`: another worktree starts afresh, as a Claude session starting there. */
 function enter(next: { top: string; common: string } | undefined): void {
-    // The turn running goes on in the other worktree: a Send there still goes to a fork.
-    if (next?.top !== worktree) [worktree, common, session, watch, greeted] = [next?.top, next?.common, undefined, { ...start, busy: watch.busy }, false];
+    if (next?.top === main.worktree) return;
+    [main, common, greeted] = [{ worktree: next?.top, session: undefined }, next?.common, false];
+    // The turn running goes on in the other worktree: a Send there still goes to a fork, after the one running, one at a time.
+    watch = { ...start, busy: watch.busy, forking: watch.forking };
 }
 
 /** Follows the worktree of the repository a call of the main loop wrote in, or kept a cd to, as when the root moves. */
@@ -152,9 +163,7 @@ async function moved($: EngineInterface, e: { tool: string; [argument: string]: 
     const dir = touched(e, { shell, cwd, home: root!, failed });
     shell = cwd;
     const found = dir && await top($, dir);
-    // A fork answers in the worktree it was spawned for, whose session the tools share: a write of the main loop elsewhere meanwhile leads nowhere.
-    // ponytail: EnterWorktree still moves the tools under a running fork; pin each fork to its { worktree, session } by agentId if it shows.
-    if (found && found.common === common && !watch.forking) enter(found);
+    if (found && found.common === common) enter(found);
 }
 
 /** Follows the session's root, which /cd and EnterWorktree move. */
@@ -167,7 +176,7 @@ async function follow($: EngineInterface): Promise<void> {
 }
 
 /** The open session of the worktree, null when the server says it has none or out of a worktree, or why the server did not say. */
-async function find($: EngineInterface, query = ''): Promise<{ open: Session | null } | { error: string }> {
+async function find($: EngineInterface, worktree: string | undefined, query = ''): Promise<{ open: Session | null } | { error: string }> {
     if (!worktree) return { open: null };
     // ponytail: each look makes the server run git rev-parse, every 2 s per Claude session; cache the top of a worktree if it shows.
     // `claude` tells the server a Claude session runs in the worktree, which the clients show instead of waiting for it; `blocked`, that it waits for my answer.
@@ -210,23 +219,28 @@ function submit($: EngineInterface): void {
     // A watch started afresh for another worktree meanwhile is not this prompt's.
     const settled = (dropped: boolean) => { if (watch.submitting === sent) apply($, submitted(watch, dropped)); };
     // Never awaited: it resolves only once the session is idle and the prompt opened its turn.
-    // The wake alone carries the review message: a relaunch would have Claude carry it out again.
-    $.prompt.submit({ text: prompt(watch.waiting, watch.readonly, sent!.owed === 'wake' ? watch.review : null) }).then(result => settled(result.drop !== undefined), () => settled(true));
+    // The review message rides along until a prompt gave it; a prompt owed for it alone counts no thread.
+    const [waiting, readonly] = sent!.owed ? [watch.waiting, watch.readonly] : [0, 0];
+    $.prompt.submit({ text: prompt(main.worktree!, waiting, readonly, sent!.review) }).then(result => settled(result.drop !== undefined), () => settled(true));
 }
 
 /** Answers in a fork of the Claude session, in the background: a prompt would wait for the end of the turn Claude works on. */
 function fork($: EngineInterface): void {
     watch = forking(watch);
-    const started = watch.forking;
+    const started = watch.forking!;
+    const pin = { worktree: main.worktree, session: started.session };
     const spawned = (result: { agentId?: string; deny?: string }) => {
-        // A watch started afresh for another worktree meanwhile is not this fork's.
+        // A module registered again meanwhile is not this fork's.
         if (watch.forking !== started) return;
-        watch = forked(watch, result.agentId);
+        if (result.agentId) pins.set(result.agentId, pin);
+        // A Send of a worktree left meanwhile wakes nobody, as one made before the move.
+        watch = result.agentId || pin.worktree === main.worktree ? forked(watch, result.agentId) : { ...watch, forking: null };
         if (result.agentId) return;
         $.ui.log(`claude-reviews: no fork to answer the threads (${result.deny}), they wait for the end of the turn`);
         if (due(watch)) submit($);
     };
-    $.agent.spawn({ subagentType: 'fork', description: 'Answer the claude-reviews threads', prompt: forkPrompt(watch.waiting, watch.readonly, watch.forking!.owed === 'wake' ? watch.review : null) })
+    // Run in the worktree it answers for, which the main loop may have left by a write in another one.
+    $.agent.spawn({ subagentType: 'fork', description: 'Answer the claude-reviews threads', prompt: forkPrompt(pin.worktree!, watch.waiting, watch.readonly), cwd: pin.worktree })
         .then(spawned, (error: Error) => spawned({ deny: error.message }));
 }
 
@@ -308,19 +322,19 @@ async function serve($: EngineInterface, ep: { port: number; token: string } | n
 }
 
 /** Opens a thread in the session Claude writes to, or in the open one; an approved session gives way to a new one, as #5 says. */
-async function openThread($: EngineInterface, input: { file: string; side: string; lines?: number[]; body: string }): Promise<{ result: string } | { deny: string }> {
+async function openThread($: EngineInterface, at: Place, input: { file: string; side: string; lines?: number[]; body: string }): Promise<{ result: string } | { deny: string }> {
     for (const retry of [false, true]) {
-        if (!session) {
-            const opened = await api($, 'POST', '/api/sessions', { worktree });
+        if (!at.session) {
+            const opened = await api($, 'POST', '/api/sessions', { worktree: at.worktree });
             if (opened.status !== 200) return { deny: opened.body.error };
-            session = opened.body.id as string;
+            at.session = opened.body.id as string;
         }
-        const res = await api($, 'POST', `/api/sessions/${session}/threads`, {
+        const res = await api($, 'POST', `/api/sessions/${at.session}/threads`, {
             author: 'claude', path: input.file, side: input.side, start: input.lines?.[0] ?? 0, end: input.lines?.at(-1) ?? 0, body: input.body,
         });
         if (res.status === 200) return { result: `Opened thread ${res.body.threads.at(-1).id}` };
         if (res.body.error !== 'session approved' || retry) return { deny: res.body.error };
-        session = undefined;
+        at.session = undefined;
     }
     return { deny: 'unreachable' };
 }
@@ -333,7 +347,7 @@ function excerpt(hunk: { header: string; lines: { type: 'context' | 'add' | 'del
 // ponytail: the matchers spell the plugin's name, local-reviews; renaming the plugin means renaming them.
 export const register: Register = on => {
     // Each register starts afresh, as a reloaded module does: the node tests register it several times.
-    [base, token, root, worktree, common, shell, session, watch, greeted, shown, uid, blocked] = ['', '', undefined, undefined, undefined, '', undefined, start, false, undefined, undefined, new Set()];
+    [base, token, root, main, pins, common, shell, watch, greeted, shown, uid, blocked] = ['', '', undefined, { worktree: undefined, session: undefined }, new Map(), undefined, '', start, false, undefined, undefined, new Set()];
     registered++;
 
     // Registered first, so that it holds every tool call, this mod's own included: a call that waited for my answer ends with it, run or refused.
@@ -365,7 +379,7 @@ export const register: Register = on => {
     // ponytail: a Claude session that starts out of a worktree leaves the mod off, even once /cd takes it into one.
     on('session.start', async ($, e, next) => {
         enter(await top($, e.cwd));
-        if (!worktree) return next(e);
+        if (!main.worktree) return next(e);
         [root, shell] = [e.cwd, e.cwd];
         // The endpoint file, if a server already wrote it, so the poll and the first prompt have a server to call before serve() returns.
         const ep = await endpoint($);
@@ -377,7 +391,7 @@ export const register: Register = on => {
         // ponytail: an interval the engine ends (a refused period) is not armed again; re-arm at turn.complete if wakes go missing.
         $.clock.every(2000, async () => {
             await follow($);
-            const found = await find($);
+            const found = await find($, main.worktree);
             if ('open' in found) apply($, look(watch, seen(found.open)));
             if (status(watch) !== shown) $.ui.status(shown = status(watch));
         });
@@ -388,28 +402,33 @@ export const register: Register = on => {
     // and cc-plugin-sec-default passes it by on Team and Enterprise accounts.
     on('prompt.submit', async ($, e, next) => {
         await follow($);
-        if (!worktree) return next(e);
+        if (!main.worktree) return next(e);
         const ours = e.origin.kind === 'plugin' && e.origin.name === $.plugin.name;
         if (ours) greeted = true;
         else apply($, resumed(watch));
         if (greeted || e.isMeta || e.command) return next(e);
         // ponytail: a /clear starts a conversation that gets no count; reset greeted at session.end if it matters.
         // ponytail: while the server does not answer, each prompt waits for it, up to 2 s; stop asking after a few if it shows.
-        const found = await find($);
+        // ponytail: the review message of the last Send comes again in a Claude session that already answered it; keep its delivery on the server if it shows.
+        const at = main;
+        const found = await find($, at.worktree);
         const first = 'open' in found && seen(found.open);
-        const result = await next(first && first.waiting ? { ...e, context: [...(e.context ?? []), prompt(first.waiting, first.readonly, first.review)] } : e);
+        const context = first && (first.waiting || first.review);
+        const result = await next(context ? { ...e, context: [...(e.context ?? []), prompt(at.worktree!, first.waiting, first.readonly, first.review)] } : e);
         // A count the server could not give waits for the next prompt.
         if (result.drop === undefined && 'open' in found) greeted = true;
+        if (result.drop === undefined && context && main === at) watch = greet(watch, first);
         return result;
     });
 
     on('turn.start', ($, e, next) => {
-        if (worktree && e.agentId === undefined) apply($, turnStarted(watch));
+        // Outside a worktree too: the turn goes on in the worktree the main loop enters.
+        if (e.agentId === undefined) apply($, turnStarted(watch));
         return next(e);
     });
 
     on('turn.complete', async ($, e, next) => {
-        if (!worktree) return next(e);
+        // A fork's end, even once the main loop left every worktree: it holds the next fork until then.
         if (e.agentId !== undefined) {
             if (e.agentId === watch.forking?.agent) {
                 const done = forkEnded(watch, e.reason === 'answer');
@@ -419,10 +438,11 @@ export const register: Register = on => {
             }
             return next(e);
         }
-        watch = idle(watch);
+        watch = idle(watch, e.reason === 'answer');
+        if (!main.worktree) return next(e);
         // A turn interrupted (Esc) or ended on an error is not relaunched.
         if (e.reason === 'answer') {
-            const found = await find($);
+            const found = await find($, main.worktree);
             if ('open' in found) apply($, turnEnded(watch, seen(found.open)));
         }
         // Spent even by a turn interrupted or ended on an error, which notifies nothing: Claude may not have replied.
@@ -433,19 +453,24 @@ export const register: Register = on => {
         return next(e);
     });
 
-    on('tool.call', { tool: 'mcp__local-reviews__list_open_threads' }, async $ => {
+    on('tool.call', { tool: 'mcp__local-reviews__list_open_threads' }, async ($, e) => {
         await follow($);
+        const at = here(e);
         // Placed on the base of the session and the working tree: an Outdated thread comes with its original diff excerpt instead.
-        const found = await find($, '&reanchor');
+        const found = await find($, at.worktree, '&reanchor');
         if ('error' in found) return { deny: found.error };
         const { open } = found;
-        session = open?.id;
+        at.session = open?.id;
         const threads = (open?.threads ?? []).filter(thread => thread.status === 'waiting-for-claude' || thread.status === 'open');
+        // The review message goes to the main conversation once: neither a fork nor another subagent answers it.
+        const given = at === main && e.agentId === undefined && open && watch.session === open.id ? watch.review : null;
+        if (given) watch = delivered(watch);
         // A tool of a mod answers text: the model reads the threads as JSON.
         return {
             result: JSON.stringify({
+                worktree: at.worktree ?? null,
                 base: open?.reanchoredOn?.base ?? null,
-                review: review(open),
+                review: given,
                 threads: threads.map(thread => {
                     const { id, status, anchor, at, messages } = thread;
                     return {
@@ -461,13 +486,14 @@ export const register: Register = on => {
     on('tool.call', { tool: 'mcp__local-reviews__reply_to_thread' }, async ($, e: any) => {
         if (!Number.isInteger(e.id) || e.id < 1) return { deny: 'id must be a positive integer, the id of a thread from list_open_threads' };
         await follow($);
-        if (!session) {
-            const found = await find($);
+        const at = here(e);
+        if (!at.session) {
+            const found = await find($, at.worktree);
             if ('error' in found) return { deny: found.error };
-            session = found.open?.id;
+            at.session = found.open?.id;
         }
-        if (!session) return { deny: 'No open claude-reviews session for this worktree' };
-        const replied = session;
+        if (!at.session) return { deny: 'No open claude-reviews session for this worktree' };
+        const replied = at.session;
         const res = await api($, 'POST', `/api/sessions/${replied}/threads/${e.id}/messages`, { author: 'claude', body: e.body });
         // An approved session will never wait for Claude again; another session the mod watches is left alone.
         if (res.body.error === 'session approved' && watch.session === replied) apply($, look(watch, null));
@@ -476,14 +502,15 @@ export const register: Register = on => {
 
     on('tool.call', { tool: 'mcp__local-reviews__open_thread' }, async ($, e: any) => {
         await follow($);
-        return openThread($, e);
+        return openThread($, here(e), e);
     });
 
     on('command.run', { command: 'review-local' }, async ($, e) => {
         await follow($);
-        const opened = await api($, 'POST', '/api/sessions', { worktree });
+        const at = main;
+        const opened = await api($, 'POST', '/api/sessions', { worktree: at.worktree });
         if (opened.status !== 200) return { text: `claude-reviews: ${opened.body.error}` };
-        session = opened.body.id as string;
+        const session = at.session = opened.body.id as string;
         // The token lets the browser authenticate; it rides in the fragment, which no request carries, and the UI drops it from the address bar.
         const url = `${base}/s/${session}#token=${token}`;
         const arg = e.args.trim().toLowerCase();
@@ -497,7 +524,7 @@ export const register: Register = on => {
             // The request first: the IDE shows the review at its first poll, even in a project the launcher is opening.
             const shown = await api($, 'POST', `/api/sessions/${session}/show`, {});
             if (shown.status !== 200) return { text: `claude-reviews: ${shown.body.error}` };
-            await detach($, [ide.launcher, worktree!]);
+            await detach($, [ide.launcher, at.worktree!]);
             return { text: `claude-reviews: opened in ${ide.name}, ${url}` };
         }
         // Over SSH no browser runs on this machine, and a launcher's argv would show the token to every account (/proc/<pid>/cmdline, ps): the URL is only printed.

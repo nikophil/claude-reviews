@@ -37,8 +37,6 @@ import java.awt.Graphics2D;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.io.IOException;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -74,7 +72,7 @@ final class Threads {
     }
 
     /** A thread shown as a view, or as a pill at the end of its last line while the threads are collapsed. */
-    private record Shown(JsonObject thread, boolean claude, ThreadView view, Inlay<?> pill) {
+    private record Shown(JsonObject thread, boolean claude, boolean approved, ThreadView view, Inlay<?> pill) {
         void dispose() {
             if (view != null) Disposer.dispose(view);
             if (pill != null) Disposer.dispose(pill);
@@ -83,16 +81,17 @@ final class Threads {
 
     private final Project project;
     private final Editor editor;
-    private final Review review;
+    private Review review;
     private final String side;
     private final Document document;
     private final Lines lines;
     private final Runnable refresh;
     private final Disposable parent;
     private final Map<Integer, Shown> shown = new HashMap<>();
-    private final Set<Integer> opened = new HashSet<>();
     private final Map<Integer, Anchor> anchors = new HashMap<>();
     private ThreadView draft;
+    /** The lines of the draft, followed through the edits; null for a draft on the whole file. */
+    private RangeMarker drafted;
     private boolean collapsed;
     private JsonObject last;
 
@@ -119,8 +118,7 @@ final class Threads {
                 Inlay<?> inlay = event.getInlay();
                 if (inlay == null || !(inlay.getRenderer() instanceof Pill pill) || pill.owner() != Threads.this) return;
                 event.consume();
-                opened.add(pill.id());
-                if (last != null) show(last, false);
+                ReviewService.get(project).open(Threads.this.review.session(), pill.id());
             }
         }, parent);
         Disposer.register(parent, () -> anchors.values().forEach(anchor -> anchor.marker().dispose()));
@@ -134,19 +132,33 @@ final class Threads {
         return review;
     }
 
-    /** Shows each thread as a pill at the end of its last line, until a click opens it; the next `show` applies it. */
+    /** The same file on another base id: what the draft posts from now on. */
+    void review(Review review) {
+        this.review = review;
+    }
+
+    /** Shows each thread as a pill at the end of its last line, until it is opened; the next `show` applies it. */
     void collapsed(boolean collapsed) {
-        if (this.collapsed != collapsed) opened.clear();
         this.collapsed = collapsed;
+    }
+
+    /** Shows the last session again, once a thread opened. */
+    void reshow() {
+        if (last != null) show(last, false);
+    }
+
+    /** Whether a new thread can open here: not in an approved session. */
+    boolean writable() {
+        return last == null || !Placement.approved(last);
     }
 
     /**
      * Places the threads of the session: only a thread whose JSON changed is rebuilt, with the text being typed in it;
-     * `all` rebuilds them all, once the editor got a new document.
+     * `all` rebuilds them all, once the editor got a new document, the draft too, on its lines.
      */
     void show(JsonObject session, boolean all) {
         last = session;
-        if (all) closeDraft();
+        if (!writable()) closeDraft();
         Map<Integer, JsonObject> placed = new HashMap<>();
         Map<Integer, int[]> ranges = new HashMap<>();
         for (JsonObject thread : Placement.threads(session, review.path(), side)) {
@@ -172,17 +184,19 @@ final class Threads {
             }
         }
         boolean claude = Placement.claude(session);
+        boolean approved = Placement.approved(session);
+        ReviewService service = ReviewService.get(project);
         placed.forEach((n, thread) -> {
             Shown old = shown.get(n);
-            boolean pill = collapsed && !opened.contains(n);
-            if (!all && old != null && old.thread().equals(thread) && old.claude() == claude && (old.pill() != null) == pill) return;
+            boolean pill = collapsed && !service.opened(review.session(), n);
+            if (!all && old != null && old.thread().equals(thread) && old.claude() == claude && old.approved() == approved && (old.pill() != null) == pill) return;
             int end = toEditor(ranges.get(n)[1]);
             if (pill) {
                 if (old != null) old.dispose();
                 // At the end of the first line for a thread on the whole file.
                 Inlay<?> inlay = editor.getInlayModel().addAfterLineEndElement(editor.getDocument().getLineEndOffset(Math.max(end, 1) - 1), true, new Pill(this, n, "Thread #" + n + (ThreadView.status(thread).isEmpty() ? "" : " · " + ThreadView.status(thread))));
                 if (inlay != null) Disposer.register(parent, inlay);
-                shown.put(n, new Shown(thread, claude, null, inlay));
+                shown.put(n, new Shown(thread, claude, approved, null, inlay));
                 return;
             }
             Supplier<String> suggested = side.equals("new") && end > 0 ? () -> text(range(n, thread.getAsJsonObject("at"))) : null;
@@ -196,8 +210,13 @@ final class Threads {
                 if (old.view() != null) view.resume(old.view());
                 old.dispose();
             }
-            shown.put(n, new Shown(thread, claude, view, null));
+            shown.put(n, new Shown(thread, claude, approved, view, null));
         });
+        if (all && draft != null) {
+            int[] range = drafted == null ? new int[] {0, 0} : span(drafted);
+            if (drafted != null && (range[0] == 0 || toEditor(range[0]) == 0 || toEditor(range[1]) == 0)) closeDraft();
+            else draft(range[0], range[1], false);
+        }
     }
 
     /** Expands the folds of unchanged code of the diff over the lines of the threads shown: a fold does not hide a thread. */
@@ -261,9 +280,15 @@ final class Threads {
      * in place of the new thread already open, whose text it takes; its lines follow the edits of the document until it is sent.
      */
     void draft(int start, int end) {
+        draft(start, end, true);
+    }
+
+    /** `focus` false for the draft put back by `show`: the focus moves only from the field of the draft it replaces. */
+    private void draft(int start, int end, boolean focus) {
+        if (!writable()) return;
         ModalityState modality = ModalityState.stateForComponent(editor.getComponent());
         RangeMarker marked = end == 0 ? null : document.createRangeMarker(document.getLineStartOffset(start - 1), document.getLineEndOffset(end - 1));
-        ThreadView view = new ThreadView(project, review.session(), last == null ? null : Placement.sendRefusal(last), body -> {
+        ThreadView view = new ThreadView(project, review.session(), last, body -> {
             int[] range = new int[2];
             ApplicationManager.getApplication().invokeAndWait(() -> {
                 FileDocumentManager.getInstance().saveAllDocuments();
@@ -290,6 +315,8 @@ final class Threads {
         if (draft != null) view.resume(draft);
         closeDraft();
         draft = view;
+        drafted = marked;
+        if (!focus) return;
         // Above the first line, out of sight once the editor scrolled down.
         if (end == 0) editor.getScrollingModel().scrollVertically(0);
         view.focus();
@@ -298,6 +325,7 @@ final class Threads {
     private void closeDraft() {
         if (draft != null) Disposer.dispose(draft);
         draft = null;
+        drafted = null;
     }
 
     /**

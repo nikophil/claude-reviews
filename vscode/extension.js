@@ -149,7 +149,7 @@ async function shownTree() {
 
 /**
  * Send of the whole session, or of the thread whose id `write` gives once it wrote my message, nothing when it gives none;
- * without a Claude session, how to start one instead, the message written staying Pending.
+ * without a Claude session, it sends all the same and says how to start one, which reads it then.
  */
 async function send(/** @type {(() => Promise<number | undefined>) | undefined} */ write) {
     const session = state.session;
@@ -157,19 +157,21 @@ async function send(/** @type {(() => Promise<number | undefined>) | undefined} 
     // VS Code empties the box once the command runs: the message is written before anything else.
     const thread = await write?.();
     if (write && thread === undefined) return;
-    if (!review.claude(session)) {
-        const copy = await vscode.window.showWarningMessage(`Start a Claude session in this worktree to send to Claude: ${review.startClaude(session)}`, 'Copy Command');
-        if (copy) await vscode.env.clipboard.writeText(review.startClaude(session));
-        return;
-    }
     // The Send of the whole session carries a review message and its readonly; cancelled, nothing is sent.
-    const asked = thread === undefined ? await reviewMessage() : {};
+    const asked = thread === undefined ? await reviewMessage() : { body: '', readonly: false };
     // The session may have closed while the box was open.
     if (!asked || state.session?.id !== session.id) return;
+    if (thread === undefined && !asked.body.trim() && !review.counts(state.session).pending) {
+        vscode.window.showInformationMessage('Nothing to send: no Pending message, no review message');
+        return;
+    }
     const tree = await shownTree();
-    const sent = await call(`/api/sessions/${session.id}/send`, thread === undefined ? { tree, ...asked } : { tree, threads: [thread] });
-    const count = review.sent(sent);
-    vscode.window.showInformationMessage(`${count} ${count === 1 ? 'message' : 'messages'} sent to Claude`);
+    const sent = review.sent(await call(`/api/sessions/${session.id}/send`, thread === undefined ? { tree, ...asked } : { tree, threads: [thread] }));
+    if (review.claude(session)) vscode.window.showInformationMessage(sent);
+    else {
+        vscode.window.showWarningMessage(`${sent}. No Claude session runs in this worktree: Claude reads it once one starts, with ${review.startClaude(session)}`, 'Copy Command')
+            .then(copy => copy && vscode.env.clipboard.writeText(review.startClaude(session)));
+    }
     await refresh();
 }
 
@@ -386,7 +388,7 @@ function activate(/** @type {vscode.ExtensionContext} */ context) {
         await vscode.commands.executeCommand('setContext', 'localReviews.navigable', threaded.length ? [...new Set([...changedFiles, ...threaded])] : []);
         view.badge = counts.pending ? { value: counts.pending, tooltip: `${counts.pending} pending` } : undefined;
         view.message = state.error ?? (!session ? undefined : !review.claude(session)
-            ? `Start a Claude session in this worktree to send to Claude: ${review.startClaude(session)}`
+            ? `No Claude session runs in this worktree: a Send wakes no one until one starts, with ${review.startClaude(session)}`
             : session.claudeBlocked ? `⚠ ${BLOCKED}`
             : `${state.files.length} files · ${viewed.length} viewed · ${counts.waiting} waiting for Claude`);
         files.emitter.fire(undefined);

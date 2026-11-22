@@ -1,5 +1,5 @@
 {
   "name": "local-reviews",
-  "version": "0.8.11",
+  "version": "0.8.12",
   "description": "Review what Claude Code wrote in a local GitHub-like diff, with threads under the lines where Claude replies."
 }

@@ -317,6 +317,8 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
         private transient Object shownKey;
         private boolean updating;
         private boolean rebuilding;
+        /** Whether the tool window showed a session that is now closed: approved, or its worktree gone. */
+        private boolean closed;
         /** The button whose write runs, Send or Approve, greyed with the other until it ends; null without one. */
         private JButton writing;
 
@@ -403,10 +405,18 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
 
             tree.setRootVisible(false);
             tree.setCellRenderer(new Renderer());
+            // A double click opens a file or a thread, and only folds a directory.
+            tree.setToggleClickCount(0);
             new DoubleClickListener() {
                 @Override
                 protected boolean onDoubleClick(MouseEvent event) {
-                    if (checkbox(event) == null) WriteIntentReadAction.run(() -> openSelected(service.diffView(), true, true));
+                    TreePath path = tree.getPathForLocation(event.getX(), event.getY());
+                    if (path != null && ((DefaultMutableTreeNode) path.getLastPathComponent()).getUserObject() instanceof Dir) {
+                        if (tree.isExpanded(path)) tree.collapsePath(path);
+                        else tree.expandPath(path);
+                    } else if (checkbox(event) == null) {
+                        WriteIntentReadAction.run(() -> openSelected(service.diffView(), true, true));
+                    }
                     return true;
                 }
             }.installOn(tree);
@@ -453,9 +463,22 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                         });
                     }
                 },
-                DumbAwareAction.create("Toggle Viewed", event -> {
-                    if (selectedFile() != null) toggleViewed(selectedFile());
-                }),
+                new DumbAwareAction("Toggle Viewed") {
+                    @Override
+                    public ActionUpdateThread getActionUpdateThread() {
+                        return ActionUpdateThread.EDT;
+                    }
+
+                    @Override
+                    public void update(AnActionEvent event) {
+                        event.getPresentation().setEnabledAndVisible(selectedFile() != null);
+                    }
+
+                    @Override
+                    public void actionPerformed(AnActionEvent event) {
+                        if (selectedFile() != null) toggleViewed(selectedFile());
+                    }
+                },
                 new DumbAwareAction("Comment on File") {
                     @Override
                     public ActionUpdateThread getActionUpdateThread() {
@@ -503,7 +526,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             String sendRefusal = Placement.sendRefusal(state.session());
             String approveRefusal = Placement.approveRefusal(state.session());
             send.setEnabled(writing == null && sendRefusal == null);
-            send.setToolTipText(sendRefusal);
+            send.setToolTipText(sendRefusal != null ? sendRefusal : Placement.sendWarning(state.session()));
             approve.setEnabled(writing == null && approveRefusal == null);
             approve.setToolTipText(approveRefusal);
             ThreadView.spin(send, writing == send || service.spinning(ReviewService.SENT_FROM_TOOL_WINDOW, null), AllIcons.Actions.Upload);
@@ -511,6 +534,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
 
         /** Shows the state: the files rebuilt only when they or their threads changed, or when `all`. */
         private void show(ReviewService.State changed, boolean all) {
+            closed = changed.session() == null && (closed || state.session() != null);
             state = changed;
             if (changed.session() == null) {
                 // The tree, hidden below, repaints as it loses the focus: it holds no thread of the session gone, approved, to render against none.
@@ -523,7 +547,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                     }
                     shownKey = null;
                 }
-                emptyText.setText(changed.error() != null ? html(changed.error()) : "No review of this worktree yet.");
+                emptyText.setText(changed.error() != null ? html(changed.error()) : closed ? "The review of this worktree is closed." : "No review of this worktree yet.");
                 start.setVisible(changed.error() == null);
                 if (empty.getParent() != this) {
                     removeAll();
@@ -543,7 +567,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             send.setText(counts[1] == 0 ? "Send" : "Send " + counts[1] + " pending");
             boolean claude = Placement.claude(changed.session());
             buttons();
-            // A Send without a Claude session in the worktree would wait for nobody: it says how to start one instead.
+            // A Send without a Claude session in the worktree waits for one: it says how to start one.
             notice.removeAll();
             if (!claude) notice.add(ThreadView.startClaude(changed.session()), BorderLayout.CENTER);
             else if (Placement.blocked(changed.session())) notice.add(blocked, BorderLayout.CENTER);
@@ -556,7 +580,10 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                 : changed.files().size() + " files" + (service.diffView() ? " · " + viewed + " viewed" : "")
                     + " · " + counts[0] + " waiting for Claude");
 
-            String key = changed.id() + "#" + changed.session().get("sends").getAsInt();
+            // Loaded again at each Send, for « Since my last review », and for a base chosen elsewhere that the list does not have yet.
+            boolean listed = false;
+            for (int i = 0; i < bases.getItemCount(); i++) listed |= bases.getItemAt(i).get("ref").getAsString().equals(changed.ref());
+            String key = changed.id() + "#" + changed.session().get("sends").getAsInt() + (listed ? "" : "#" + changed.ref());
             if (!key.equals(basesOf)) {
                 basesOf = key;
                 loadBases(changed.id());
@@ -690,9 +717,10 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             return node != null && node.getUserObject() instanceof ThreadNode shown ? shown.thread() : null;
         }
 
+        /** The selected file of the diff, which has a Viewed checkbox: in the Diff view only. */
         private JsonObject selectedFile() {
             DefaultMutableTreeNode node = (DefaultMutableTreeNode) tree.getLastSelectedPathComponent();
-            return node != null && node.getUserObject() instanceof JsonObject file && checkable(file) ? file : null;
+            return service.diffView() && node != null && node.getUserObject() instanceof JsonObject file && checkable(file) ? file : null;
         }
 
         /** The file of the worktree of the selected file node, null for another node or a file no longer there. */
@@ -767,7 +795,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             return base.get("group") instanceof JsonPrimitive group ? group.getAsString() : null;
         }
 
-        /** The threads of `path` the tool window shows: Resolved ones only with « Show resolved ». */
+        /** The threads of `path` the tool window shows, by line: Resolved ones only with « Show resolved ». */
         private List<JsonObject> threads(String path) {
             List<JsonObject> threads = new ArrayList<>();
             for (JsonElement element : state.session().getAsJsonArray("threads")) {
@@ -775,7 +803,7 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                 if (!thread.getAsJsonObject("anchor").get("path").getAsString().equals(path)) continue;
                 if (service.resolvedToo() || !thread.get("resolved").getAsBoolean()) threads.add(thread);
             }
-            return threads;
+            return Placement.byLine(threads);
         }
 
         /** The path of the selected file, or the id of the selected thread. */
@@ -816,6 +844,8 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                 return;
             }
             if (!(thread.get("at") instanceof JsonObject at)) return;
+            // Opened, rather than left a pill while « Show threads » is off.
+            service.open(state.id(), thread.get("id").getAsInt());
             // The first line for a thread on the whole file, above which it shows.
             int start = Math.max(at.get("start").getAsInt(), 1);
             boolean old = anchor.get("side").getAsString().equals("old");
@@ -824,9 +854,11 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
             else new OpenFileDescriptor(project, local, start - 1, 0).navigate(focus);
         }
 
+        /** The first line of the first thread of the new side the editor shows, a Resolved one only with « Show resolved », else of the first added line. */
         private int firstLine(JsonObject file) {
-            List<JsonObject> threads = Placement.threads(state.session(), file.get("path").getAsString(), "new");
-            if (!threads.isEmpty()) return Math.max(threads.get(0).getAsJsonObject("at").get("start").getAsInt(), 1);
+            for (JsonObject thread : Placement.byLine(Placement.threads(state.session(), file.get("path").getAsString(), "new"))) {
+                if (service.resolvedToo() || !thread.get("resolved").getAsBoolean()) return Math.max(thread.getAsJsonObject("at").get("start").getAsInt(), 1);
+            }
             for (JsonElement hunk : file.getAsJsonArray("hunks")) {
                 for (JsonElement line : hunk.getAsJsonObject().getAsJsonArray("lines")) {
                     if (line.getAsJsonObject().get("type").getAsString().equals("add")) return line.getAsJsonObject().get("newNo").getAsInt();
@@ -883,13 +915,13 @@ public final class ReviewToolWindow implements ToolWindowFactory, DumbAware {
                 if (counts[2] > 0 && service.resolvedToo()) append("  " + counts[2] + " resolved", SimpleTextAttributes.GRAYED_ATTRIBUTES);
             }
 
-            /** « #12 · Line -5 · Pending · old code », the status, if any, in the color of the file's counts; « Replied » on a thread not Resolved where Claude wrote since my last Send. */
+            /** « #12 · Line -5 · Pending · old code », the status, if any, in the color of the file's counts; « Replied » on a thread not Resolved where Claude wrote after my last sent message. */
             private void thread(JsonObject thread) {
                 String status = ThreadView.status(thread);
                 setIcon(status.equals("Resolved") ? AllIcons.Actions.Checked : AllIcons.Toolwindows.ToolWindowMessages);
                 append("#" + thread.get("id").getAsInt() + " · " + ThreadView.lines(thread));
                 if (!status.isEmpty()) append(" · " + status, status.equals("Pending") ? new SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, AMBER) : SimpleTextAttributes.GRAYED_ATTRIBUTES);
-                if (Placement.replied(state.session(), thread)) append(" · Replied", new SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, REPLIED));
+                if (Placement.replied(thread)) append(" · Replied", new SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, REPLIED));
                 if (thread.getAsJsonObject("anchor").get("side").getAsString().equals("old")) append(" · old code", SimpleTextAttributes.GRAYED_ATTRIBUTES);
                 if (!(thread.get("at") instanceof JsonObject)) append(" · Outdated", SimpleTextAttributes.ERROR_ATTRIBUTES);
             }
